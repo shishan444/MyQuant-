@@ -230,11 +230,24 @@ def get_interchangeable(indicator_name: str) -> List[str]:
 _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
     "EMA": [{"period": p} for p in [10, 20, 50, 100, 200]],
     "SMA": [{"period": p} for p in [10, 20, 50, 100, 200]],
+    "WMA": [{"period": p} for p in [10, 20, 50]],
+    "DEMA": [{"period": p} for p in [10, 20, 50]],
+    "TEMA": [{"period": p} for p in [10, 20, 50]],
     "RSI": [{"period": p} for p in [7, 14, 21]],
     "MACD": [{"fast": 12, "slow": 26, "signal": 9}],
+    "Stochastic": [{"k_period": 14, "d_period": 3}],
+    "CCI": [{"period": 20}],
+    "ROC": [{"period": 12}],
+    "Williams %R": [{"period": 14}],
     "BB": [{"period": 20, "std": 2.0}],
     "ATR": [{"period": 14}],
+    "Keltner": [{"ema_period": 20, "atr_period": 10, "multiplier": 2.0}],
+    "Donchian": [{"period": 20}],
+    "OBV": [{}],
+    "CMF": [{"period": 20}],
+    "MFI": [{"period": 14}],
     "ADX": [{"period": 14}],
+    "PSAR": [{"step": 0.02, "max_step": 0.2}],
 }
 
 
@@ -271,6 +284,65 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> p
     elif name == "ADX":
         period = int(params["period"])
         result[f"adx_{period}"] = ta.adx(df["high"], df["low"], df["close"], length=period).iloc[:, 0]
+    elif name == "WMA":
+        period = int(params["period"])
+        result[f"wma_{period}"] = ta.wma(df["close"], length=period)
+    elif name == "DEMA":
+        period = int(params["period"])
+        result[f"dema_{period}"] = ta.dema(df["close"], length=period)
+    elif name == "TEMA":
+        period = int(params["period"])
+        result[f"tema_{period}"] = ta.tema(df["close"], length=period)
+    elif name == "Stochastic":
+        k_period = int(params["k_period"])
+        d_period = int(params["d_period"])
+        stoch_df = ta.stoch(df["high"], df["low"], df["close"],
+                            k=k_period, d=d_period)
+        if stoch_df is not None:
+            result[f"stoch_k_{k_period}_{d_period}"] = stoch_df.iloc[:, 0]
+            result[f"stoch_d_{k_period}_{d_period}"] = stoch_df.iloc[:, 1]
+    elif name == "CCI":
+        period = int(params["period"])
+        result[f"cci_{period}"] = ta.cci(df["high"], df["low"], df["close"], length=period)
+    elif name == "ROC":
+        period = int(params["period"])
+        result[f"roc_{period}"] = ta.roc(df["close"], length=period)
+    elif name == "Williams %R":
+        period = int(params["period"])
+        result[f"willr_{period}"] = ta.willr(df["high"], df["low"], df["close"], length=period)
+    elif name == "Keltner":
+        ema_p = int(params["ema_period"])
+        atr_p = int(params["atr_period"])
+        mult = float(params["multiplier"])
+        kc_name = f"kc_{ema_p}_{atr_p}_{mult}"
+        kc_df = ta.kc(df["high"], df["low"], df["close"],
+                       length=ema_p, atr_length=atr_p, mamode="ema")
+        if kc_df is not None:
+            result[f"{kc_name}_upper"] = kc_df.iloc[:, 0]
+            result[f"{kc_name}_middle"] = kc_df.iloc[:, 1]
+            result[f"{kc_name}_lower"] = kc_df.iloc[:, 2]
+    elif name == "Donchian":
+        period = int(params["period"])
+        dc_df = ta.donchian(df["high"], df["low"], lower_length=period, upper_length=period)
+        if dc_df is not None:
+            result[f"dc_upper_{period}"] = dc_df.iloc[:, 0]
+            result[f"dc_middle_{period}"] = (dc_df.iloc[:, 0] + dc_df.iloc[:, 1]) / 2
+            result[f"dc_lower_{period}"] = dc_df.iloc[:, 1]
+    elif name == "OBV":
+        result["obv"] = ta.obv(df["close"], df["volume"])
+    elif name == "CMF":
+        period = int(params["period"])
+        result[f"cmf_{period}"] = ta.cmf(df["high"], df["low"], df["close"], df["volume"], length=period)
+    elif name == "MFI":
+        period = int(params["period"])
+        result[f"mfi_{period}"] = ta.mfi(df["high"], df["low"], df["close"], df["volume"], length=period)
+    elif name == "PSAR":
+        step = float(params["step"])
+        max_step = float(params["max_step"])
+        psar_val = ta.psar(df["high"], df["low"], df["close"],
+                           af=step, max_af=max_step)
+        if psar_val is not None:
+            result["psar"] = psar_val.iloc[:, 0]
 
     return result
 
