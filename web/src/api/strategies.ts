@@ -1,5 +1,5 @@
 import client from './client';
-import type { Strategy, StrategyCreateRequest, PaginatedResponse } from '@/types';
+import type { Strategy, StrategyCreateRequest, PaginatedResponse, BacktestRequest, BacktestResponse } from '@/types';
 
 export async function getStrategies(page = 1, pageSize = 20): Promise<PaginatedResponse<Strategy>> {
   const { data } = await client.get('/strategies', {
@@ -27,5 +27,10 @@ export async function updateStrategy(
   request: Partial<StrategyCreateRequest>,
 ): Promise<Strategy> {
   const { data } = await client.put(`/strategies/${id}`, request);
+  return data;
+}
+
+export async function runBacktest(request: BacktestRequest): Promise<BacktestResponse> {
+  const { data } = await client.post('/strategies/backtest', request);
   return data;
 }
