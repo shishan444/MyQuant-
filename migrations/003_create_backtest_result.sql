@@ -1,0 +1,27 @@
+-- Migration 003: Create backtest_result table
+CREATE TABLE IF NOT EXISTS backtest_result (
+    result_id       TEXT PRIMARY KEY,
+    strategy_id     TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    timeframe       TEXT NOT NULL,
+    data_start      TEXT NOT NULL,
+    data_end        TEXT NOT NULL,
+    init_cash       REAL NOT NULL DEFAULT 100000,
+    fee             REAL NOT NULL DEFAULT 0.001,
+    slippage        REAL NOT NULL DEFAULT 0.0005,
+    total_return    REAL NOT NULL DEFAULT 0,
+    sharpe_ratio    REAL NOT NULL DEFAULT 0,
+    max_drawdown    REAL NOT NULL DEFAULT 0,
+    win_rate        REAL NOT NULL DEFAULT 0,
+    total_trades    INTEGER NOT NULL DEFAULT 0,
+    total_score     REAL NOT NULL DEFAULT 0,
+    template_name   TEXT NOT NULL DEFAULT 'profit_first',
+    dimension_scores TEXT,
+    wf_score        REAL,
+    wf_rounds       INTEGER DEFAULT 0,
+    equity_curve    TEXT,
+    trades_json     TEXT,
+    run_source      TEXT NOT NULL DEFAULT 'lab',
+    created_at      TEXT NOT NULL,
+    FOREIGN KEY (strategy_id) REFERENCES strategy(strategy_id) ON DELETE CASCADE
+);
