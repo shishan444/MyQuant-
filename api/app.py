@@ -77,3 +77,7 @@ def create_app(
         )
 
     return app
+
+
+# Default app instance for uvicorn
+app = create_app()
