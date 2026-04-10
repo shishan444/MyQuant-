@@ -169,6 +169,119 @@ export interface BacktestResponse {
   trades_json: BacktestTrade[];
 }
 
+// -- Evolution Detail Types --
+
+export interface GenerationHistoryPoint {
+  generation: number;
+  best_score: number;
+  avg_score: number;
+  worst_score: number;
+  diversity: number;
+}
+
+export interface MutationLogEntry {
+  generation: number;
+  timestamp: string;
+  operation: string;
+  description: string;
+  score_delta: number;
+}
+
+export interface BestStrategy {
+  generation: number;
+  total_score: number;
+  dimension_scores: DimensionScores;
+  signal_genes: SignalGene[];
+  risk_genes: RiskGenes;
+}
+
+export interface PopulationState {
+  diversity: number;
+  score_distribution: number[];
+  elite_count: number;
+  total_count: number;
+}
+
+export interface EvolutionTaskDetail extends EvolutionTask {
+  best_strategy: BestStrategy | null;
+  population: PopulationState | null;
+  mutation_logs: MutationLogEntry[];
+  target_score: number;
+}
+
+export interface WsEvolutionMessage {
+  type: 'generation_complete' | 'task_completed' | 'task_failed';
+  generation: number;
+  best_score: number;
+  avg_score: number;
+  mutation_log: MutationLogEntry | null;
+}
+
+// -- Strategy Library Types --
+
+export type StrategySource = 'manual' | 'evolution' | 'import';
+
+export interface StrategyListItem {
+  id: string;
+  short_id: string;
+  name: string;
+  description: string;
+  type: StrategyType;
+  source: StrategySource;
+  symbol: SymbolType;
+  timeframe: TimeframeType;
+  total_score: number;
+  total_return: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  total_trades: number;
+  win_rate: number;
+  dimension_scores: DimensionScores;
+  signal_genes: SignalGene[];
+  risk_genes: RiskGenes;
+  created_at: string;
+  updated_at: string;
+}
+
+export type StrategySortField = 'total_score' | 'total_return' | 'sharpe_ratio' | 'max_drawdown' | 'total_trades' | 'created_at';
+export type SortOrder = 'asc' | 'desc';
+
+export interface StrategyListParams {
+  symbol?: SymbolType;
+  timeframe?: TimeframeType;
+  source?: StrategySource;
+  sort_by?: StrategySortField;
+  sort_order?: SortOrder;
+  search?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface CompareResult {
+  strategies: StrategyListItem[];
+  equity_curves: { strategy_id: string; curve: EquityPoint[] }[];
+}
+
+// -- Config Types --
+
+export interface EvolutionConfig {
+  population_size: number;
+  max_generations: number;
+  parallel_count: number;
+  target_score: number;
+  mutation_rate_early: number;
+  mutation_rate_mid: number;
+  mutation_rate_late: number;
+  stagnation_threshold: number;
+  stagnation_generations: number;
+  degradation_generations: number;
+}
+
+export interface AppConfig {
+  evolution: EvolutionConfig;
+  claude_api_key: string;
+}
+
 // -- Common Types --
 
 export interface PaginatedResponse<T> {

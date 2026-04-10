@@ -1,5 +1,15 @@
 import client from './client';
-import type { Strategy, StrategyCreateRequest, PaginatedResponse, BacktestRequest, BacktestResponse } from '@/types';
+import type {
+  Strategy,
+  StrategyCreateRequest,
+  StrategyListParams,
+  StrategyListItem,
+  PaginatedResponse,
+  BacktestRequest,
+  BacktestResponse,
+  CompareResult,
+  AppConfig,
+} from '@/types';
 
 export async function getStrategies(page = 1, pageSize = 20): Promise<PaginatedResponse<Strategy>> {
   const { data } = await client.get('/strategies', {
@@ -32,5 +42,31 @@ export async function updateStrategy(
 
 export async function runBacktest(request: BacktestRequest): Promise<BacktestResponse> {
   const { data } = await client.post('/strategies/backtest', request);
+  return data;
+}
+
+export async function listStrategies(
+  params: StrategyListParams,
+): Promise<PaginatedResponse<StrategyListItem>> {
+  const { data } = await client.get('/strategies', { params });
+  return data;
+}
+
+export async function compareStrategies(
+  strategyIds: string[],
+): Promise<CompareResult> {
+  const { data } = await client.post('/strategies/compare', {
+    strategy_ids: strategyIds,
+  });
+  return data;
+}
+
+export async function getConfig(): Promise<AppConfig> {
+  const { data } = await client.get('/config');
+  return data;
+}
+
+export async function updateConfig(config: Partial<AppConfig>): Promise<AppConfig> {
+  const { data } = await client.put('/config', config);
   return data;
 }
