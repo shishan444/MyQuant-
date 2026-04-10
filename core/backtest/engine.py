@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Tuple
 
 import pandas as pd
 import vectorbt as vbt
@@ -113,3 +114,34 @@ class BacktestEngine:
             equity_curve=equity_curve,
             trades_df=trades,
         )
+
+    def run_with_portfolio(
+        self, dna: StrategyDNA, enhanced_df: pd.DataFrame,
+    ) -> Tuple["BacktestResult", object]:
+        """Run backtest and return (BacktestResult, vectorbt Portfolio) tuple.
+
+        The Portfolio object exposes .plot() for quick visualization.
+        """
+        entries, exits = dna_to_signals(dna, enhanced_df)
+
+        close = enhanced_df["close"]
+        open_ = enhanced_df["open"]
+        high = enhanced_df["high"]
+        low = enhanced_df["low"]
+
+        portfolio = vbt.Portfolio.from_signals(
+            close=close,
+            entries=entries,
+            exits=exits,
+            open=open_,
+            high=high,
+            low=low,
+            init_cash=self.init_cash,
+            fees=self.fee,
+            slippage=self.slippage,
+            sl_stop=dna.risk_genes.stop_loss,
+            freq="4h",
+        )
+
+        result = self.run(dna, enhanced_df)
+        return result, portfolio

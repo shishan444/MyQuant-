@@ -10,7 +10,7 @@ from MyQuant.core.strategy.dna import (
 from MyQuant.core.persistence.db import (
     init_db, save_task, update_task, get_running_task, get_task,
     save_snapshot, get_latest_snapshot,
-    save_history, get_history,
+    save_history, get_history, list_all_tasks,
 )
 from MyQuant.core.persistence.checkpoint import save_generation, resume_evolution
 
@@ -174,3 +174,30 @@ class TestCheckpoint:
     def test_resume_no_task_returns_none(self, initialized_db):
         state = resume_evolution(initialized_db, "nonexistent")
         assert state is None
+
+
+class TestListAllTasks:
+    def test_returns_all_tasks(self, initialized_db, sample_dna):
+        for i in range(3):
+            save_task(initialized_db, f"task-lst-{i}", 80.0, "profit_first",
+                      "BTCUSDT", "4h", sample_dna)
+        tasks = list_all_tasks(initialized_db)
+        assert len(tasks) == 3
+
+    def test_status_filter(self, initialized_db, sample_dna):
+        save_task(initialized_db, "task-filter-1", 80.0, "profit_first",
+                  "BTCUSDT", "4h", sample_dna)
+        save_task(initialized_db, "task-filter-2", 80.0, "profit_first",
+                  "BTCUSDT", "4h", sample_dna)
+        update_task(initialized_db, "task-filter-2", status="completed")
+
+        running = list_all_tasks(initialized_db, status="running")
+        assert len(running) == 1
+        assert running[0]["task_id"] == "task-filter-1"
+
+    def test_limit(self, initialized_db, sample_dna):
+        for i in range(5):
+            save_task(initialized_db, f"task-limit-{i}", 80.0, "profit_first",
+                      "BTCUSDT", "4h", sample_dna)
+        tasks = list_all_tasks(initialized_db, limit=3)
+        assert len(tasks) == 3

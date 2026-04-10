@@ -228,3 +228,24 @@ def get_history(db_path: Path, task_id: str) -> List[Dict[str, Any]]:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def list_all_tasks(
+    db_path: Path,
+    status: Optional[str] = None,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """List all tasks, optionally filtered by status, ordered by creation time desc."""
+    conn = _connect(db_path)
+    if status is not None:
+        rows = conn.execute(
+            "SELECT * FROM evolution_task WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+            (status, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM evolution_task ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
