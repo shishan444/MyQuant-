@@ -160,7 +160,10 @@ class StrategyUpdate(BaseModel):
 class BacktestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    strategy_id: str
+    strategy_id: Optional[str] = None
+    dna: Optional[DNAModel] = None
+    symbol: Optional[str] = None
+    timeframe: Optional[str] = None
     dataset_id: str
     init_cash: float = 100000.0
     fee: float = 0.001
@@ -189,6 +192,8 @@ class BacktestResponse(BaseModel):
     template_name: str = "profit_first"
     dimension_scores: Optional[Dict[str, Any]] = None
     run_source: str = "lab"
+    equity_curve: Optional[List[Dict[str, Any]]] = None
+    signals: Optional[List[Dict[str, Any]]] = None
 
 
 class CompareRequest(BaseModel):
@@ -225,7 +230,7 @@ class CompareResponse(BaseModel):
 class EvolutionTaskCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    initial_dna: DNAModel
+    initial_dna: Optional[DNAModel] = None
     symbol: str
     timeframe: str
     target_score: float = 80.0

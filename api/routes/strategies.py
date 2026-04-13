@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from MyQuant.api.db_ext import (
+from api.db_ext import (
     delete_strategy,
     get_strategy,
     list_strategies,
@@ -16,8 +16,8 @@ from MyQuant.api.db_ext import (
     save_strategy,
     update_strategy,
 )
-from MyQuant.api.deps import get_data_dir, get_db_path
-from MyQuant.api.schemas import (
+from api.deps import get_data_dir, get_db_path
+from api.schemas import (
     BacktestRequest,
     BacktestResponse,
     CompareRequest,
@@ -29,10 +29,10 @@ from MyQuant.api.schemas import (
     StrategyResponse,
     StrategyUpdate,
 )
-from MyQuant.core.backtest import engine as _bt_engine_mod
-from MyQuant.core.scoring.scorer import score_strategy
-from MyQuant.core.scoring.metrics import compute_metrics
-from MyQuant.core.strategy.dna import StrategyDNA
+from core.backtest import engine as _bt_engine_mod
+from core.scoring.scorer import score_strategy
+from core.scoring.metrics import compute_metrics
+from core.strategy.dna import StrategyDNA
 
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
@@ -189,13 +189,31 @@ def backtest_strategy(
     db_path: Path = Depends(get_db_path),
     data_dir: Path = Depends(get_data_dir),
 ) -> BacktestResponse:
-    """Run a backtest for a strategy."""
-    # Look up strategy
-    row = get_strategy(db_path, payload.strategy_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Strategy not found")
+    """Run a backtest for a strategy.
 
-    dna = StrategyDNA.from_json(row["dna_json"])
+    Supports two modes:
+    - strategy_id: Load DNA from saved strategy
+    - dna + symbol + timeframe: Use DNA directly (for Lab page)
+    """
+    # Resolve DNA and metadata
+    if payload.strategy_id:
+        row = get_strategy(db_path, payload.strategy_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Strategy not found")
+        dna = StrategyDNA.from_json(row["dna_json"])
+        symbol = row["symbol"]
+        timeframe = row["timeframe"]
+        strategy_id = payload.strategy_id
+    elif payload.dna:
+        dna = StrategyDNA.from_json(payload.dna.model_dump_json())
+        symbol = payload.symbol or "UNKNOWN"
+        timeframe = payload.timeframe or "1d"
+        strategy_id = "inline"
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Must provide either strategy_id or dna",
+        )
 
     # Try to load the dataset
     parquet_path = data_dir / f"{payload.dataset_id}.parquet"
@@ -205,7 +223,7 @@ def backtest_strategy(
             detail=f"Dataset {payload.dataset_id} not found",
         )
 
-    from MyQuant.core.data.storage import load_parquet
+    from core.data.storage import load_parquet
 
     engine = _bt_engine_mod.BacktestEngine(
         init_cash=payload.init_cash,
@@ -214,6 +232,20 @@ def backtest_strategy(
     )
 
     df = load_parquet(parquet_path)
+
+    # Compute indicators needed by DNA signal genes
+    from core.features.indicators import _compute_indicator
+    for gene in dna.signal_genes:
+        try:
+            indicator_name = gene.indicator
+            params = {k: v for k, v in gene.params.items()}
+            indicator_df = _compute_indicator(df, indicator_name, params)
+            for col in indicator_df.columns:
+                if col not in df.columns:
+                    df[col] = indicator_df[col]
+        except Exception:
+            continue
+
     result = engine.run(dna, df)
 
     # Compute score
@@ -222,33 +254,64 @@ def backtest_strategy(
 
     # Save result
     result_id = str(uuid.uuid4())
-    save_backtest_result(
-        db_path,
-        result_id=result_id,
-        strategy_id=payload.strategy_id,
-        symbol=row["symbol"],
-        timeframe=row["timeframe"],
-        data_start=str(df.index.min()) if len(df) > 0 else "",
-        data_end=str(df.index.max()) if len(df) > 0 else "",
-        init_cash=payload.init_cash,
-        fee=payload.fee,
-        slippage=payload.slippage,
-        total_return=result.total_return,
-        sharpe_ratio=result.sharpe_ratio,
-        max_drawdown=result.max_drawdown,
-        win_rate=result.win_rate,
-        total_trades=result.total_trades,
-        total_score=score_result["total_score"],
-        template_name=payload.score_template,
-        dimension_scores=json.dumps(score_result.get("dimension_scores", {})),
-        run_source="lab",
-    )
+    if payload.strategy_id:
+        save_backtest_result(
+            db_path,
+            result_id=result_id,
+            strategy_id=strategy_id,
+            symbol=symbol,
+            timeframe=timeframe,
+            data_start=str(df.index.min()) if len(df) > 0 else "",
+            data_end=str(df.index.max()) if len(df) > 0 else "",
+            init_cash=payload.init_cash,
+            fee=payload.fee,
+            slippage=payload.slippage,
+            total_return=result.total_return,
+            sharpe_ratio=result.sharpe_ratio,
+            max_drawdown=result.max_drawdown,
+            win_rate=result.win_rate,
+            total_trades=result.total_trades,
+            total_score=score_result["total_score"],
+            template_name=payload.score_template,
+            dimension_scores=json.dumps(score_result.get("dimension_scores", {})),
+            run_source="lab",
+        )
+
+    # Build equity curve
+    equity_data = None
+    if result.equity_curve is not None and len(result.equity_curve) > 0:
+        eq = result.equity_curve
+        equity_data = [
+            {"timestamp": str(idx), "value": float(val)}
+            for idx, val in eq.items()
+        ]
+
+    # Build signals from trades
+    signals_data = None
+    if result.trades_df is not None and len(result.trades_df) > 0:
+        signals_data = []
+        for _, trade_row in result.trades_df.iterrows():
+            entry_side = "buy"
+            signals_data.append({
+                "type": entry_side,
+                "timestamp": str(trade_row.get("Entry Timestamp", "")),
+                "price": float(trade_row.get("Avg Entry Price", 0)),
+                "confidence": 0.8,
+                "reason": f"Entry @ {float(trade_row.get('Avg Entry Price', 0)):.2f}",
+            })
+            signals_data.append({
+                "type": "sell",
+                "timestamp": str(trade_row.get("Exit Timestamp", "")),
+                "price": float(trade_row.get("Avg Exit Price", 0)),
+                "confidence": 0.8,
+                "reason": f"Exit @ {float(trade_row.get('Avg Exit Price', 0)):.2f}",
+            })
 
     return BacktestResponse(
         result_id=result_id,
-        strategy_id=payload.strategy_id,
-        symbol=row["symbol"],
-        timeframe=row["timeframe"],
+        strategy_id=strategy_id,
+        symbol=symbol,
+        timeframe=timeframe,
         data_start=str(df.index.min()) if len(df) > 0 else None,
         data_end=str(df.index.max()) if len(df) > 0 else None,
         init_cash=payload.init_cash,
@@ -263,6 +326,8 @@ def backtest_strategy(
         template_name=payload.score_template,
         dimension_scores=score_result.get("dimension_scores"),
         run_source="lab",
+        equity_curve=equity_data,
+        signals=signals_data,
     )
 
 
@@ -280,7 +345,7 @@ def compare_strategies(
             detail=f"Dataset {payload.dataset_id} not found",
         )
 
-    from MyQuant.core.data.storage import load_parquet
+    from core.data.storage import load_parquet
 
     engine = _bt_engine_mod.BacktestEngine(
         init_cash=payload.init_cash,

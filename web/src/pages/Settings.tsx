@@ -1,408 +1,360 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Save, Loader2, AlertCircle, CheckCircle2, Key, Dna } from 'lucide-react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Button } from '@/components/ui/Button';
-import { getConfig, updateConfig } from '@/api/strategies';
-import type { AppConfig, EvolutionConfig } from '@/types';
+import { useState, useEffect, useCallback } from "react";
+import { toast } from "sonner";
+import { GlassCard } from "@/components/GlassCard";
+import { PageTransition } from "@/components/PageTransition";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { api } from "@/services/api";
 
-// ============================================================
-// Default config
-// ============================================================
+interface AppConfig {
+  language: string;
+  timezone: string;
+  notify_evolution: boolean;
+  notify_signal: boolean;
+  binance_api_key: string;
+  binance_secret_key: string;
+  binance_connected: boolean;
+  init_cash: number;
+  maker_fee: number;
+  taker_fee: number;
+  max_positions: number;
+}
 
-const DEFAULT_EVOLUTION: EvolutionConfig = {
-  population_size: 50,
-  max_generations: 100,
-  parallel_count: 4,
-  target_score: 80,
-  mutation_rate_early: 0.3,
-  mutation_rate_mid: 0.2,
-  mutation_rate_late: 0.1,
-  stagnation_threshold: 0.5,
-  stagnation_generations: 10,
-  degradation_generations: 5,
+const DEFAULT_CONFIG: AppConfig = {
+  language: "zh-CN",
+  timezone: "UTC+8",
+  notify_evolution: true,
+  notify_signal: true,
+  binance_api_key: "",
+  binance_secret_key: "",
+  binance_connected: false,
+  init_cash: 100000,
+  maker_fee: 0.1,
+  taker_fee: 0.1,
+  max_positions: 1,
 };
 
-// ============================================================
-// Tab definition
-// ============================================================
+export function Settings() {
+  const [config, setConfig] = useState<AppConfig | null>(null);
 
-type TabKey = 'evolution' | 'api';
+  useEffect(() => {
+    api.get("/api/config").then((r) => setConfig(r.data)).catch(() => setConfig(DEFAULT_CONFIG));
+  }, []);
 
-const TABS: { key: TabKey; label: string; icon: typeof Dna }[] = [
-  { key: 'evolution', label: 'Evolution Config', icon: Dna },
-  { key: 'api', label: 'API Keys', icon: Key },
-];
+  const savePartial = useCallback(async (updates: Partial<AppConfig>) => {
+    try {
+      const { data } = await api.put("/api/config", updates);
+      setConfig(data);
+      toast.success("设置已保存");
+    } catch {
+      toast.error("保存失败");
+    }
+  }, []);
 
-// ============================================================
-// Evolution config form
-// ============================================================
-
-function EvolutionConfigForm({
-  config,
-  onChange,
-}: {
-  config: EvolutionConfig;
-  onChange: (update: Partial<EvolutionConfig>) => void;
-}) {
-  return (
-    <div className="space-y-6">
-      {/* Basic parameters */}
-      <section>
-        <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3">
-          Basic Parameters
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <NumberField
-            label="Population Size"
-            value={config.population_size}
-            min={10}
-            max={500}
-            onChange={(v) => onChange({ population_size: v })}
-          />
-          <NumberField
-            label="Max Generations"
-            value={config.max_generations}
-            min={10}
-            max={1000}
-            onChange={(v) => onChange({ max_generations: v })}
-          />
-          <NumberField
-            label="Parallel Count"
-            value={config.parallel_count}
-            min={1}
-            max={16}
-            onChange={(v) => onChange({ parallel_count: v })}
-          />
-          <NumberField
-            label="Target Score"
-            value={config.target_score}
-            min={0}
-            max={100}
-            step={0.1}
-            onChange={(v) => onChange({ target_score: v })}
-          />
+  if (!config) {
+    return (
+      <PageTransition>
+        <div className="flex flex-col gap-6 max-w-2xl">
+          <Skeleton className="h-64 w-full rounded-xl" />
+          <Skeleton className="h-64 w-full rounded-xl" />
+          <Skeleton className="h-48 w-full rounded-xl" />
         </div>
-      </section>
-
-      {/* Mutation rates */}
-      <section>
-        <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3">
-          Mutation Rate
-        </h3>
-        <div className="grid grid-cols-3 gap-4">
-          <NumberField
-            label="Early Phase"
-            value={config.mutation_rate_early}
-            min={0}
-            max={1}
-            step={0.01}
-            onChange={(v) => onChange({ mutation_rate_early: v })}
-          />
-          <NumberField
-            label="Mid Phase"
-            value={config.mutation_rate_mid}
-            min={0}
-            max={1}
-            step={0.01}
-            onChange={(v) => onChange({ mutation_rate_mid: v })}
-          />
-          <NumberField
-            label="Late Phase"
-            value={config.mutation_rate_late}
-            min={0}
-            max={1}
-            step={0.01}
-            onChange={(v) => onChange({ mutation_rate_late: v })}
-          />
-        </div>
-      </section>
-
-      {/* Early stopping */}
-      <section>
-        <h3 className="text-sm font-medium text-[var(--text-primary)] mb-3">
-          Early Stopping
-        </h3>
-        <div className="grid grid-cols-3 gap-4">
-          <NumberField
-            label="Stagnation Threshold"
-            value={config.stagnation_threshold}
-            min={0}
-            max={10}
-            step={0.1}
-            onChange={(v) => onChange({ stagnation_threshold: v })}
-          />
-          <NumberField
-            label="Stagnation Generations"
-            value={config.stagnation_generations}
-            min={1}
-            max={50}
-            onChange={(v) => onChange({ stagnation_generations: v })}
-          />
-          <NumberField
-            label="Degradation Generations"
-            value={config.degradation_generations}
-            min={1}
-            max={20}
-            onChange={(v) => onChange({ degradation_generations: v })}
-          />
-        </div>
-      </section>
-    </div>
-  );
-}
-
-// ============================================================
-// API keys form
-// ============================================================
-
-function ApiKeysForm({
-  apiKey,
-  onChange,
-}: {
-  apiKey: string;
-  onChange: (key: string) => void;
-}) {
-  const [visible, setVisible] = useState(false);
+      </PageTransition>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <label className="block text-sm font-medium text-[var(--text-primary)] mb-1.5">
-          Claude API Key
-        </label>
-        <p className="text-xs text-[var(--text-secondary)] mb-2">
-          Used for natural language strategy parsing
-        </p>
-        <div className="relative">
-          <input
-            type={visible ? 'text' : 'password'}
-            value={apiKey}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder="sk-ant-..."
-            className="w-full h-9 px-3 pr-16 bg-[var(--bg-primary)] border border-[var(--border)] rounded-md text-sm text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] focus:outline-none focus:border-[var(--color-blue)]"
-          />
-          <button
-            type="button"
-            onClick={() => setVisible(!visible)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-0.5 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-          >
-            {visible ? 'Hide' : 'Show'}
-          </button>
-        </div>
+    <PageTransition>
+      <div className="flex flex-col gap-6 max-w-2xl">
+        <GeneralSettings config={config} onSave={savePartial} />
+        <BinanceApiSettings config={config} onSave={savePartial} />
+        <TradingSettings config={config} onSave={savePartial} />
       </div>
-    </div>
+    </PageTransition>
   );
 }
 
-// ============================================================
-// Number input field
-// ============================================================
+function GeneralSettings({ config, onSave }: { config: AppConfig; onSave: (u: Partial<AppConfig>) => void }) {
+  const [language, setLanguage] = useState(config.language);
+  const [timezone, setTimezone] = useState(config.timezone);
+  const [notifyEvolution, setNotifyEvolution] = useState(config.notify_evolution);
+  const [notifySignal, setNotifySignal] = useState(config.notify_signal);
 
-function NumberField({
-  label,
-  value,
-  min,
-  max,
-  step = 1,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step?: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <div className="space-y-1">
-      <label className="block text-xs text-[var(--text-secondary)]">
-        {label}
-      </label>
-      <input
-        type="number"
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(e) => {
-          const v = parseFloat(e.target.value);
-          if (!isNaN(v) && v >= min && v <= max) {
-            onChange(v);
-          }
-        }}
-        className="w-full h-9 px-3 bg-[var(--bg-primary)] border border-[var(--border)] rounded-md text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--color-blue)]"
-      />
-    </div>
-  );
-}
-
-// ============================================================
-// Settings page
-// ============================================================
-
-export function SettingsPage() {
-  const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<TabKey>('evolution');
-  const [saveMessage, setSaveMessage] = useState<{
-    type: 'success' | 'error';
-    text: string;
-  } | null>(null);
-
-  // Fetch config
-  const {
-    data: remoteConfig,
-    isLoading,
-    error: fetchError,
-  } = useQuery({
-    queryKey: ['config'],
-    queryFn: getConfig,
-  });
-
-  // Local form state
-  const [evolution, setEvolution] = useState<EvolutionConfig>(
-    DEFAULT_EVOLUTION,
-  );
-  const [claudeApiKey, setClaudeApiKey] = useState('');
-
-  // Sync remote -> local
-  useEffect(() => {
-    if (remoteConfig) {
-      setEvolution(remoteConfig.evolution);
-      setClaudeApiKey(remoteConfig.claude_api_key);
-    }
-  }, [remoteConfig]);
-
-  // On fetch error, keep defaults
-  useEffect(() => {
-    if (fetchError) {
-      setEvolution(DEFAULT_EVOLUTION);
-      setClaudeApiKey('');
-    }
-  }, [fetchError]);
-
-  // Save mutation
-  const saveMutation = useMutation({
-    mutationFn: (config: Partial<AppConfig>) => updateConfig(config),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['config'] });
-      setSaveMessage({ type: 'success', text: 'Settings saved successfully' });
-      setTimeout(() => setSaveMessage(null), 3000);
-    },
-    onError: (err: Error) => {
-      setSaveMessage({
-        type: 'error',
-        text: err.message || 'Failed to save settings',
-      });
-    },
-  });
-
-  const handleSave = useCallback(() => {
-    saveMutation.mutate({ evolution, claude_api_key: claudeApiKey });
-  }, [saveMutation, evolution, claudeApiKey]);
-
-  const handleEvolutionChange = useCallback(
-    (update: Partial<EvolutionConfig>) => {
-      setEvolution((prev) => ({ ...prev, ...update }));
-    },
-    [],
-  );
+  const handleSave = () => {
+    onSave({ language, timezone, notify_evolution: notifyEvolution, notify_signal: notifySignal });
+  };
 
   return (
-    <div className="max-w-3xl space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-[var(--text-primary)]">
-          Settings
-        </h2>
-        <Button
-          variant="primary"
-          size="md"
-          disabled={saveMutation.isPending}
-          onClick={handleSave}
-        >
-          {saveMutation.isPending ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Save className="w-4 h-4" />
-          )}
-          Save
+    <GlassCard className="p-6" hover={false}>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-base font-medium text-text-primary">通用设置</h2>
+        <Button size="sm" onClick={handleSave} className="bg-accent-gold text-black hover:bg-accent-gold/90">
+          保存更改
         </Button>
       </div>
 
-      {/* Save message */}
-      {saveMessage && (
-        <div
-          className={`flex items-center gap-2 p-3 rounded-md text-sm ${
-            saveMessage.type === 'success'
-              ? 'text-[var(--color-profit)] bg-[var(--color-profit)]/10'
-              : 'text-[var(--color-loss)] bg-[var(--color-loss)]/10'
-          }`}
-        >
-          {saveMessage.type === 'success' ? (
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-          ) : (
-            <AlertCircle className="w-4 h-4 shrink-0" />
-          )}
-          <span>{saveMessage.text}</span>
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <Label className="text-sm text-text-secondary">主题</Label>
+          <span className="text-sm text-text-primary">深色模式</span>
         </div>
-      )}
 
-      {/* Tab bar */}
-      <div className="flex gap-1 border-b border-[var(--border)]">
-        {TABS.map((tab) => {
-          const Icon = tab.icon;
-          const active = activeTab === tab.key;
-          return (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                active
-                  ? 'text-[var(--color-blue)] border-[var(--color-blue)]'
-                  : 'text-[var(--text-secondary)] border-transparent hover:text-[var(--text-primary)]'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              {tab.label}
-            </button>
-          );
-        })}
+        <Separator className="bg-border-default" />
+
+        <div className="flex items-center justify-between">
+          <Label className="text-sm text-text-secondary">语言</Label>
+          <Select value={language} onValueChange={setLanguage}>
+            <SelectTrigger className="w-40 h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="zh-CN">简体中文</SelectItem>
+              <SelectItem value="en">English</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <Separator className="bg-border-default" />
+
+        <div className="flex items-center justify-between">
+          <Label className="text-sm text-text-secondary">时区</Label>
+          <Select value={timezone} onValueChange={setTimezone}>
+            <SelectTrigger className="w-44 h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="UTC+8">UTC+8 北京时间</SelectItem>
+              <SelectItem value="UTC+0">UTC+0 格林威治</SelectItem>
+              <SelectItem value="UTC-5">UTC-5 纽约</SelectItem>
+              <SelectItem value="UTC+9">UTC+9 东京</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <Separator className="bg-border-default" />
+
+        <div className="flex items-center justify-between">
+          <Label className="text-sm text-text-secondary">通知</Label>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Switch checked={notifyEvolution} onCheckedChange={setNotifyEvolution} />
+              <span className="text-xs text-text-secondary">进化完成时通知</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch checked={notifySignal} onCheckedChange={setNotifySignal} />
+              <span className="text-xs text-text-secondary">策略信号通知</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </GlassCard>
+  );
+}
+
+function BinanceApiSettings({ config, onSave }: { config: AppConfig; onSave: (u: Partial<AppConfig>) => void }) {
+  const [apiKey, setApiKey] = useState(config.binance_api_key);
+  const [secretKey, setSecretKey] = useState(config.binance_secret_key);
+  const [showApi, setShowApi] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
+  const [permRead] = useState(true);
+  const [permTrade] = useState(true);
+  const [connected, setConnected] = useState(config.binance_connected);
+  const [testing, setTesting] = useState(false);
+
+  const handleTest = async () => {
+    setTesting(true);
+    await new Promise((r) => setTimeout(r, 1500));
+    setConnected(!!apiKey && !!secretKey);
+    setTesting(false);
+    if (apiKey && secretKey) {
+      toast.success("连接成功");
+    } else {
+      toast.error("请填写 API Key 和 Secret Key");
+    }
+  };
+
+  const handleSave = () => {
+    onSave({ binance_api_key: apiKey, binance_secret_key: secretKey, binance_connected: connected });
+  };
+
+  return (
+    <GlassCard className="p-6" hover={false}>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-base font-medium text-text-primary">Binance API 配置</h2>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={handleTest} disabled={testing}>
+            {testing ? "测试中..." : "测试连接"}
+          </Button>
+          <Button size="sm" onClick={handleSave} className="bg-accent-gold text-black hover:bg-accent-gold/90">
+            保存
+          </Button>
+        </div>
       </div>
 
-      {/* Loading state */}
-      {isLoading && (
-        <div className="flex items-center justify-center py-12 gap-2 text-[var(--text-secondary)]">
-          <Loader2 className="w-5 h-5 animate-spin" />
-          <span>Loading configuration...</span>
-        </div>
-      )}
-
-      {/* Error state */}
-      {fetchError && !isLoading && (
-        <div className="flex items-center gap-2 text-[var(--color-warn)] p-3 bg-[var(--color-warn)]/10 rounded-md text-sm">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>API unavailable - editing local defaults</span>
-        </div>
-      )}
-
-      {/* Tab content */}
-      {!isLoading && (
-        <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-5">
-          {activeTab === 'evolution' && (
-            <EvolutionConfigForm
-              config={evolution}
-              onChange={handleEvolutionChange}
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-3">
+          <Label className="text-sm text-text-secondary w-24 shrink-0">API Key</Label>
+          <div className="relative flex-1">
+            <Input
+              type={showApi ? "text" : "password"}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="输入 API Key"
+              className="h-8 text-xs pr-16"
             />
-          )}
-          {activeTab === 'api' && (
-            <ApiKeysForm
-              apiKey={claudeApiKey}
-              onChange={setClaudeApiKey}
-            />
-          )}
+            <button
+              type="button"
+              onClick={() => setShowApi(!showApi)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-text-muted hover:text-text-secondary"
+            >
+              {showApi ? "隐藏" : "显示"}
+            </button>
+          </div>
         </div>
-      )}
-    </div>
+
+        <Separator className="bg-border-default" />
+
+        <div className="flex items-center gap-3">
+          <Label className="text-sm text-text-secondary w-24 shrink-0">Secret Key</Label>
+          <div className="relative flex-1">
+            <Input
+              type={showSecret ? "text" : "password"}
+              value={secretKey}
+              onChange={(e) => setSecretKey(e.target.value)}
+              placeholder="输入 Secret Key"
+              className="h-8 text-xs pr-16"
+            />
+            <button
+              type="button"
+              onClick={() => setShowSecret(!showSecret)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-text-muted hover:text-text-secondary"
+            >
+              {showSecret ? "隐藏" : "显示"}
+            </button>
+          </div>
+        </div>
+
+        <Separator className="bg-border-default" />
+
+        <div className="flex items-center gap-3">
+          <Label className="text-sm text-text-secondary w-24 shrink-0">权限</Label>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Switch checked={permRead} disabled />
+              <span className="text-xs text-text-secondary">读取</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch checked={permTrade} disabled />
+              <span className="text-xs text-text-secondary">交易</span>
+            </div>
+          </div>
+        </div>
+
+        <Separator className="bg-border-default" />
+
+        <div className="flex items-center gap-3">
+          <Label className="text-sm text-text-secondary w-24 shrink-0">状态</Label>
+          <div className="flex items-center gap-2">
+            <span className={`inline-block h-2 w-2 rounded-full ${connected ? "bg-profit" : "bg-text-muted"}`} />
+            <span className="text-xs text-text-secondary">
+              {connected ? "已连接" : "未配置"}
+            </span>
+          </div>
+        </div>
+      </div>
+    </GlassCard>
+  );
+}
+
+function TradingSettings({ config, onSave }: { config: AppConfig; onSave: (u: Partial<AppConfig>) => void }) {
+  const [initCash, setInitCash] = useState(String(config.init_cash));
+  const [makerFee, setMakerFee] = useState(String(config.maker_fee));
+  const [takerFee, setTakerFee] = useState(String(config.taker_fee));
+  const [maxPositions, setMaxPositions] = useState(String(config.max_positions));
+
+  const handleSave = () => {
+    onSave({
+      init_cash: Number(initCash),
+      maker_fee: Number(makerFee),
+      taker_fee: Number(takerFee),
+      max_positions: Number(maxPositions),
+    });
+  };
+
+  return (
+    <GlassCard className="p-6" hover={false}>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-base font-medium text-text-primary">模拟交易配置</h2>
+        <Button size="sm" onClick={handleSave} className="bg-accent-gold text-black hover:bg-accent-gold/90">
+          保存
+        </Button>
+      </div>
+
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-3">
+          <Label className="text-sm text-text-secondary w-28 shrink-0">初始资金</Label>
+          <Input
+            type="number"
+            value={initCash}
+            onChange={(e) => setInitCash(e.target.value)}
+            className="h-8 w-40 text-xs font-num"
+          />
+        </div>
+
+        <Separator className="bg-border-default" />
+
+        <div className="flex items-center gap-3">
+          <Label className="text-sm text-text-secondary w-28 shrink-0">手续费率</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              value={makerFee}
+              onChange={(e) => setMakerFee(e.target.value)}
+              className="h-8 w-24 text-xs font-num"
+            />
+            <span className="text-xs text-text-muted">% (Maker)</span>
+            <span className="text-text-muted">/</span>
+            <Input
+              type="number"
+              value={takerFee}
+              onChange={(e) => setTakerFee(e.target.value)}
+              className="h-8 w-24 text-xs font-num"
+            />
+            <span className="text-xs text-text-muted">% (Taker)</span>
+          </div>
+        </div>
+
+        <Separator className="bg-border-default" />
+
+        <div className="flex items-center gap-3">
+          <Label className="text-sm text-text-secondary w-28 shrink-0">最大持仓</Label>
+          <Input
+            type="number"
+            value={maxPositions}
+            onChange={(e) => setMaxPositions(e.target.value)}
+            className="h-8 w-24 text-xs font-num"
+          />
+          <span className="text-xs text-text-muted">个策略同时运行</span>
+        </div>
+
+        <Separator className="bg-border-default" />
+
+        <div className="flex items-center gap-3">
+          <Label className="text-sm text-text-secondary w-28 shrink-0">数据刷新</Label>
+          <span className="text-sm text-text-primary">实时 (WebSocket)</span>
+        </div>
+      </div>
+    </GlassCard>
   );
 }

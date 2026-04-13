@@ -9,9 +9,9 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from MyQuant.api.db_ext import init_db_ext
-from MyQuant.api.routes import data, evolution, strategies, ws
-from MyQuant.api.schemas import HealthResponse
+from .db_ext import init_db_ext
+from .routes import config, data, evolution, strategies, ws
+from .schemas import HealthResponse
 
 
 def create_app(
@@ -52,16 +52,17 @@ def create_app(
         lifespan=lifespan,
     )
 
-    # CORS: allow frontend dev server
+    # CORS: allow all origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173"],
+        allow_origins=["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     # Mount routers
+    app.include_router(config.router)
     app.include_router(strategies.router)
     app.include_router(evolution.router)
     app.include_router(data.router)

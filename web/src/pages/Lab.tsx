@@ -1,353 +1,365 @@
-import { useState, useCallback } from 'react';
-import { FlaskConical, Play, Dna, Loader2, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
-import { SignalEditor } from '@/components/strategy/SignalEditor';
-import { MetricsCard } from '@/components/strategy/MetricsCard';
-import { KlineChart } from '@/components/charts/KlineChart';
-import { EquityChart } from '@/components/charts/EquityChart';
-import { TradeTable } from '@/components/strategy/TradeTable';
-import { runBacktest } from '@/api/strategies';
-import type {
-  SignalGene,
-  BacktestResponse,
-  BacktestTrade,
-  EquityPoint,
-  SymbolType,
-  TimeframeType,
-  TemplateType,
-} from '@/types';
+import { useState, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Play, Save, Download, BarChart3 } from "lucide-react";
+import { toast } from "sonner";
+import { GlassCard } from "@/components/GlassCard";
+import { StatCard } from "@/components/StatCard";
+import { KlineChart } from "@/components/charts/KlineChart";
+import { ChartLegend } from "@/components/charts/ChartLegend";
+import { PageTransition } from "@/components/PageTransition";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useLabStore } from "@/stores/lab";
+import { useRunBacktest, useCreateStrategy } from "@/hooks/useStrategies";
+import { formatPercent, formatCurrency, formatNumber } from "@/lib/utils";
+import type { BacktestResult, TradeSignal, Dataset } from "@/types/api";
+import type { LegendItem } from "@/types/chart";
+import { TIMEFRAME_OPTIONS } from "@/types/strategy";
+import { api } from "@/services/api";
 
-const SYMBOLS: SymbolType[] = ['BTCUSDT', 'ETHUSDT'];
-const TIMEFRAMES: TimeframeType[] = ['1h', '4h', '1d'];
-const TEMPLATES: { value: TemplateType; label: string }[] = [
-  { value: 'profit_first', label: 'Profit First' },
-  { value: 'steady', label: 'Steady' },
-  { value: 'risk_first', label: 'Risk First' },
-];
+const INDICATOR_BADGES = [
+  { id: "ema100", type: "EMA", period: 100, color: "#1E88E5" },
+  { id: "ema50", type: "EMA", period: 50, color: "#FF9800" },
+  { id: "rsi14", type: "RSI", period: 14, color: "#7C4DFF" },
+] as const;
 
-const DEFAULT_CANDLES = [
-  { time: '2024-01-01', open: 42000, high: 43500, low: 41500, close: 43200 },
-  { time: '2024-01-02', open: 43200, high: 44500, low: 42800, close: 44100 },
-  { time: '2024-01-03', open: 44100, high: 45200, low: 43600, close: 44800 },
-  { time: '2024-01-04', open: 44800, high: 46100, low: 44500, close: 45900 },
-  { time: '2024-01-05', open: 45900, high: 46800, low: 45200, close: 45500 },
-  { time: '2024-01-06', open: 45500, high: 46200, low: 44100, close: 44300 },
-  { time: '2024-01-07', open: 44300, high: 45100, low: 43500, close: 44800 },
-  { time: '2024-01-08', open: 44800, high: 46300, low: 44600, close: 46100 },
-  { time: '2024-01-09', open: 46100, high: 47500, low: 45800, close: 47200 },
-  { time: '2024-01-10', open: 47200, high: 48100, low: 46800, close: 47900 },
-];
-
-function generateMockResponse(): BacktestResponse {
-  const baseEquity = 10000;
-  const equityCurve: EquityPoint[] = DEFAULT_CANDLES.map((c, i) => {
-    const factor = 1 + (i * 0.02) + (Math.random() * 0.01);
-    const bmFactor = 1 + (i * 0.008);
-    return {
-      time: c.time,
-      equity: Math.round(baseEquity * factor * 100) / 100,
-      benchmark: Math.round(baseEquity * bmFactor * 100) / 100,
-    };
-  });
-
-  const trades: BacktestTrade[] = [
-    { trade_id: 1, entry_time: '2024-01-01', exit_time: '2024-01-03', direction: 'long', entry_price: 43200, exit_price: 44800, quantity: 0.1, pnl: 160, pnl_pct: 3.7, fee: 4.32 },
-    { trade_id: 2, entry_time: '2024-01-05', exit_time: '2024-01-07', direction: 'long', entry_price: 45500, exit_price: 44800, quantity: 0.1, pnl: -70, pnl_pct: -1.54, fee: 4.55 },
-    { trade_id: 3, entry_time: '2024-01-08', exit_time: '2024-01-10', direction: 'long', entry_price: 46100, exit_price: 47900, quantity: 0.1, pnl: 180, pnl_pct: 3.9, fee: 4.61 },
-  ];
-
+function buildDefaultDNA(symbol: string, timeframe: string) {
   return {
-    result_id: 'mock_001',
-    strategy_id: 'mock_strategy',
-    total_return: 15.2,
-    sharpe_ratio: 1.85,
-    max_drawdown: -8.3,
-    win_rate: 66.7,
-    total_trades: 3,
-    total_score: 78.5,
-    dimension_scores: { profitability: 82, stability: 71, risk_control: 85, efficiency: 76 },
-    equity_curve: equityCurve,
-    trades_json: trades,
+    signal_genes: [
+      {
+        indicator: "EMA",
+        params: { period: 20 },
+        role: "entry_trigger",
+        condition: { type: "price_above" },
+      },
+      {
+        indicator: "EMA",
+        params: { period: 20 },
+        role: "exit_trigger",
+        condition: { type: "price_below" },
+      },
+    ],
+    logic_genes: { entry_logic: "AND", exit_logic: "AND" },
+    execution_genes: { timeframe, symbol },
+    risk_genes: { stop_loss: 0.03, take_profit: 0.06, position_size: 1.0 },
+    generation: 0,
+    parent_ids: [],
+    mutation_ops: [],
   };
 }
 
 export function Lab() {
-  const [entrySignals, setEntrySignals] = useState<SignalGene[]>([]);
-  const [exitSignals, setExitSignals] = useState<SignalGene[]>([]);
-  const [symbol, setSymbol] = useState<SymbolType>('BTCUSDT');
-  const [timeframe, setTimeframe] = useState<TimeframeType>('4h');
-  const [stopLoss, setStopLoss] = useState(5);
-  const [takeProfit, setTakeProfit] = useState(10);
-  const [positionSize, setPositionSize] = useState(100);
-  const [template, setTemplate] = useState<TemplateType>('steady');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<BacktestResponse | null>(null);
-  const [candles] = useState(DEFAULT_CANDLES);
-  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  const config = useLabStore((s) => s.config);
+  const setConfig = useLabStore((s) => s.setConfig);
 
-  const handleBacktest = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
+  const [legendItems] = useState<LegendItem[]>([
+    { id: "kline", label: "K线", color: "#94a3b8", visible: true },
+    ...INDICATOR_BADGES.map((ind) => ({
+      id: ind.id,
+      label: `${ind.type}(${ind.period})`,
+      color: ind.color,
+      visible: true,
+    })),
+  ]);
 
-    try {
-      const request = {
-        signal_genes: [...entrySignals, ...exitSignals].map(({ id: _id, ...rest }) => rest),
-        logic_genes: { entry_logic: 'AND' as const, exit_logic: 'OR' as const },
-        execution_genes: { timeframe, symbol },
-        risk_genes: { stop_loss: stopLoss, take_profit: takeProfit, position_size: positionSize },
-        template,
-      };
+  // 数据集列表
+  const { data: datasetsData } = useQuery({
+    queryKey: ["datasets"],
+    queryFn: () => api.get("/api/data/datasets").then((r) => r.data),
+  });
 
-      const response = await runBacktest(request);
-      setResult(response);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Backtest failed');
-      setResult(generateMockResponse());
-    } finally {
-      setLoading(false);
+  // OHLCV 数据
+  const { data: ohlcvData, isLoading: ohlcvLoading } = useQuery({
+    queryKey: ["ohlcv", config.datasetId],
+    queryFn: () =>
+      api.get(`/api/data/datasets/${config.datasetId}/ohlcv`).then((r) => r.data),
+    enabled: !!config.datasetId,
+  });
+
+  const runBacktest = useRunBacktest();
+  const createStrategy = useCreateStrategy();
+
+  const handleRunBacktest = useCallback(async () => {
+    if (!config.datasetId) {
+      toast.error("请先选择数据集");
+      return;
     }
-  }, [entrySignals, exitSignals, timeframe, symbol, stopLoss, takeProfit, positionSize, template]);
+    try {
+      const result = await runBacktest.mutateAsync({
+        dna: buildDefaultDNA(config.symbol, config.timeframe),
+        symbol: config.symbol,
+        timeframe: config.timeframe,
+        dataset_id: config.datasetId,
+        score_template: config.scoreTemplate,
+        init_cash: config.initCash,
+        fee: config.fee,
+        slippage: config.slippage,
+      });
+      setBacktestResult(result);
+    } catch {
+      // handled by mutation onError
+    }
+  }, [config, runBacktest]);
 
-  const handleEvolution = useCallback(() => {
-    // Will be implemented in v0.12
+  const handleSaveStrategy = useCallback(async () => {
+    if (!backtestResult) return;
+    try {
+      await createStrategy.mutateAsync({
+        name: `${config.symbol} ${config.timeframe} 策略`,
+        dna: buildDefaultDNA(config.symbol, config.timeframe),
+        symbol: config.symbol,
+        timeframe: config.timeframe,
+        source: "lab",
+      });
+    } catch {
+      // handled
+    }
+  }, [backtestResult, config, createStrategy]);
+
+  const toggleLegend = useCallback((id: string) => {
+    void id;
+    // TODO: integrate with chart series visibility
   }, []);
 
+  const datasets: Dataset[] = datasetsData?.datasets ?? datasetsData?.items ?? [];
+  const chartData =
+    ohlcvData?.data?.map(
+      (d: { timestamp: string; open: number; high: number; low: number; close: number }) => ({
+        timestamp: d.timestamp,
+        open: d.open,
+        high: d.high,
+        low: d.low,
+        close: d.close,
+      })
+    ) ?? [];
+  const chartSignals = backtestResult?.signals ?? [];
+
+  const stats = backtestResult
+    ? [
+        {
+          label: "年化收益",
+          value: formatPercent(backtestResult.total_return),
+          trend: (backtestResult.total_return >= 0 ? "up" : "down") as "up" | "down" | "neutral",
+        },
+        {
+          label: "夏普比率",
+          value: formatNumber(backtestResult.sharpe_ratio),
+          trend: (backtestResult.sharpe_ratio >= 1 ? "up" : "neutral") as "up" | "down" | "neutral",
+        },
+        {
+          label: "最大回撤",
+          value: formatPercent(backtestResult.max_drawdown),
+          trend: (backtestResult.max_drawdown <= -0.15 ? "down" : "neutral") as "up" | "down" | "neutral",
+        },
+        {
+          label: "胜率",
+          value: formatPercent(backtestResult.win_rate),
+          trend: (backtestResult.win_rate >= 0.5 ? "up" : "down") as "up" | "down" | "neutral",
+        },
+        {
+          label: "交易笔数",
+          value: String(backtestResult.total_trades),
+          trend: "neutral" as "up" | "down" | "neutral",
+        },
+      ]
+    : null;
+
   return (
-    <div className="flex h-full -m-6 overflow-hidden">
-      {/* Left Panel - Parameters */}
-      <div
-        className={`${
-          leftPanelCollapsed ? 'w-10' : 'w-[380px] min-w-[380px]'
-        } bg-[var(--bg-card)] border-r border-[var(--border)] flex flex-col transition-all duration-200`}
-      >
-        {/* Panel Toggle */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
-          {!leftPanelCollapsed && (
-            <h2 className="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-2">
-              <FlaskConical className="w-4 h-4" />
-              Strategy Lab
-            </h2>
-          )}
-          <button
-            type="button"
-            onClick={() => setLeftPanelCollapsed(!leftPanelCollapsed)}
-            className="p-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-          >
-            {leftPanelCollapsed ? (
-              <PanelLeftOpen className="w-4 h-4" />
+    <PageTransition>
+      <div className="flex flex-col gap-4">
+        {/* 配置区 */}
+        <GlassCard className="p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-secondary">数据:</span>
+              <Select
+                value={config.datasetId || "__none__"}
+                onValueChange={(v) => {
+                  const ds = datasets.find((d) => d.dataset_id === v);
+                  setConfig({
+                    datasetId: v === "__none__" ? "" : v,
+                    symbol: ds?.symbol ?? config.symbol,
+                  });
+                }}
+              >
+                <SelectTrigger className="w-44 h-8 text-xs">
+                  <SelectValue placeholder="选择数据集" />
+                </SelectTrigger>
+                <SelectContent>
+                  {datasets.map((ds) => (
+                    <SelectItem key={ds.dataset_id} value={ds.dataset_id}>
+                      {ds.symbol} ({ds.interval})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-secondary">周期:</span>
+              <Select value={config.timeframe} onValueChange={(v) => setConfig({ timeframe: v })}>
+                <SelectTrigger className="w-28 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIMEFRAME_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-secondary">评分:</span>
+              <Select value={config.scoreTemplate} onValueChange={(v) => setConfig({ scoreTemplate: v })}>
+                <SelectTrigger className="w-32 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="profit_first">收益优先</SelectItem>
+                  <SelectItem value="steady">稳健优先</SelectItem>
+                  <SelectItem value="risk_first">风控优先</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {INDICATOR_BADGES.map((ind) => (
+              <Badge key={ind.id} variant="outline" className="h-7 text-xs gap-1 border-border-default">
+                <span className="inline-block h-2 w-2 rounded-full" style={{ background: ind.color }} />
+                {ind.type}({ind.period})
+              </Badge>
+            ))}
+
+            <div className="ml-auto">
+              <Button
+                size="sm"
+                onClick={handleRunBacktest}
+                disabled={runBacktest.isPending || !config.datasetId}
+                className="gap-1.5 bg-accent-gold text-black hover:bg-accent-gold/90"
+              >
+                <Play className="h-3.5 w-3.5" />
+                {runBacktest.isPending ? "回测中..." : "运行回测"}
+              </Button>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* K线图区 */}
+        <GlassCard className="p-4" hover={false}>
+          <ChartLegend
+            items={legendItems}
+            onToggle={toggleLegend}
+            extra={
+              <span className="text-xs text-text-muted">
+                {config.symbol} / {config.timeframe}
+              </span>
+            }
+          />
+          <div className="mt-2">
+            {ohlcvLoading ? (
+              <Skeleton className="h-[450px] w-full rounded-lg" />
+            ) : chartData.length > 0 ? (
+              <KlineChart data={chartData} signals={chartSignals} height={450} />
             ) : (
-              <PanelLeftClose className="w-4 h-4" />
+              <div className="flex h-[450px] items-center justify-center rounded-lg bg-[#0a0a0f]/50">
+                <p className="text-sm text-text-muted">
+                  {config.datasetId ? "加载中..." : "请选择数据集以查看K线图"}
+                </p>
+              </div>
             )}
-          </button>
-        </div>
+          </div>
+        </GlassCard>
 
-        {!leftPanelCollapsed && (
-          <div className="flex-1 overflow-y-auto p-3 space-y-4">
-            {/* Entry Signals */}
-            <SignalEditor
-              title="Entry Signals"
-              logicLabel="AND"
-              signals={entrySignals}
-              allowedRoles={['entry_trigger', 'entry_guard']}
-              onChange={setEntrySignals}
-            />
+        {/* 回测统计 */}
+        {stats && (
+          <GlassCard className="p-4" hover={false}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-text-secondary">回测统计</h3>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleSaveStrategy}
+                disabled={createStrategy.isPending}
+                className="gap-1.5 border-accent-gold/30 text-accent-gold hover:bg-accent-gold/10"
+              >
+                <Save className="h-3.5 w-3.5" />
+                保存到策略库
+              </Button>
+            </div>
+            <div className="mt-3 grid grid-cols-5 gap-3">
+              {stats.map((stat) => (
+                <StatCard key={stat.label} {...stat} />
+              ))}
+            </div>
+          </GlassCard>
+        )}
 
-            <div className="border-t border-[var(--border)]" />
-
-            {/* Exit Signals */}
-            <SignalEditor
-              title="Exit Signals"
-              logicLabel="OR"
-              signals={exitSignals}
-              allowedRoles={['exit_trigger', 'exit_guard']}
-              onChange={setExitSignals}
-            />
-
-            <div className="border-t border-[var(--border)]" />
-
-            {/* Risk Parameters */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium text-[var(--text-primary)]">Risk Control</h3>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="space-y-1">
-                  <label className="text-xs text-[var(--text-secondary)]">Stop Loss %</label>
-                  <input
-                    type="number"
-                    value={stopLoss}
-                    onChange={(e) => setStopLoss(Number(e.target.value))}
-                    className="w-full bg-[var(--bg-primary)] text-[var(--text-primary)] border border-[var(--border)] rounded px-2 py-1.5 text-xs"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-[var(--text-secondary)]">Take Profit %</label>
-                  <input
-                    type="number"
-                    value={takeProfit}
-                    onChange={(e) => setTakeProfit(Number(e.target.value))}
-                    className="w-full bg-[var(--bg-primary)] text-[var(--text-primary)] border border-[var(--border)] rounded px-2 py-1.5 text-xs"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-[var(--text-secondary)]">Position %</label>
-                  <input
-                    type="number"
-                    value={positionSize}
-                    onChange={(e) => setPositionSize(Number(e.target.value))}
-                    className="w-full bg-[var(--bg-primary)] text-[var(--text-primary)] border border-[var(--border)] rounded px-2 py-1.5 text-xs"
-                  />
-                </div>
+        {/* 交易信号 */}
+        {backtestResult && backtestResult.total_trades > 0 && (
+          <GlassCard className="p-4" hover={false}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-text-secondary">
+                交易信号 ({backtestResult.total_trades}笔)
+              </h3>
+              <div className="flex gap-2">
+                <Button size="sm" variant="ghost" className="gap-1 text-xs text-text-secondary">
+                  <Download className="h-3.5 w-3.5" />
+                  导出
+                </Button>
+                <Button size="sm" variant="ghost" className="gap-1 text-xs text-text-secondary">
+                  <BarChart3 className="h-3.5 w-3.5" />
+                  详细分析
+                </Button>
               </div>
             </div>
-
-            <div className="border-t border-[var(--border)]" />
-
-            {/* Execution Parameters */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium text-[var(--text-primary)]">Execution</h3>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <label className="text-xs text-[var(--text-secondary)]">Symbol</label>
-                  <select
-                    value={symbol}
-                    onChange={(e) => setSymbol(e.target.value as SymbolType)}
-                    className="w-full bg-[var(--bg-primary)] text-[var(--text-primary)] border border-[var(--border)] rounded px-2 py-1.5 text-xs"
-                  >
-                    {SYMBOLS.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-[var(--text-secondary)]">Timeframe</label>
-                  <select
-                    value={timeframe}
-                    onChange={(e) => setTimeframe(e.target.value as TimeframeType)}
-                    className="w-full bg-[var(--bg-primary)] text-[var(--text-primary)] border border-[var(--border)] rounded px-2 py-1.5 text-xs"
-                  >
-                    {TIMEFRAMES.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="border-t border-[var(--border)]" />
-
-            {/* Template Selection */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium text-[var(--text-primary)]">Score Template</h3>
-              <div className="flex gap-1">
-                {TEMPLATES.map((t) => (
-                  <button
-                    key={t.value}
-                    type="button"
-                    onClick={() => setTemplate(t.value)}
-                    className={`flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors ${
-                      template === t.value
-                        ? 'bg-[var(--color-blue)] text-white'
-                        : 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                    }`}
-                  >
-                    {t.label}
-                  </button>
+            <ScrollArea className="mt-3 h-64">
+              <div className="flex flex-col gap-1.5">
+                {(backtestResult.signals ?? []).slice(0, 20).map((signal, i) => (
+                  <TradeSignalRow key={i} signal={signal} />
                 ))}
               </div>
-            </div>
-
-            <div className="border-t border-[var(--border)]" />
-
-            {/* Action Buttons */}
-            <div className="flex gap-2">
-              <Button
-                variant="primary"
-                size="md"
-                className="flex-1"
-                onClick={handleBacktest}
-                disabled={loading}
-              >
-                {loading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Play className="w-4 h-4" />
-                )}
-                {loading ? 'Running...' : 'Backtest'}
-              </Button>
-              <Button
-                variant="secondary"
-                size="md"
-                className="flex-1"
-                onClick={handleEvolution}
-              >
-                <Dna className="w-4 h-4" />
-                Evolution
-              </Button>
-            </div>
-
-            {error && (
-              <div className="text-xs text-[var(--color-loss)] bg-[var(--color-loss)]/10 rounded p-2">
-                {error} (showing demo data)
-              </div>
-            )}
-          </div>
+            </ScrollArea>
+          </GlassCard>
         )}
       </div>
+    </PageTransition>
+  );
+}
 
-      {/* Right Panel - Results */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {!result ? (
-          <div className="flex flex-col items-center justify-center h-full min-h-[60vh]">
-            <FlaskConical className="w-16 h-16 text-[var(--text-disabled)] mb-4" />
-            <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-2">
-              Strategy Lab
-            </h2>
-            <p className="text-[var(--text-secondary)] text-sm text-center max-w-md">
-              Configure your strategy parameters on the left panel, then click Backtest to see results here.
-            </p>
-          </div>
-        ) : (
-          <>
-            {/* Metrics Row */}
-            <div className="grid grid-cols-5 gap-3">
-              <MetricsCard
-                label="Annualized Return"
-                value={`${result.total_return >= 0 ? '+' : ''}${result.total_return.toFixed(1)}%`}
-                color={result.total_return >= 0 ? 'profit' : 'loss'}
-              />
-              <MetricsCard
-                label="Sharpe Ratio"
-                value={result.sharpe_ratio.toFixed(2)}
-                color={result.sharpe_ratio >= 1 ? 'profit' : 'warn'}
-              />
-              <MetricsCard
-                label="Max Drawdown"
-                value={`${result.max_drawdown.toFixed(1)}%`}
-                color={result.max_drawdown > -10 ? 'warn' : 'loss'}
-              />
-              <MetricsCard
-                label="Win Rate"
-                value={`${result.win_rate.toFixed(1)}%`}
-                color={result.win_rate >= 50 ? 'profit' : 'loss'}
-              />
-              <MetricsCard
-                label="Score"
-                value={result.total_score.toFixed(1)}
-                color={result.total_score >= 70 ? 'profit' : 'info'}
-              />
-            </div>
-
-            {/* K-Line Chart */}
-            <KlineChart candles={candles} trades={result.trades_json} />
-
-            {/* Equity Curve */}
-            <EquityChart equityCurve={result.equity_curve} />
-
-            {/* Trade Table */}
-            <TradeTable trades={result.trades_json} />
-          </>
-        )}
-      </div>
+function TradeSignalRow({ signal }: { signal: TradeSignal }) {
+  const isBuy = signal.type === "buy";
+  return (
+    <div
+      className={`flex items-center gap-3 rounded-lg px-3 py-2 text-xs ${
+        isBuy ? "border-l-2 border-profit bg-profit/5" : "border-l-2 border-loss bg-loss/5"
+      }`}
+    >
+      <Badge
+        variant="outline"
+        className={`h-5 text-[10px] ${
+          isBuy ? "border-profit/30 text-profit" : "border-loss/30 text-loss"
+        }`}
+      >
+        {isBuy ? "买" : "卖"}
+      </Badge>
+      <span className="font-num text-text-secondary">{signal.timestamp}</span>
+      <span className="font-num text-text-primary">{formatCurrency(signal.price)}</span>
+      {signal.confidence != null && (
+        <span className="text-text-muted">置信 {signal.confidence}%</span>
+      )}
+      <span className="text-text-muted">{signal.reason}</span>
     </div>
   );
 }

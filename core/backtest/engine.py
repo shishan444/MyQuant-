@@ -8,8 +8,8 @@ from typing import Tuple
 import pandas as pd
 import vectorbt as vbt
 
-from MyQuant.core.strategy.dna import StrategyDNA
-from MyQuant.core.strategy.executor import dna_to_signals
+from core.strategy.dna import StrategyDNA
+from core.strategy.executor import dna_to_signals
 
 
 @dataclass
@@ -61,7 +61,6 @@ class BacktestEngine:
             fees=self.fee,
             slippage=self.slippage,
             sl_stop=dna.risk_genes.stop_loss,
-            freq="4h",
         )
 
         # Extract equity curve (value() is a method in vectorbt 0.28)
@@ -140,7 +139,6 @@ class BacktestEngine:
             fees=self.fee,
             slippage=self.slippage,
             sl_stop=dna.risk_genes.stop_loss,
-            freq="4h",
         )
 
         result = self.run(dna, enhanced_df)

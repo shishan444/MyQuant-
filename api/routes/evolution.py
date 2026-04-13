@@ -8,8 +8,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from MyQuant.api.deps import get_db_path
-from MyQuant.api.schemas import (
+from api.deps import get_db_path
+from api.schemas import (
     DNAModel,
     EvolutionHistoryRecord,
     EvolutionHistoryResponse,
@@ -17,14 +17,14 @@ from MyQuant.api.schemas import (
     EvolutionTaskListResponse,
     EvolutionTaskResponse,
 )
-from MyQuant.core.persistence.db import (
+from core.persistence.db import (
     get_history,
     get_task,
     list_all_tasks,
     save_task,
     update_task,
 )
-from MyQuant.core.strategy.dna import StrategyDNA
+from core.strategy.dna import StrategyDNA
 
 router = APIRouter(prefix="/api/evolution", tags=["evolution"])
 
@@ -80,7 +80,21 @@ def create_task(
 ) -> EvolutionTaskResponse:
     """Create a new evolution task."""
     task_id = str(uuid.uuid4())
-    dna = _dna_model_to_dna(payload.initial_dna)
+
+    # Build initial DNA: use provided or generate a default
+    if payload.initial_dna:
+        dna = _dna_model_to_dna(payload.initial_dna)
+    else:
+        from core.strategy.dna import StrategyDNA, SignalGene, SignalRole, LogicGenes, ExecutionGenes, RiskGenes
+        dna = StrategyDNA(
+            signal_genes=[
+                SignalGene(indicator="EMA", params={"period": 20}, role=SignalRole.ENTRY_TRIGGER, condition={"type": "price_above"}),
+                SignalGene(indicator="EMA", params={"period": 20}, role=SignalRole.EXIT_TRIGGER, condition={"type": "price_below"}),
+            ],
+            logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+            execution_genes=ExecutionGenes(timeframe=payload.timeframe, symbol=payload.symbol),
+            risk_genes=RiskGenes(stop_loss=0.03, take_profit=0.06, position_size=1.0),
+        )
 
     save_task(
         db_path,
