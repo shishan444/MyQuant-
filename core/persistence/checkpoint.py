@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from MyQuant.core.strategy.dna import StrategyDNA
-from MyQuant.core.persistence.db import (
+from core.strategy.dna import StrategyDNA
+from core.persistence.db import (
     get_task, get_latest_snapshot, get_running_task,
 )
 
@@ -26,7 +26,7 @@ def save_generation(
 
     Writes to both generation_snapshot and evolution_history.
     """
-    from MyQuant.core.persistence.db import save_snapshot, save_history
+    from core.persistence.db import save_snapshot, save_history
 
     save_snapshot(
         db_path=db_path,

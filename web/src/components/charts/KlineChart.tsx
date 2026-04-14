@@ -1,4 +1,4 @@
-import { useLayoutEffect, useEffect, useRef, useMemo } from "react";
+import { useLayoutEffect, useEffect, useRef, useMemo, useImperativeHandle, forwardRef } from "react";
 import {
   createChart,
   CandlestickSeries,
@@ -10,6 +10,7 @@ import type {
   ISeriesApi,
   ISeriesMarkersPluginApi,
   Time,
+  UTCTimestamp,
 } from "lightweight-charts";
 
 import { DARK_CHART_THEME, CHART_COLORS } from "./core/chartThemes";
@@ -39,30 +40,39 @@ interface SignalData {
   timestamp: string;
 }
 
+interface TriggerMarker {
+  id: number;
+  time: string;
+  matched: boolean;
+}
+
 interface KlineChartProps {
   data: CandleData[];
   indicators?: IndicatorData[];
   signals?: SignalData[];
+  triggers?: TriggerMarker[];
   height?: number;
+  onTriggerClick?: (id: number) => void;
+}
+
+export interface KlineChartHandle {
+  scrollToTime: (time: string) => void;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Convert ISO timestamp to lightweight-charts compatible Time string.
- *  Accepts formats like "2024-01-01 00:00:00+00:00" or "2024-01-01T00:00:00Z"
- *  and normalizes to "yyyy-mm-dd". */
+/** Convert ISO timestamp to lightweight-charts compatible Time.
+ *  For intraday data, returns UTCTimestamp (seconds since epoch).
+ *  For daily data, returns "yyyy-mm-dd" string. */
 function toTime(ts: string): Time {
   const date = new Date(ts);
   if (isNaN(date.getTime())) {
-    // Fallback: try extracting first 10 chars (yyyy-mm-dd)
     return ts.slice(0, 10) as Time;
   }
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}` as Time;
+  // Use UTCTimestamp for intraday, string for daily
+  return Math.floor(date.getTime() / 1000) as UTCTimestamp;
 }
 
 /** Transform raw candle data into the format expected by CandlestickSeries. */
@@ -80,12 +90,14 @@ function toCandleData(data: CandleData[]) {
 // Component
 // ---------------------------------------------------------------------------
 
-function KlineChart({
+const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineChart({
   data,
   indicators,
   signals,
+  triggers,
   height = 450,
-}: KlineChartProps) {
+  onTriggerClick: _onTriggerClick,
+}, ref) {
   const mainRef = useRef<HTMLDivElement>(null);
   const rsiRef = useRef<HTMLDivElement>(null);
 
@@ -104,6 +116,20 @@ function KlineChart({
   const memoizedCandles = useMemo(() => toCandleData(data), [data]);
   const memoizedIndicators = useMemo(() => indicators ?? [], [indicators]);
   const memoizedSignals = useMemo(() => signals ?? [], [signals]);
+  const memoizedTriggers = useMemo(() => triggers ?? [], [triggers]);
+
+  // Expose imperative handle for scrolling to a specific time
+  useImperativeHandle(ref, () => ({
+    scrollToTime: (time: string) => {
+      const chart = mainChartRef.current;
+      if (!chart) return;
+      const ts = toTime(time);
+      chart.timeScale().setVisibleRange({
+        from: ts as UTCTimestamp,
+        to: ts as UTCTimestamp,
+      });
+    },
+  }), []);
 
   // Sync charts via shared hook.
   useChartSync(mainChartRef.current, rsiChartRef.current);
@@ -223,17 +249,36 @@ function KlineChart({
       );
     }
 
-    // -- Signal markers --
-    const markers = memoizedSignals.map((s) => ({
-      time: toTime(s.timestamp),
-      position: s.type === "buy"
-        ? ("belowBar" as const)
-        : ("aboveBar" as const),
-      color:
-        s.type === "buy" ? CHART_COLORS.buySignal : CHART_COLORS.sellSignal,
-      shape: s.type === "buy" ? ("arrowUp" as const) : ("arrowDown" as const),
-      text: s.type === "buy" ? "B" : "S",
-    }));
+    // -- Build markers from both signals and triggers --
+    const markers: Array<{
+      time: Time;
+      position: "aboveBar" | "belowBar";
+      color: string;
+      shape: "arrowUp" | "arrowDown" | "circle";
+      text: string;
+    }> = [];
+
+    // Signal markers (buy/sell)
+    for (const s of memoizedSignals) {
+      markers.push({
+        time: toTime(s.timestamp),
+        position: s.type === "buy" ? "belowBar" : "aboveBar",
+        color: s.type === "buy" ? CHART_COLORS.buySignal : CHART_COLORS.sellSignal,
+        shape: s.type === "buy" ? "arrowUp" : "arrowDown",
+        text: s.type === "buy" ? "B" : "S",
+      });
+    }
+
+    // Trigger markers
+    for (const t of memoizedTriggers) {
+      markers.push({
+        time: toTime(t.time),
+        position: "aboveBar",
+        color: t.matched ? "#00C853" : "#EF4444",
+        shape: "circle",
+        text: `(${t.id})`,
+      });
+    }
 
     if (markersPluginRef.current) {
       markersPluginRef.current.setMarkers(markers);
@@ -243,7 +288,7 @@ function KlineChart({
 
     // -- Fit content --
     mainChart.timeScale().fitContent();
-  }, [memoizedCandles, memoizedIndicators, memoizedSignals]);
+  }, [memoizedCandles, memoizedIndicators, memoizedSignals, memoizedTriggers]);
 
   // -------------------------------------------------------------------------
   // RSI data update
@@ -324,7 +369,7 @@ function KlineChart({
       />
     </div>
   );
-}
+});
 
 export { KlineChart };
-export type { KlineChartProps, CandleData, IndicatorData, SignalData };
+export type { KlineChartProps, CandleData, IndicatorData, SignalData, TriggerMarker };

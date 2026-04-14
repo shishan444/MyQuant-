@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List
 
-from MyQuant.core.strategy.dna import StrategyDNA
+from core.strategy.dna import StrategyDNA
 
 
 def record_mutation(dna: StrategyDNA, op_description: str) -> StrategyDNA:

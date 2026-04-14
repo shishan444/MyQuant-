@@ -3,13 +3,17 @@ import pytest
 import numpy as np
 
 from MyQuant.core.strategy.dna import (
-    SignalRole, SignalGene, LogicGenes, RiskGenes, ExecutionGenes, StrategyDNA,
+    SignalRole, SignalGene, LogicGenes, RiskGenes, ExecutionGenes,
+    StrategyDNA, TimeframeLayer,
 )
 from MyQuant.core.strategy.validator import validate_dna
 from MyQuant.core.evolution.operators import (
     mutate_params, mutate_indicator, mutate_logic, mutate_risk, crossover,
+    mutate_add_layer, mutate_remove_layer, mutate_layer_timeframe, mutate_cross_logic,
 )
-from MyQuant.core.evolution.population import create_random_dna, init_population
+from MyQuant.core.evolution.population import (
+    create_random_dna, init_population, create_random_mtf_layer,
+)
 from MyQuant.core.evolution.diversity import compute_diversity, inject_fresh_blood
 from MyQuant.core.evolution.lineage import record_mutation, get_lineage
 from MyQuant.core.evolution.engine import EarlyStopChecker, EvolutionEngine
@@ -28,6 +32,35 @@ def _make_simple_dna() -> StrategyDNA:
         logic_genes=LogicGenes(entry_logic="AND", exit_logic="OR"),
         risk_genes=RiskGenes(stop_loss=0.05, take_profit=None, position_size=0.3),
         strategy_id="test-parent",
+        generation=0,
+    )
+
+
+def _make_mtf_dna() -> StrategyDNA:
+    return StrategyDNA(
+        signal_genes=[
+            SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, None,
+                       {"type": "lt", "threshold": 30}),
+            SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, None,
+                       {"type": "gt", "threshold": 70}),
+        ],
+        logic_genes=LogicGenes(entry_logic="AND", exit_logic="OR"),
+        execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
+        risk_genes=RiskGenes(stop_loss=0.05, position_size=0.3),
+        layers=[
+            TimeframeLayer(timeframe="4h", signal_genes=[
+                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, None,
+                           {"type": "lt", "threshold": 30}),
+                SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, None,
+                           {"type": "gt", "threshold": 70}),
+            ]),
+            TimeframeLayer(timeframe="1d", signal_genes=[
+                SignalGene("EMA", {"period": 50}, SignalRole.ENTRY_TRIGGER, None,
+                           {"type": "price_above"}),
+            ]),
+        ],
+        cross_layer_logic="AND",
+        strategy_id="mtf-parent",
         generation=0,
     )
 
@@ -211,3 +244,81 @@ class TestEarlyStopChecker:
         action, reason = checker.check(57.0, 4)
         assert action == "stop"
         assert reason == "decline"
+
+
+# ── MTF Operator Tests ──
+
+
+class TestMutateAddLayer:
+    def test_adds_layer_to_single_tf_dna(self):
+        dna = _make_simple_dna()
+        mutated = mutate_add_layer(dna)
+        assert mutated.is_mtf
+        assert "add_layer" in mutated.mutation_ops
+        assert mutated.generation == 1
+
+    def test_adds_layer_to_mtf_dna(self):
+        dna = _make_mtf_dna()
+        original_count = len(dna.layers)
+        mutated = mutate_add_layer(dna)
+        assert len(mutated.layers) == original_count + 1
+
+    def test_no_candidates_returns_same(self):
+        dna = _make_simple_dna()
+        # All timeframes already used
+        existing_tfs = set(dna.timeframes)
+        all_tfs = list(existing_tfs)
+        mutated = mutate_add_layer(dna, candidate_timeframes=all_tfs)
+        assert mutated.strategy_id == dna.strategy_id
+
+
+class TestMutateRemoveLayer:
+    def test_removes_layer_from_mtf(self):
+        dna = _make_mtf_dna()
+        original_count = len(dna.layers)
+        mutated = mutate_remove_layer(dna)
+        assert len(mutated.layers) < original_count
+
+    def test_single_layer_noop(self):
+        dna = _make_simple_dna()
+        mutated = mutate_remove_layer(dna)
+        assert mutated.strategy_id == dna.strategy_id
+
+
+class TestMutateLayerTimeframe:
+    def test_changes_timeframe(self):
+        dna = _make_mtf_dna()
+        mutated = mutate_layer_timeframe(dna)
+        if mutated.strategy_id != dna.strategy_id:
+            assert "layer_timeframe" in mutated.mutation_ops
+
+    def test_single_tf_noop(self):
+        dna = _make_simple_dna()
+        mutated = mutate_layer_timeframe(dna)
+        assert mutated.strategy_id == dna.strategy_id
+
+
+class TestMutateCrossLogic:
+    def test_flips_logic(self):
+        dna = _make_mtf_dna()
+        original_logic = dna.cross_layer_logic
+        mutated = mutate_cross_logic(dna)
+        assert mutated.cross_layer_logic != original_logic
+
+    def test_single_tf_noop(self):
+        dna = _make_simple_dna()
+        mutated = mutate_cross_logic(dna)
+        assert mutated.strategy_id == dna.strategy_id
+
+
+class TestRandomMtfLayer:
+    def test_creates_valid_layer(self):
+        layer = create_random_mtf_layer("1d")
+        assert layer.timeframe == "1d"
+        assert len(layer.signal_genes) >= 2  # at least entry + exit
+
+    def test_layer_has_entry_and_exit(self):
+        layer = create_random_mtf_layer("4h")
+        roles = [g.role for g in layer.signal_genes]
+        assert any(r == SignalRole.ENTRY_TRIGGER for r in roles)
+        assert any(r == SignalRole.EXIT_TRIGGER for r in roles)

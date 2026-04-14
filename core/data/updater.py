@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from MyQuant.core.data.fetcher import fetch_klines
-from MyQuant.core.data.storage import save_parquet, load_parquet, get_latest_timestamp
+from core.data.fetcher import fetch_klines
+from core.data.storage import save_parquet, load_parquet, get_latest_timestamp
 
 
 def update_market_data(

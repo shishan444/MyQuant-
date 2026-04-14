@@ -1,5 +1,8 @@
 """E2E tests for MyQuant V0.6 - Visual + UI features.
 
+**DEPRECATED:** Streamlit UI has been removed in favor of React frontend (v0.10-v0.13).
+These tests are skipped but kept for reference.
+
 Tests the Streamlit app at http://localhost:8501 covering:
 1. Main page load and navigation
 2. Strategy Input page - form, DNA build, backtest preview
@@ -7,20 +10,19 @@ Tests the Streamlit app at http://localhost:8501 covering:
 4. Result Report page - empty state
 5. Visualization components - Plotly charts rendering
 
-Prerequisites:
-  - Streamlit app running on localhost:8501
-  - Market data available (BTCUSDT_4h.parquet)
-  - Playwright installed: pip install playwright && playwright install chromium
-
-Usage:
-  cd MyQuant
-  python -m pytest tests/e2e/test_v06_e2e.py -v --tb=short
+To re-enable (for testing Streamlit locally):
+  python -m pytest tests/e2e/test_v06_e2e.py -v --tb=short --run-deprecated
 """
+
+import pytest
 
 import time
 from pathlib import Path
 
 from playwright.sync_api import Page, expect
+
+# Skip all tests in this module by default
+pytestmark = pytest.mark.skip(reason="DEPRECATED: Streamlit UI removed, use React frontend instead")
 
 BASE_URL = "http://localhost:8501"
 TIMEOUT = 120000  # 120s - Streamlit pages are slow (compute_all_indicators)

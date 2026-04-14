@@ -13,6 +13,16 @@ venv/
 # Data files
 data/market/*.parquet
 data/evolution.db
+data/quant.db
+data/config.json
+
+# Runtime
+*.pid
+logs/*.log
+logs/**/*.log
+
+# Web
+web/dist/
 
 # IDE
 .vscode/

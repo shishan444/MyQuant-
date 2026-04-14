@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from MyQuant.core.persistence.db import _connect, init_db
+from core.persistence.db import _connect, init_db
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,27 @@ def _apply_alter_evolution_task(conn: sqlite3.Connection) -> None:
             )
 
 
+_MTF_COLUMNS = [
+    ("indicator_pool", "TEXT"),
+    ("timeframe_pool", "TEXT"),
+    ("mode", "TEXT"),
+]
+
+
+def _apply_mtf_columns(conn: sqlite3.Connection) -> None:
+    """Add MTF-related columns to evolution_task (idempotent)."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(evolution_task)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+
+    for col_name, col_def in _MTF_COLUMNS:
+        if col_name not in existing:
+            conn.execute(
+                f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
+            )
+
+
 def _record_version(conn: sqlite3.Connection, version: int) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?, ?)",
@@ -123,8 +144,8 @@ def init_db_ext(db_path: Path) -> None:
                 if version in applied:
                     continue
                 sql_text = sql_file.read_text(encoding="utf-8")
-                # Skip migration 005 — handled separately via ALTER
-                if version == 5:
+                # Skip migration 005/006 — handled separately via ALTER
+                if version in (5, 6):
                     continue
                 conn.executescript(sql_text)
                 _record_version(conn, version)
@@ -138,6 +159,11 @@ def init_db_ext(db_path: Path) -> None:
         _apply_alter_evolution_task(conn)
         if 5 not in applied:
             _record_version(conn, 5)
+
+        # 5. ALTER TABLE for MTF support (migration 006)
+        _apply_mtf_columns(conn)
+        if 6 not in applied:
+            _record_version(conn, 6)
 
         conn.commit()
     finally:

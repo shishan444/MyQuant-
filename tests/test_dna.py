@@ -9,6 +9,7 @@ from MyQuant.core.strategy.dna import (
     ExecutionGenes,
     RiskGenes,
     StrategyDNA,
+    TimeframeLayer,
 )
 
 
@@ -80,7 +81,7 @@ class TestSignalGene:
         d = gene.to_dict()
         assert d["indicator"] == "EMA"
         assert d["role"] == "entry_guard"
-        assert d["field"] is None  # JSON uses "field" not "field_name"
+        assert d["field"] is None
         assert d["condition"] == {"type": "price_above"}
 
     def test_from_dict(self):
@@ -94,6 +95,39 @@ class TestSignalGene:
         gene = SignalGene.from_dict(d)
         assert gene.indicator == "RSI"
         assert gene.role == SignalRole.ENTRY_TRIGGER
+
+
+class TestTimeframeLayer:
+    """TimeframeLayer dataclass tests."""
+
+    def test_create_layer(self):
+        layer = TimeframeLayer(
+            timeframe="4h",
+            signal_genes=[
+                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, None,
+                           {"type": "lt", "threshold": 30}),
+            ],
+            logic_genes=LogicGenes(entry_logic="AND", exit_logic="OR"),
+        )
+        assert layer.timeframe == "4h"
+        assert len(layer.signal_genes) == 1
+
+    def test_layer_serialization_roundtrip(self):
+        layer = TimeframeLayer(
+            timeframe="1d",
+            signal_genes=[
+                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, None,
+                           {"type": "lt", "threshold": 30}),
+                SignalGene("EMA", {"period": 50}, SignalRole.EXIT_TRIGGER, None,
+                           {"type": "price_below"}),
+            ],
+            logic_genes=LogicGenes(entry_logic="OR", exit_logic="AND"),
+        )
+        d = layer.to_dict()
+        restored = TimeframeLayer.from_dict(d)
+        assert restored.timeframe == "1d"
+        assert len(restored.signal_genes) == 2
+        assert restored.logic_genes.entry_logic == "OR"
 
 
 class TestStrategyDNA:
@@ -146,6 +180,7 @@ class TestStrategyDNA:
         assert "logic_genes" in parsed
         assert "execution_genes" in parsed
         assert "risk_genes" in parsed
+        assert "cross_layer_logic" in parsed
 
     def test_default_values(self):
         dna = StrategyDNA(
@@ -157,4 +192,96 @@ class TestStrategyDNA:
         assert dna.generation == 0
         assert dna.parent_ids == []
         assert dna.mutation_ops == []
-        assert dna.strategy_id  # auto-generated UUID should be non-empty
+        assert dna.strategy_id
+
+    def test_auto_wrap_creates_single_layer(self, sample_dna):
+        """Legacy DNA deserialized via from_dict should auto-create a single layer."""
+        # Auto-wrap happens in from_dict, not in __init__
+        data = sample_dna.to_dict()
+        dna = StrategyDNA.from_dict(data)
+        assert dna.layers is not None
+        assert len(dna.layers) == 1
+        assert dna.layers[0].timeframe == "4h"
+        assert len(dna.layers[0].signal_genes) == 3
+
+    def test_is_mtf_single_layer(self, sample_dna):
+        """Single layer DNA should not be considered MTF."""
+        assert not sample_dna.is_mtf
+
+    def test_is_mtf_multi_layer(self):
+        """DNA with multiple layers should be considered MTF."""
+        dna = StrategyDNA(
+            signal_genes=[
+                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, None,
+                           {"type": "lt", "threshold": 30}),
+            ],
+            logic_genes=LogicGenes(entry_logic="AND", exit_logic="OR"),
+            execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
+            risk_genes=RiskGenes(stop_loss=0.05, position_size=0.3),
+            layers=[
+                TimeframeLayer(timeframe="4h", signal_genes=[
+                    SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, None,
+                               {"type": "lt", "threshold": 30}),
+                ]),
+                TimeframeLayer(timeframe="1d", signal_genes=[
+                    SignalGene("EMA", {"period": 50}, SignalRole.ENTRY_TRIGGER, None,
+                               {"type": "price_above"}),
+                ]),
+            ],
+        )
+        assert dna.is_mtf
+        assert dna.timeframes == ["4h", "1d"]
+
+    def test_mtf_serialization_roundtrip(self):
+        """MTF DNA should survive dict roundtrip."""
+        dna = StrategyDNA(
+            signal_genes=[
+                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, None,
+                           {"type": "lt", "threshold": 30}),
+                SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, None,
+                           {"type": "gt", "threshold": 70}),
+            ],
+            logic_genes=LogicGenes(entry_logic="AND", exit_logic="OR"),
+            execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
+            risk_genes=RiskGenes(stop_loss=0.05, position_size=0.3),
+            layers=[
+                TimeframeLayer(timeframe="4h", signal_genes=[
+                    SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, None,
+                               {"type": "lt", "threshold": 30}),
+                ]),
+                TimeframeLayer(timeframe="1d", signal_genes=[
+                    SignalGene("EMA", {"period": 50}, SignalRole.ENTRY_TRIGGER, None,
+                               {"type": "price_above"}),
+                ]),
+            ],
+            cross_layer_logic="OR",
+        )
+        d = dna.to_dict()
+        assert "layers" in d
+        assert len(d["layers"]) == 2
+        assert d["cross_layer_logic"] == "OR"
+
+        restored = StrategyDNA.from_dict(d)
+        assert restored.is_mtf
+        assert len(restored.layers) == 2
+        assert restored.layers[0].timeframe == "4h"
+        assert restored.layers[1].timeframe == "1d"
+        assert restored.cross_layer_logic == "OR"
+
+    def test_backward_compat_from_old_dict(self):
+        """Old format (no layers key) should auto-wrap correctly."""
+        old_data = {
+            "strategy_id": "old-001",
+            "signal_genes": [
+                {"indicator": "RSI", "params": {"period": 14}, "role": "entry_trigger",
+                 "field": None, "condition": {"type": "lt", "threshold": 30}},
+            ],
+            "logic_genes": {"entry_logic": "AND", "exit_logic": "OR"},
+            "execution_genes": {"timeframe": "4h", "symbol": "BTCUSDT"},
+            "risk_genes": {"stop_loss": 0.05, "take_profit": None, "position_size": 0.3},
+        }
+        dna = StrategyDNA.from_dict(old_data)
+        assert not dna.is_mtf
+        assert dna.layers is not None
+        assert len(dna.layers) == 1
+        assert dna.layers[0].timeframe == "4h"

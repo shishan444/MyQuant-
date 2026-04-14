@@ -1,6 +1,7 @@
 """FastAPI application entry point with CORS, lifecycle, and route mounting."""
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .db_ext import init_db_ext
 from .routes import config, data, evolution, strategies, ws
+from .routes import validate as validate_route
 from .schemas import HealthResponse
 
 
@@ -44,11 +46,35 @@ def create_app(
         app.state.db_path = db_path
         app.state.data_dir = data_dir
 
+        # Start EvolutionRunner background thread
+        from .runner import EvolutionRunner, set_ws_push_fn
+        from .routes.ws import get_manager
+
+        runner = EvolutionRunner(db_path=db_path, data_dir=data_dir)
+        app.state.evolution_runner = runner
+
+        # Wire WS push: runner -> manager.push (async) via asyncio.run_coroutine_threadsafe
+        event_loop = asyncio.get_event_loop()
+
+        def _ws_push(task_id: str, payload: dict) -> None:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    get_manager().push(task_id, payload), event_loop
+                )
+            except Exception:
+                pass
+
+        set_ws_push_fn(_ws_push)
+        runner.start()
+
         yield
+
+        # Shutdown: stop the runner
+        runner.stop()
 
     app = FastAPI(
         title="MyQuant API",
-        version="0.9.0",
+        version="0.14.0",
         lifespan=lifespan,
     )
 
@@ -67,13 +93,14 @@ def create_app(
     app.include_router(evolution.router)
     app.include_router(data.router)
     app.include_router(ws.router)
+    app.include_router(validate_route.router)
 
     # Health check endpoint
     @app.get("/api/health", response_model=HealthResponse)
     def health_check() -> HealthResponse:
         return HealthResponse(
             status="ok",
-            version="0.9.0",
+            version="0.14.0",
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 

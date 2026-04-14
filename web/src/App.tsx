@@ -1,22 +1,42 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
-import { AppLayout } from '@/components/layout/AppLayout';
-import { Lab } from '@/pages/Lab';
-import { Evolution } from '@/pages/Evolution';
-import { Library } from '@/pages/Library';
-import { Data } from '@/pages/Data';
-import { SettingsPage } from '@/pages/Settings';
+import {
+  createBrowserRouter,
+  Navigate,
+  RouterProvider,
+} from "react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { AppLayout } from "@/components/layout/AppLayout";
+import { Lab } from "@/pages/Lab";
+import { Evolution } from "@/pages/Evolution";
+import { Strategies } from "@/pages/Strategies";
+import { Trading } from "@/pages/Trading";
+import { DataManagement } from "@/pages/DataManagement";
+import { Settings } from "@/pages/Settings";
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { staleTime: 30_000, retry: 1 },
+  },
+});
+
+const router = createBrowserRouter([
+  {
+    element: <AppLayout />,
+    children: [
+      { index: true, element: <Navigate to="/lab" replace /> },
+      { path: "/lab", element: <Lab /> },
+      { path: "/evolution", element: <Evolution /> },
+      { path: "/strategies", element: <Strategies /> },
+      { path: "/trading", element: <Trading /> },
+      { path: "/data", element: <DataManagement /> },
+      { path: "/settings", element: <Settings /> },
+    ],
+  },
+]);
 
 export function App() {
   return (
-    <Routes>
-      <Route element={<AppLayout />}>
-        <Route path="/lab" element={<Lab />} />
-        <Route path="/evolution" element={<Evolution />} />
-        <Route path="/library" element={<Library />} />
-        <Route path="/data" element={<Data />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/" element={<Navigate to="/data" replace />} />
-      </Route>
-    </Routes>
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
   );
 }

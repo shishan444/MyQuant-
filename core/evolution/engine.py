@@ -4,12 +4,12 @@ from __future__ import annotations
 import random
 from typing import Callable, Dict, List, Optional, Tuple
 
-from MyQuant.core.strategy.dna import StrategyDNA
-from MyQuant.core.evolution.operators import (
+from core.strategy.dna import StrategyDNA
+from core.evolution.operators import (
     mutate_params, mutate_indicator, mutate_logic, mutate_risk, crossover,
 )
-from MyQuant.core.evolution.population import init_population, create_random_dna
-from MyQuant.core.evolution.diversity import (
+from core.evolution.population import init_population, create_random_dna
+from core.evolution.diversity import (
     compute_diversity, inject_fresh_blood, check_and_maintain_diversity,
 )
 

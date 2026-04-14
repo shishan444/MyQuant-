@@ -7,13 +7,13 @@ from typing import Dict, List, Optional
 import pandas as pd
 import plotly.graph_objects as go
 
-from MyQuant.core.backtest.engine import BacktestEngine, BacktestResult
-from MyQuant.core.strategy.dna import StrategyDNA
-from MyQuant.core.strategy.executor import dna_to_signals
-from MyQuant.core.visualization.kline_chart import build_kline_chart
-from MyQuant.core.visualization.equity_curve import build_equity_curve
-from MyQuant.core.visualization.generation_chart import build_generation_chart
-from MyQuant.core.visualization.quick_preview import build_quick_preview
+from core.backtest.engine import BacktestEngine, BacktestResult
+from core.strategy.dna import StrategyDNA
+from core.strategy.executor import dna_to_signals
+from core.visualization.kline_chart import build_kline_chart
+from core.visualization.equity_curve import build_equity_curve
+from core.visualization.generation_chart import build_generation_chart
+from core.visualization.quick_preview import build_quick_preview
 
 
 def build_champion_report(

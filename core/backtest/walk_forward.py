@@ -13,10 +13,10 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from MyQuant.core.strategy.dna import StrategyDNA
-from MyQuant.core.backtest.engine import BacktestEngine, BacktestResult
-from MyQuant.core.scoring.metrics import compute_metrics
-from MyQuant.core.scoring.scorer import score_strategy
+from core.strategy.dna import StrategyDNA
+from core.backtest.engine import BacktestEngine, BacktestResult
+from core.scoring.metrics import compute_metrics
+from core.scoring.scorer import score_strategy
 
 
 @dataclass

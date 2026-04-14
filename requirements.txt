@@ -2,7 +2,6 @@ python-binance>=1.0.19
 vectorbt>=0.26.1
 pandas-ta>=0.3.14b
 deap>=1.4.1
-streamlit>=1.33.0
 plotly>=5.22.0
 pandas>=2.2.0
 numpy>=1.26.0

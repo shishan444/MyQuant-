@@ -1,0 +1,443 @@
+"""WHEN/THEN hypothesis validation engine."""
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+import numpy as np
+import pandas as pd
+from core.features.indicators import compute_all_indicators
+from core.data.storage import load_parquet
+
+
+@dataclass
+class TriggerRecord:
+    """A single trigger event."""
+    id: int
+    time: str
+    trigger_price: float
+    change_pct: float
+    matched: bool
+    indicator_values: Dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class DistributionBucket:
+    """A histogram bucket."""
+    range_start: float
+    range_end: float
+    match_count: int
+    mismatch_count: int
+    total_count: int
+
+
+@dataclass
+class ValidationResult:
+    """Complete validation output."""
+    match_rate: float
+    total_count: int
+    match_count: int
+    mismatch_count: int
+    triggers: List[TriggerRecord] = field(default_factory=list)
+    distribution: List[DistributionBucket] = field(default_factory=list)
+    percentiles: Dict[str, float] = field(default_factory=dict)
+    concentration: Dict[str, List[float]] = field(default_factory=dict)
+    signal_frequency: Dict[str, float] = field(default_factory=dict)
+    extremes: List[Dict[str, Any]] = field(default_factory=list)
+
+
+def validate_hypothesis(
+    pair: str,
+    timeframe: str,
+    start: str,
+    end: str,
+    when_conditions: List[Dict[str, Any]],
+    then_conditions: List[Dict[str, Any]],
+    indicator_params: Optional[Dict[str, Any]] = None,
+    then_window: int = 8,
+    data_dir: Optional[str] = None,
+) -> ValidationResult:
+    """Validate a WHEN->THEN hypothesis against historical data.
+
+    Args:
+        pair: Trading pair like "BTCUSDT"
+        timeframe: K-line interval like "4h"
+        start: Start date "2024-01-01"
+        end: End date "2024-12-31"
+        when_conditions: List of WHEN condition dicts
+        then_conditions: List of THEN condition dicts
+        indicator_params: Optional indicator parameter overrides
+        then_window: Number of bars to check for THEN fulfillment
+        data_dir: Optional path to market data directory
+
+    Returns:
+        ValidationResult with all statistics
+    """
+    from pathlib import Path
+    import re
+
+    if data_dir is None:
+        data_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "market")
+
+    # Load data
+    safe_symbol = re.sub(r'[^A-Za-z0-9]', '', pair)
+    parquet_path = Path(data_dir) / f"{safe_symbol}_{timeframe}.parquet"
+
+    if not parquet_path.exists():
+        return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0)
+
+    df = load_parquet(parquet_path)
+    if df is None or len(df) == 0:
+        return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0)
+
+    # Filter by date range
+    if start:
+        df = df[df.index >= start]
+    if end:
+        df = df[df.index <= end]
+
+    if len(df) == 0:
+        return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0)
+
+    # Compute indicators
+    enhanced_df = compute_all_indicators(df)
+
+    # Evaluate WHEN conditions
+    when_mask = _evaluate_conditions(enhanced_df, when_conditions)
+
+    # Find trigger indices
+    trigger_indices = enhanced_df.index[when_mask].tolist()
+
+    if not trigger_indices:
+        return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0)
+
+    # Evaluate THEN conditions for each trigger
+    triggers = []
+    changes = []
+    for i, trigger_idx in enumerate(trigger_indices):
+        trigger_loc = enhanced_df.index.get_loc(trigger_idx)
+        trigger_price = enhanced_df.loc[trigger_idx, "close"]
+
+        # Look ahead for THEN window
+        end_loc = min(trigger_loc + then_window + 1, len(enhanced_df))
+        window_df = enhanced_df.iloc[trigger_loc + 1:end_loc]
+
+        if len(window_df) == 0:
+            continue
+
+        # Check THEN conditions
+        then_matched = _check_then_conditions(window_df, then_conditions, trigger_price)
+
+        # Calculate change
+        final_price = window_df.iloc[-1]["close"]
+        change_pct = ((final_price - trigger_price) / trigger_price) * 100
+
+        # Record indicator values at trigger time
+        trigger_row = enhanced_df.loc[trigger_idx]
+        ind_values = {}
+        for col in enhanced_df.columns:
+            if col not in ["open", "high", "low", "close", "volume"]:
+                try:
+                    val = float(trigger_row[col])
+                    if not np.isnan(val):
+                        ind_values[col] = round(val, 4)
+                except (ValueError, TypeError):
+                    pass
+
+        triggers.append(TriggerRecord(
+            id=i + 1,
+            time=str(trigger_idx),
+            trigger_price=trigger_price,
+            change_pct=round(change_pct, 2),
+            matched=then_matched,
+            indicator_values=ind_values,
+        ))
+        changes.append(change_pct)
+
+    if not triggers:
+        return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0)
+
+    match_count = sum(1 for t in triggers if t.matched)
+    total_count = len(triggers)
+    match_rate = round(match_count / total_count * 100, 1) if total_count > 0 else 0
+
+    # Build distribution
+    distribution = _build_distribution(changes, [t.matched for t in triggers])
+
+    # Compute percentiles
+    percentiles = {}
+    if changes:
+        arr = np.array(changes)
+        percentiles = {
+            "p10": round(float(np.percentile(arr, 10)), 2),
+            "p25": round(float(np.percentile(arr, 25)), 2),
+            "p50": round(float(np.percentile(arr, 50)), 2),
+            "p75": round(float(np.percentile(arr, 75)), 2),
+            "p90": round(float(np.percentile(arr, 90)), 2),
+            "min": round(float(np.min(arr)), 2),
+            "max": round(float(np.max(arr)), 2),
+        }
+
+    # Concentration
+    concentration = {}
+    if changes:
+        arr = np.array(changes)
+        concentration = {
+            "p50_range": [round(float(np.percentile(arr, 25)), 2), round(float(np.percentile(arr, 75)), 2)],
+            "p90_range": [round(float(np.percentile(arr, 5)), 2), round(float(np.percentile(arr, 95)), 2)],
+        }
+
+    # Signal frequency
+    signal_frequency = {}
+    if total_count > 0 and len(df) > 0:
+        days_covered = (df.index[-1] - df.index[0]).days
+        if days_covered > 0:
+            months = days_covered / 30.44
+            signal_frequency = {
+                "per_month": round(total_count / months, 1),
+                "per_week": round(total_count / (days_covered / 7), 1),
+                "total_months": round(months, 0),
+            }
+
+    # Extremes
+    extremes = []
+    if changes:
+        sorted_triggers = sorted(triggers, key=lambda t: t.change_pct)
+        worst = sorted_triggers[0]
+        extremes.append({
+            "change_pct": worst.change_pct,
+            "time": worst.time,
+            "is_match": worst.matched,
+        })
+
+    return ValidationResult(
+        match_rate=match_rate,
+        total_count=total_count,
+        match_count=match_count,
+        mismatch_count=total_count - match_count,
+        triggers=triggers,
+        distribution=distribution,
+        percentiles=percentiles,
+        concentration=concentration,
+        signal_frequency=signal_frequency,
+        extremes=extremes,
+    )
+
+
+def _evaluate_conditions(df: pd.DataFrame, conditions: List[Dict]) -> pd.Series:
+    """Evaluate a list of conditions against a DataFrame."""
+    if not conditions:
+        return pd.Series(False, index=df.index)
+
+    masks = []
+    logic = "AND"
+    for cond in conditions:
+        logic = cond.get("logic", "AND")
+        mask = _evaluate_single_condition(df, cond)
+        masks.append(mask)
+
+    if not masks:
+        return pd.Series(False, index=df.index)
+
+    result = masks[0]
+    for m in masks[1:]:
+        if logic == "AND":
+            result = result & m
+        else:
+            result = result | m
+
+    return result.fillna(False)
+
+
+def _evaluate_single_condition(df: pd.DataFrame, cond: Dict) -> pd.Series:
+    """Evaluate a single condition."""
+    subject = cond.get("subject", "")
+    action = cond.get("action", "")
+    target = cond.get("target", "")
+
+    # Get subject series
+    subject_series = _resolve_subject(df, subject)
+    if subject_series is None:
+        return pd.Series(False, index=df.index)
+
+    # Get target value/series
+    if isinstance(target, (int, float)):
+        target_val = float(target)
+    elif isinstance(target, str) and target in df.columns:
+        target_val = df[target]
+    else:
+        target_val = _resolve_target_value(target)
+
+    if target_val is None:
+        return pd.Series(False, index=df.index)
+
+    # Apply action
+    action_map = {
+        "touch": lambda s, t: _touch_condition(s, t),
+        "cross_above": lambda s, t: _cross_above(s, t),
+        "cross_below": lambda s, t: _cross_below(s, t),
+        "breakout": lambda s, t: _cross_above(s, t),
+        "breakdown": lambda s, t: _cross_below(s, t),
+        "gt": lambda s, t: s > t,
+        "lt": lambda s, t: s < t,
+        "ge": lambda s, t: s >= t,
+        "le": lambda s, t: s <= t,
+        "spike": lambda s, t: _spike_condition(s, df, t),
+        "shrink": lambda s, t: _shrink_condition(s, df, t),
+    }
+
+    fn = action_map.get(action)
+    if fn is None:
+        return pd.Series(False, index=df.index)
+
+    return fn(subject_series, target_val)
+
+
+def _resolve_subject(df: pd.DataFrame, subject: str) -> Optional[pd.Series]:
+    """Resolve a subject name to a DataFrame column."""
+    subject_map = {
+        "close": "close", "price": "close",
+        "open": "open", "high": "high", "low": "low",
+        "volume": "volume",
+    }
+
+    if subject in subject_map:
+        col = subject_map[subject]
+        return df[col] if col in df.columns else None
+
+    # Try to find indicator column
+    matches = [c for c in df.columns if subject.lower().replace("_", "") in c.lower().replace("_", "")]
+    if matches:
+        return df[matches[0]]
+
+    return None
+
+
+def _resolve_target_value(target: str):
+    """Parse a target string into a numeric value."""
+    if isinstance(target, (int, float)):
+        return float(target)
+    try:
+        return float(target)
+    except (ValueError, TypeError):
+        return None
+
+
+def _check_then_conditions(window_df: pd.DataFrame, conditions: List[Dict], trigger_price: float) -> bool:
+    """Check if THEN conditions are met in the forward window."""
+    for cond in conditions:
+        action = cond.get("action", "")
+        target_val = cond.get("target", 0)
+
+        try:
+            threshold = float(target_val)
+        except (ValueError, TypeError):
+            threshold = 0
+
+        if action in ("drop", "lt", "le"):
+            min_price = window_df["close"].min()
+            change = ((min_price - trigger_price) / trigger_price) * 100
+            if action == "drop" and change <= threshold:
+                return True
+            if action == "lt" and change < threshold:
+                return True
+            if action == "le" and change <= threshold:
+                return True
+        elif action in ("rise", "gt", "ge"):
+            max_price = window_df["close"].max()
+            change = ((max_price - trigger_price) / trigger_price) * 100
+            if action == "rise" and change >= threshold:
+                return True
+            if action == "gt" and change > threshold:
+                return True
+            if action == "ge" and change >= threshold:
+                return True
+
+    # Default: check if any price moved by target threshold
+    if conditions:
+        cond = conditions[0]
+        action = cond.get("action", "drop")
+        try:
+            threshold = float(cond.get("target", 0))
+        except (ValueError, TypeError):
+            threshold = 0
+
+        if action in ("drop",):
+            change = ((window_df["close"].min() - trigger_price) / trigger_price) * 100
+            return change <= threshold
+        elif action in ("rise",):
+            change = ((window_df["close"].max() - trigger_price) / trigger_price) * 100
+            return change >= threshold
+
+    return False
+
+
+def _touch_condition(series: pd.Series, target) -> pd.Series:
+    """Check if series touches target (within 0.5% tolerance)."""
+    tolerance = abs(target) * 0.005 if isinstance(target, (int, float)) else 0
+    return abs(series - target) <= max(tolerance, series.std() * 0.1)
+
+
+def _cross_above(series: pd.Series, target) -> pd.Series:
+    if isinstance(target, (int, float)):
+        return (series.shift(1) < target) & (series >= target)
+    return (series.shift(1) < target) & (series >= target)
+
+
+def _cross_below(series: pd.Series, target) -> pd.Series:
+    if isinstance(target, (int, float)):
+        return (series.shift(1) > target) & (series <= target)
+    return (series.shift(1) > target) & (series <= target)
+
+
+def _spike_condition(series: pd.Series, df: pd.DataFrame, target) -> pd.Series:
+    """Volume spike: current > N * rolling average."""
+    try:
+        multiplier = float(target) if isinstance(target, (int, float, str)) else 2.0
+    except (ValueError, TypeError):
+        multiplier = 2.0
+    rolling_avg = series.rolling(window=20, min_periods=1).mean()
+    return series >= rolling_avg * multiplier
+
+
+def _shrink_condition(series: pd.Series, df: pd.DataFrame, target) -> pd.Series:
+    """Volume shrink: current < N * rolling average."""
+    try:
+        multiplier = float(target) if isinstance(target, (int, float, str)) else 0.5
+    except (ValueError, TypeError):
+        multiplier = 0.5
+    rolling_avg = series.rolling(window=20, min_periods=1).mean()
+    return series <= rolling_avg * multiplier
+
+
+def _build_distribution(changes: List[float], matches: List[bool]) -> List[DistributionBucket]:
+    """Build histogram buckets from change percentages."""
+    if not changes:
+        return []
+
+    arr = np.array(changes)
+    min_val = float(np.min(arr))
+    max_val = float(np.max(arr))
+
+    # Create buckets
+    num_buckets = min(10, max(5, len(changes) // 5))
+    bucket_width = (max_val - min_val) / num_buckets if max_val != min_val else 2
+
+    buckets = []
+    for i in range(num_buckets):
+        start = min_val + i * bucket_width
+        end = start + bucket_width
+
+        mask = (arr >= start) & (arr < end) if i < num_buckets - 1 else (arr >= start) & (arr <= end)
+        indices = np.where(mask)[0]
+
+        match_count = sum(1 for idx in indices if matches[idx])
+        total = len(indices)
+
+        buckets.append(DistributionBucket(
+            range_start=round(start, 1),
+            range_end=round(end, 1),
+            match_count=match_count,
+            mismatch_count=total - match_count,
+            total_count=total,
+        ))
+
+    return buckets

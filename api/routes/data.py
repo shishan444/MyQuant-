@@ -8,22 +8,22 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from MyQuant.api.db_ext import (
+from api.db_ext import (
     delete_dataset as db_delete_dataset,
     get_dataset,
     list_datasets,
     save_dataset_meta,
 )
-from MyQuant.api.deps import get_data_dir, get_db_path
-from MyQuant.api.schemas import (
+from api.deps import get_data_dir, get_db_path
+from api.schemas import (
     DataImportResponse,
     DatasetListResponse,
     DatasetPreviewResponse,
     DatasetResponse,
     OhlcvResponse,
 )
-from MyQuant.core.data.csv_importer import import_csv, ImportMode
-from MyQuant.core.data.storage import load_parquet
+from core.data.csv_importer import import_csv, import_csv_batch, parse_filename, ImportMode
+from core.data.storage import load_parquet
 
 router = APIRouter(prefix="/api/data", tags=["data"])
 
@@ -103,8 +103,10 @@ def import_csv_endpoint(
     # Save uploaded file to a temp location
     data_dir.mkdir(parents=True, exist_ok=True)
 
+    original_stem = Path(file.filename).stem if file.filename else None
+    prefix = original_stem + "-" if original_stem else None
     with tempfile.NamedTemporaryFile(
-        suffix=".csv", delete=False, dir=data_dir
+        suffix=".csv", prefix=prefix, delete=False, dir=data_dir
     ) as tmp:
         content = file.file.read()
         tmp.write(content)
@@ -147,7 +149,7 @@ def import_csv_endpoint(
                 timestamp_precision=result.timestamp_precision.value,
             )
         else:
-            from MyQuant.api.db_ext import update_dataset_stats
+            from api.db_ext import update_dataset_stats
             update_dataset_stats(
                 db_path,
                 dataset_id=result.dataset_id,
@@ -172,6 +174,95 @@ def import_csv_endpoint(
     finally:
         # Clean up temp file
         tmp_path.unlink(missing_ok=True)
+
+
+@router.post("/import-batch")
+def import_csv_batch_endpoint(
+    files: List[UploadFile] = File(...),
+    symbol: Optional[str] = Form(None),
+    interval: Optional[str] = Form(None),
+    mode: str = Form("merge"),
+    db_path: Path = Depends(get_db_path),
+    data_dir: Path = Depends(get_data_dir),
+) -> DataImportResponse:
+    """Import multiple CSV files into a single Parquet dataset."""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    tmp_paths: list[Path] = []
+    for f in files:
+        # Use original filename stem as prefix so parse_filename can detect symbol/interval
+        original_stem = Path(f.filename).stem if f.filename else None
+        prefix = original_stem + "-" if original_stem else None
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".csv", prefix=prefix, delete=False, dir=data_dir
+        )
+        tmp.write(f.file.read())
+        tmp.close()
+        tmp_paths.append(Path(tmp.name))
+
+    try:
+        import_mode = ImportMode(mode)
+    except ValueError:
+        import_mode = ImportMode.MERGE
+
+    try:
+        result = import_csv_batch(
+            paths=tmp_paths,
+            data_dir=data_dir,
+            symbol=symbol,
+            interval=interval,
+            mode=import_mode,
+        )
+
+        parquet_path = data_dir / f"{result.dataset_id}.parquet"
+        row_count = result.rows_imported
+        file_size = parquet_path.stat().st_size if parquet_path.exists() else 0
+
+        existing = get_dataset(db_path, result.dataset_id)
+        if existing is None:
+            save_dataset_meta(
+                db_path,
+                dataset_id=result.dataset_id,
+                symbol=result.symbol,
+                interval=result.interval,
+                parquet_path=str(parquet_path),
+                row_count=row_count,
+                time_start=result.time_range[0] if result.time_range else None,
+                time_end=result.time_range[1] if result.time_range else None,
+                file_size_bytes=file_size,
+                source="csv_import",
+                format_detected=result.format_detected.value,
+                timestamp_precision=result.timestamp_precision.value,
+            )
+        else:
+            from api.db_ext import update_dataset_stats
+            update_dataset_stats(
+                db_path,
+                dataset_id=result.dataset_id,
+                row_count=row_count,
+                time_start=result.time_range[0] if result.time_range else None,
+                time_end=result.time_range[1] if result.time_range else None,
+                file_size_bytes=file_size,
+                format_detected=result.format_detected.value,
+                timestamp_precision=result.timestamp_precision.value,
+            )
+
+        return DataImportResponse(
+            dataset_id=result.dataset_id,
+            symbol=result.symbol,
+            interval=result.interval,
+            rows_imported=result.rows_imported,
+            format_detected=result.format_detected.value,
+            timestamp_precision=result.timestamp_precision.value,
+            files_processed=result.files_processed,
+            time_range=list(result.time_range) if result.time_range else None,
+        )
+    finally:
+        for p in tmp_paths:
+            p.unlink(missing_ok=True)
 
 
 @router.delete("/datasets/{dataset_id}", status_code=204)

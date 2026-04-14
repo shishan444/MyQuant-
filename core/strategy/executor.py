@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from MyQuant.core.strategy.dna import StrategyDNA, SignalRole
+from core.strategy.dna import StrategyDNA, SignalRole
 
 
 def evaluate_condition(
@@ -123,19 +123,122 @@ def _get_indicator_column(df: pd.DataFrame, gene) -> pd.Series:
     raise ValueError(f"Column '{col}' not found in DataFrame. Available: {list(df.columns)}")
 
 
+def evaluate_layer(
+    layer,
+    df: pd.DataFrame,
+) -> tuple[pd.Series, pd.Series]:
+    """Evaluate a single TimeframeLayer on a pre-computed DataFrame.
+
+    Returns (entry_signal, exit_signal) boolean Series.
+    """
+    close = df["close"]
+    entry_triggers, entry_guards = [], []
+    exit_triggers, exit_guards = [], []
+
+    for gene in layer.signal_genes:
+        try:
+            indicator_col = _get_indicator_column(df, gene)
+            signal = evaluate_condition(indicator_col, close, gene.condition)
+            signal = signal.fillna(False)
+
+            if gene.role == SignalRole.ENTRY_TRIGGER:
+                entry_triggers.append(signal)
+            elif gene.role == SignalRole.ENTRY_GUARD:
+                entry_guards.append(signal)
+            elif gene.role == SignalRole.EXIT_TRIGGER:
+                exit_triggers.append(signal)
+            elif gene.role == SignalRole.EXIT_GUARD:
+                exit_guards.append(signal)
+        except ValueError:
+            continue
+
+    all_entry = entry_triggers + entry_guards
+    entries = combine_signals(all_entry, layer.logic_genes.entry_logic) if all_entry else pd.Series(False, index=df.index)
+
+    all_exit = exit_triggers + exit_guards
+    exits = combine_signals(all_exit, layer.logic_genes.exit_logic) if all_exit else pd.Series(False, index=df.index)
+
+    return entries, exits
+
+
+def resample_signals(
+    high_tf_signals: pd.Series,
+    target_index: pd.DatetimeIndex,
+) -> pd.Series:
+    """Forward-fill higher timeframe signals to match execution timeframe index.
+
+    Args:
+        high_tf_signals: Boolean Series with higher timeframe DatetimeIndex.
+        target_index: The execution timeframe's DatetimeIndex.
+
+    Returns:
+        Boolean Series aligned to target_index via forward-fill.
+    """
+    if high_tf_signals.empty or len(target_index) == 0:
+        return pd.Series(False, index=target_index)
+
+    # Reindex with forward fill to align with target timeframe
+    reindexed = high_tf_signals.reindex(target_index, method="ffill")
+    return reindexed.fillna(False).astype(bool)
+
+
 def dna_to_signals(
     dna: StrategyDNA,
     enhanced_df: pd.DataFrame,
+    dfs_by_timeframe: dict | None = None,
 ) -> tuple[pd.Series, pd.Series]:
     """Convert a StrategyDNA to entry/exit boolean Series.
 
+    Supports both single-timeframe and multi-timeframe (MTF) DNA.
+
     Args:
         dna: Strategy genome.
-        enhanced_df: DataFrame with indicator columns appended.
+        enhanced_df: DataFrame with indicator columns appended (execution TF).
+        dfs_by_timeframe: Optional dict mapping timeframe str -> enhanced DataFrame
+                         for MTF evaluation. If None, single-TF mode is used.
 
     Returns:
         Tuple of (entries, exits) boolean Series.
     """
+    # MTF mode: evaluate each layer and combine
+    if dna.is_mtf and dfs_by_timeframe is not None:
+        layer_entries = []
+        layer_exits = []
+
+        for layer in dna.layers:
+            layer_df = dfs_by_timeframe.get(layer.timeframe)
+            if layer_df is None:
+                continue
+
+            entries, exits = evaluate_layer(layer, layer_df)
+
+            # Resample to execution timeframe if different
+            exec_tf = dna.execution_genes.timeframe
+            if layer.timeframe != exec_tf:
+                entries = resample_signals(entries, enhanced_df.index)
+                exits = resample_signals(exits, enhanced_df.index)
+            else:
+                # Ensure alignment
+                entries = entries.reindex(enhanced_df.index, fill_value=False)
+                exits = exits.reindex(enhanced_df.index, fill_value=False)
+
+            layer_entries.append(entries)
+            layer_exits.append(exits)
+
+        # Combine layers
+        if not layer_entries:
+            return pd.Series(False, index=enhanced_df.index), pd.Series(False, index=enhanced_df.index)
+
+        combined_entries = combine_signals(layer_entries, dna.cross_layer_logic)
+        combined_exits = combine_signals(layer_exits, dna.cross_layer_logic)
+
+        # Prevent simultaneous entry+exit (favor exit)
+        both = combined_entries & combined_exits
+        combined_entries = combined_entries & ~both
+
+        return combined_entries, combined_exits
+
+    # Single-timeframe mode (backward compatible)
     close = enhanced_df["close"]
 
     # Separate signals by role

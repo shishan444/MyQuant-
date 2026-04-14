@@ -10,8 +10,8 @@ from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 
-from MyQuant.core.strategy.dna import StrategyDNA, SignalRole
-from MyQuant.core.strategy.executor import evaluate_condition, combine_signals
+from core.strategy.dna import StrategyDNA, SignalRole
+from core.strategy.executor import evaluate_condition, combine_signals
 
 
 def extract_indicator_requirements(dna: StrategyDNA) -> List[Tuple[str, Dict[str, Any]]]:

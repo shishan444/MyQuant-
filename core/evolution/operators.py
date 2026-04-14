@@ -13,15 +13,139 @@ import random
 import uuid
 from typing import Optional
 
-from MyQuant.core.strategy.dna import (
+from core.strategy.dna import (
     SignalRole, SignalGene, StrategyDNA,
 )
-from MyQuant.core.strategy.validator import validate_dna
-from MyQuant.core.features.indicators import INDICATOR_REGISTRY, get_interchangeable
+from core.strategy.validator import validate_dna
+from core.features.indicators import INDICATOR_REGISTRY, get_interchangeable
 
 
 def _new_id() -> str:
     return str(uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# MTF (Multi-Timeframe) Mutation Operators
+# ---------------------------------------------------------------------------
+
+# Standard timeframe hierarchy for candidate selection
+_STANDARD_TIMEFRAMES = ["15m", "30m", "1h", "4h", "1d", "3d"]
+
+
+def mutate_add_layer(dna: StrategyDNA, candidate_timeframes: list | None = None) -> StrategyDNA:
+    """Insert a new timeframe layer with random signals.
+
+    Picks an adjacent timeframe not already present.
+    """
+    if candidate_timeframes is None:
+        candidate_timeframes = _STANDARD_TIMEFRAMES
+
+    existing = set(dna.timeframes)
+    candidates = [tf for tf in candidate_timeframes if tf not in existing]
+    if not candidates:
+        return dna
+
+    # Pick a timeframe adjacent to existing ones
+    new_tf = random.choice(candidates)
+
+    # Create random signals for new layer
+    from core.evolution.population import create_random_dna
+    seed_dna = create_random_dna(timeframe=new_tf, symbol=dna.execution_genes.symbol)
+
+    new_layer_data = {
+        "timeframe": new_tf,
+        "signal_genes": [sg.to_dict() for sg in seed_dna.signal_genes],
+        "logic_genes": seed_dna.logic_genes.to_dict(),
+    }
+
+    data = dna.to_dict()
+    data["strategy_id"] = _new_id()
+    data["parent_ids"] = [dna.strategy_id]
+    data["mutation_ops"] = list(dna.mutation_ops) + ["add_layer"]
+    data["generation"] = dna.generation + 1
+
+    if "layers" not in data or not data["layers"]:
+        # Wrap existing signals into first layer
+        data["layers"] = [{
+            "timeframe": dna.execution_genes.timeframe,
+            "signal_genes": data["signal_genes"],
+            "logic_genes": data["logic_genes"],
+        }]
+
+    data["layers"].append(new_layer_data)
+    return StrategyDNA.from_dict(data)
+
+
+def mutate_remove_layer(dna: StrategyDNA) -> StrategyDNA:
+    """Remove a non-execution timeframe layer (keep at least 1)."""
+    if not dna.is_mtf:
+        return dna
+
+    data = dna.to_dict()
+    layers = data.get("layers", [])
+    if len(layers) <= 1:
+        return dna
+
+    exec_tf = data["execution_genes"]["timeframe"]
+    removable = [i for i, l in enumerate(layers) if l["timeframe"] != exec_tf]
+    if not removable:
+        return dna
+
+    idx = random.choice(removable)
+    layers.pop(idx)
+
+    data["strategy_id"] = _new_id()
+    data["parent_ids"] = [dna.strategy_id]
+    data["mutation_ops"] = list(dna.mutation_ops) + ["remove_layer"]
+    data["generation"] = dna.generation + 1
+    data["layers"] = layers
+    return StrategyDNA.from_dict(data)
+
+
+def mutate_layer_timeframe(dna: StrategyDNA, candidate_timeframes: list | None = None) -> StrategyDNA:
+    """Change the timeframe of a random non-execution layer."""
+    if candidate_timeframes is None:
+        candidate_timeframes = _STANDARD_TIMEFRAMES
+
+    if not dna.is_mtf:
+        return dna
+
+    data = dna.to_dict()
+    layers = data.get("layers", [])
+    exec_tf = data["execution_genes"]["timeframe"]
+    changeable = [i for i, l in enumerate(layers) if l["timeframe"] != exec_tf]
+    if not changeable:
+        return dna
+
+    idx = random.choice(changeable)
+    current_tf = layers[idx]["timeframe"]
+    alternatives = [tf for tf in candidate_timeframes if tf != current_tf and tf != exec_tf]
+    if not alternatives:
+        return dna
+
+    layers[idx]["timeframe"] = random.choice(alternatives)
+
+    data["strategy_id"] = _new_id()
+    data["parent_ids"] = [dna.strategy_id]
+    data["mutation_ops"] = list(dna.mutation_ops) + ["layer_timeframe"]
+    data["generation"] = dna.generation + 1
+    data["layers"] = layers
+    return StrategyDNA.from_dict(data)
+
+
+def mutate_cross_logic(dna: StrategyDNA) -> StrategyDNA:
+    """Flip the cross-layer logic (AND <-> OR)."""
+    if not dna.is_mtf:
+        return dna
+
+    data = dna.to_dict()
+    current = data.get("cross_layer_logic", "AND")
+    data["cross_layer_logic"] = "OR" if current == "AND" else "AND"
+    data["strategy_id"] = _new_id()
+    data["parent_ids"] = [dna.strategy_id]
+    data["mutation_ops"] = list(dna.mutation_ops) + ["cross_logic"]
+    data["generation"] = dna.generation + 1
+    return StrategyDNA.from_dict(data)
 
 
 def mutate_params(dna: StrategyDNA) -> StrategyDNA:

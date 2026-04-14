@@ -207,6 +207,82 @@ def stop_task(
     return _task_row_to_response(row)
 
 
+@router.post("/tasks/{task_id}/resume")
+def resume_task(
+    task_id: str,
+    db_path: Path = Depends(get_db_path),
+) -> EvolutionTaskResponse:
+    """Resume a paused evolution task."""
+    row = get_task(db_path, task_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if row["status"] != "paused":
+        raise HTTPException(status_code=400, detail="Task is not paused")
+
+    update_task(db_path, task_id, status="pending")
+    row = get_task(db_path, task_id)
+    return _task_row_to_response(row)
+
+
+@router.get("/tasks/{task_id}/strategies")
+def get_task_strategies(
+    task_id: str,
+    db_path: Path = Depends(get_db_path),
+) -> dict:
+    """Return effective strategies discovered by this evolution task.
+
+    Returns champion and any snapshot strategies with score > 0.
+    """
+    row = get_task(db_path, task_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    strategies = []
+
+    # Champion strategy
+    if row.get("champion_dna"):
+        try:
+            champion = json.loads(row["champion_dna"])
+            strategies.append({
+                "strategy_id": champion.get("strategy_id", ""),
+                "dna": champion,
+                "source": "champion",
+                "score": row.get("champion_score", 0),
+            })
+        except (json.JSONDecodeError, Exception):
+            pass
+
+    # Snapshot-based strategies
+    from core.persistence.db import _connect
+    conn = _connect(db_path)
+    snapshots = conn.execute(
+        """SELECT generation, best_score, best_dna FROM generation_snapshot
+           WHERE task_id = ? ORDER BY best_score DESC LIMIT 10""",
+        (task_id,),
+    ).fetchall()
+    conn.close()
+
+    for snap in snapshots:
+        try:
+            snap_dna = json.loads(snap["best_dna"])
+            sid = snap_dna.get("strategy_id", "")
+            # Skip if already included as champion
+            if any(s["strategy_id"] == sid for s in strategies):
+                continue
+            strategies.append({
+                "strategy_id": sid,
+                "dna": snap_dna,
+                "source": "snapshot",
+                "generation": snap["generation"],
+                "score": snap["best_score"],
+            })
+        except (json.JSONDecodeError, Exception):
+            continue
+
+    return {"task_id": task_id, "strategies": strategies}
+
+
 def _get_connection(db_path: Path):
     """Get a raw SQLite connection for extended column updates."""
     import sqlite3

@@ -128,12 +128,47 @@ class RiskGenes:
 
 
 @dataclass
+class TimeframeLayer:
+    """A single timeframe layer within a multi-timeframe strategy.
+
+    Each layer contains signal genes and logic genes evaluated
+    independently on its own timeframe's data.
+    """
+
+    timeframe: str
+    signal_genes: List[SignalGene] = field(default_factory=list)
+    logic_genes: LogicGenes = field(default_factory=LogicGenes)
+
+    def to_dict(self) -> dict:
+        return {
+            "timeframe": self.timeframe,
+            "signal_genes": [sg.to_dict() for sg in self.signal_genes],
+            "logic_genes": self.logic_genes.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TimeframeLayer":
+        data = dict(data)
+        if "signal_genes" in data and isinstance(data["signal_genes"], list):
+            data["signal_genes"] = [
+                SignalGene.from_dict(sg) if isinstance(sg, dict) else sg
+                for sg in data["signal_genes"]
+            ]
+        if "logic_genes" in data and isinstance(data["logic_genes"], dict):
+            data["logic_genes"] = LogicGenes.from_dict(data["logic_genes"])
+        return cls(**data)
+
+
+@dataclass
 class StrategyDNA:
     """Complete genetic representation of a trading strategy.
 
     A StrategyDNA instance is the fundamental unit operated on by the
     evolutionary algorithm: selection, crossover, and mutation all work on
     this structure.
+
+    Supports multi-timeframe (MTF) via ``layers``. For backward compatibility,
+    ``signal_genes`` is available as a property proxying layers[0].
     """
 
     signal_genes: List[SignalGene] = field(default_factory=list)
@@ -144,9 +179,29 @@ class StrategyDNA:
     generation: int = 0
     parent_ids: List[str] = field(default_factory=list)
     mutation_ops: List[str] = field(default_factory=list)
+    layers: Optional[List[TimeframeLayer]] = None
+    cross_layer_logic: str = "AND"
+
+    @property
+    def is_mtf(self) -> bool:
+        """Whether this DNA uses multi-timeframe layers."""
+        return self.layers is not None and len(self.layers) > 1
+
+    @property
+    def timeframes(self) -> List[str]:
+        """List of timeframes used across all layers."""
+        if self.layers:
+            return [layer.timeframe for layer in self.layers]
+        return [self.execution_genes.timeframe]
+
+    def _resolve_signal_genes(self) -> List[SignalGene]:
+        """Resolve signal_genes from layers[0] if layers exist."""
+        if self.layers and not self.signal_genes:
+            return self.layers[0].signal_genes
+        return self.signal_genes
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "strategy_id": self.strategy_id,
             "generation": self.generation,
             "parent_ids": self.parent_ids,
@@ -155,11 +210,27 @@ class StrategyDNA:
             "logic_genes": self.logic_genes.to_dict(),
             "execution_genes": self.execution_genes.to_dict(),
             "risk_genes": self.risk_genes.to_dict(),
+            "cross_layer_logic": self.cross_layer_logic,
         }
+        if self.layers:
+            result["layers"] = [layer.to_dict() for layer in self.layers]
+        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> "StrategyDNA":
         data = dict(data)  # shallow copy
+
+        # Parse layers if present (MTF format)
+        layers = None
+        if "layers" in data and isinstance(data["layers"], list):
+            layers = [
+                TimeframeLayer.from_dict(l) if isinstance(l, dict) else l
+                for l in data["layers"]
+            ]
+        data.pop("layers", None)
+
+        # Parse cross_layer_logic
+        cross_layer_logic = data.pop("cross_layer_logic", "AND")
 
         if "signal_genes" in data and isinstance(data["signal_genes"], list):
             data["signal_genes"] = [
@@ -179,7 +250,24 @@ class StrategyDNA:
         if not data.get("strategy_id"):
             data["strategy_id"] = str(uuid.uuid4())
 
-        return cls(**data)
+        instance = cls(**data)
+        instance.layers = layers
+        instance.cross_layer_logic = cross_layer_logic
+
+        # Auto-wrap: if no layers but has signal_genes, create a single layer
+        if instance.layers is None and instance.signal_genes:
+            instance.layers = [
+                TimeframeLayer(
+                    timeframe=instance.execution_genes.timeframe,
+                    signal_genes=list(instance.signal_genes),
+                    logic_genes=LogicGenes(
+                        entry_logic=instance.logic_genes.entry_logic,
+                        exit_logic=instance.logic_genes.exit_logic,
+                    ),
+                )
+            ]
+
+        return instance
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)

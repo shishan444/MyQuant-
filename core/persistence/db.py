@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from MyQuant.core.strategy.dna import StrategyDNA
+from core.strategy.dna import StrategyDNA
 
 
 def _now() -> str:

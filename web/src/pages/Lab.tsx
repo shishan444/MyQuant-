@@ -1,13 +1,19 @@
-import { useState, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Play, Save, Download, BarChart3 } from "lucide-react";
+import { useState, useCallback, useRef, useMemo } from "react";
+import {
+  Play,
+  Save,
+  FlaskConical,
+  ChevronDown,
+  ChevronUp,
+  RotateCcw,
+} from "lucide-react";
 import { toast } from "sonner";
-import { GlassCard } from "@/components/GlassCard";
-import { StatCard } from "@/components/StatCard";
-import { KlineChart } from "@/components/charts/KlineChart";
-import { ChartLegend } from "@/components/charts/ChartLegend";
+
 import { PageTransition } from "@/components/PageTransition";
-import { Button } from "@/components/ui/button";
+import { GlassCard } from "@/components/GlassCard";
+import { KlineChart } from "@/components/charts/KlineChart";
+import type { KlineChartHandle } from "@/components/charts/KlineChart";
+import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -16,350 +22,511 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { useLabStore } from "@/stores/lab";
-import { useRunBacktest, useCreateStrategy } from "@/hooks/useStrategies";
-import { formatPercent, formatCurrency, formatNumber } from "@/lib/utils";
-import type { BacktestResult, TradeSignal, Dataset } from "@/types/api";
-import type { LegendItem } from "@/types/chart";
-import { TIMEFRAME_OPTIONS } from "@/types/strategy";
-import { api } from "@/services/api";
 
-const INDICATOR_BADGES = [
-  { id: "ema100", type: "EMA", period: 100, color: "#1E88E5" },
-  { id: "ema50", type: "EMA", period: 50, color: "#FF9800" },
-  { id: "rsi14", type: "RSI", period: 14, color: "#7C4DFF" },
-] as const;
+import {
+  ConditionPillGroup,
+  ValidationConclusion,
+  DistributionChart,
+  ReferencePanel,
+  TriggerTable,
+  TriggerDetailDrawer,
+} from "@/components/lab";
 
-function buildDefaultDNA(symbol: string, timeframe: string) {
-  return {
-    signal_genes: [
-      {
-        indicator: "EMA",
-        params: { period: 20 },
-        role: "entry_trigger",
-        condition: { type: "price_above" },
-      },
-      {
-        indicator: "EMA",
-        params: { period: 20 },
-        role: "exit_trigger",
-        condition: { type: "price_below" },
-      },
+import { useValidateHypothesis } from "@/hooks/useValidation";
+import { useCreateStrategy } from "@/hooks/useStrategies";
+import { SYMBOL_OPTIONS, TIMEFRAME_SELECT_OPTIONS } from "@/lib/constants";
+
+import type {
+  ConditionInput,
+  ValidateResponse,
+  TriggerRecord,
+} from "@/types/api";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const QUICK_DATES = [
+  { label: "近3月", days: 90 },
+  { label: "近6月", days: 180 },
+  { label: "近1年", days: 365 },
+  { label: "今年", days: -1 },
+  { label: "全部", days: 0 },
+];
+
+const EXAMPLE_PRESETS = [
+  {
+    label: "上轨触碰后下跌",
+    when: [
+      { subject: "close", action: "touch", target: "bb_upper", logic: "AND" as const },
     ],
-    logic_genes: { entry_logic: "AND", exit_logic: "AND" },
-    execution_genes: { timeframe, symbol },
-    risk_genes: { stop_loss: 0.03, take_profit: 0.06, position_size: 1.0 },
-    generation: 0,
-    parent_ids: [],
-    mutation_ops: [],
+    then: [
+      { subject: "price", action: "drop", target: "0", window: 8, logic: "AND" as const },
+    ],
+  },
+  {
+    label: "放量突破后上涨",
+    when: [
+      { subject: "close", action: "breakout", target: "bb_upper", logic: "AND" as const },
+      { subject: "volume", action: "spike", target: "2", logic: "AND" as const },
+    ],
+    then: [
+      { subject: "price", action: "rise", target: "0", window: 8, logic: "AND" as const },
+    ],
+  },
+  {
+    label: "RSI超买后回调",
+    when: [
+      { subject: "rsi", action: "gt", target: "70", logic: "AND" as const },
+    ],
+    then: [
+      { subject: "price", action: "drop", target: "0", window: 12, logic: "AND" as const },
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Helper
+// ---------------------------------------------------------------------------
+
+function getDefaultDates(): { start: string; end: string } {
+  const end = new Date();
+  const start = new Date();
+  start.setFullYear(start.getFullYear() - 1);
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
   };
 }
 
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
 export function Lab() {
-  const config = useLabStore((s) => s.config);
-  const setConfig = useLabStore((s) => s.setConfig);
+  // -- Builder state --
+  const [pair, setPair] = useState("BTCUSDT");
+  const [timeframe, setTimeframe] = useState("4h");
+  const [dateRange, setDateRange] = useState(getDefaultDates);
+  const [whenConditions, setWhenConditions] = useState<ConditionInput[]>([]);
+  const [thenConditions, setThenConditions] = useState<ConditionInput[]>([]);
+  const [builderCollapsed, setBuilderCollapsed] = useState(false);
 
-  const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
-  const [legendItems] = useState<LegendItem[]>([
-    { id: "kline", label: "K线", color: "#94a3b8", visible: true },
-    ...INDICATOR_BADGES.map((ind) => ({
-      id: ind.id,
-      label: `${ind.type}(${ind.period})`,
-      color: ind.color,
-      visible: true,
-    })),
-  ]);
+  // -- Result state --
+  const [result, setResult] = useState<ValidateResponse | null>(null);
+  const [detailTrigger, setDetailTrigger] = useState<TriggerRecord | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // 数据集列表
-  const { data: datasetsData } = useQuery({
-    queryKey: ["datasets"],
-    queryFn: () => api.get("/api/data/datasets").then((r) => r.data),
-  });
+  // -- Refs --
+  const chartRef = useRef<KlineChartHandle>(null);
 
-  // OHLCV 数据
-  const { data: ohlcvData, isLoading: ohlcvLoading } = useQuery({
-    queryKey: ["ohlcv", config.datasetId],
-    queryFn: () =>
-      api.get(`/api/data/datasets/${config.datasetId}/ohlcv`).then((r) => r.data),
-    enabled: !!config.datasetId,
-  });
+  // -- Mutations --
+  const validateMutation = useValidateHypothesis();
+  const createStrategyMutation = useCreateStrategy();
 
-  const runBacktest = useRunBacktest();
-  const createStrategy = useCreateStrategy();
+  // -- Derived --
+  const hasConditions = whenConditions.length > 0 || thenConditions.length > 0;
+  const isLoading = validateMutation.isPending;
+  const hasResult = result !== null;
 
-  const handleRunBacktest = useCallback(async () => {
-    if (!config.datasetId) {
-      toast.error("请先选择数据集");
+  // -- Handlers --
+  const handleQuickDate = useCallback((days: number) => {
+    const end = new Date();
+    if (days === 0) {
+      // All: set very wide range
+      setDateRange({ start: "2015-01-01", end: end.toISOString().slice(0, 10) });
       return;
     }
-    try {
-      const result = await runBacktest.mutateAsync({
-        dna: buildDefaultDNA(config.symbol, config.timeframe),
-        symbol: config.symbol,
-        timeframe: config.timeframe,
-        dataset_id: config.datasetId,
-        score_template: config.scoreTemplate,
-        init_cash: config.initCash,
-        fee: config.fee,
-        slippage: config.slippage,
-      });
-      setBacktestResult(result);
-    } catch {
-      // handled by mutation onError
+    const start = new Date();
+    if (days === -1) {
+      // This year
+      start.setMonth(0, 1);
+      start.setHours(0, 0, 0, 0);
+    } else {
+      start.setDate(start.getDate() - days);
     }
-  }, [config, runBacktest]);
+    setDateRange({
+      start: start.toISOString().slice(0, 10),
+      end: end.toISOString().slice(0, 10),
+    });
+  }, []);
+
+  const handleValidate = useCallback(async () => {
+    if (whenConditions.length === 0) {
+      toast.error("请至少添加一个WHEN条件");
+      return;
+    }
+    if (thenConditions.length === 0) {
+      toast.error("请至少添加一个THEN条件");
+      return;
+    }
+
+    try {
+      const res = await validateMutation.mutateAsync({
+        pair,
+        timeframe,
+        start: dateRange.start,
+        end: dateRange.end,
+        when: whenConditions,
+        then: thenConditions,
+      });
+      setResult(res);
+    } catch {
+      // handled by mutation
+    }
+  }, [pair, timeframe, dateRange, whenConditions, thenConditions, validateMutation]);
+
+  const handleClearAll = useCallback(() => {
+    setWhenConditions([]);
+    setThenConditions([]);
+    setResult(null);
+  }, []);
+
+  const handlePreset = useCallback((idx: number) => {
+    const preset = EXAMPLE_PRESETS[idx];
+    setWhenConditions([...preset.when]);
+    setThenConditions([...preset.then]);
+    setResult(null);
+  }, []);
+
+  const handleLocate = useCallback((trigger: TriggerRecord) => {
+    chartRef.current?.scrollToTime(trigger.time);
+    // Scroll the page to the chart
+    const chartEl = document.getElementById("lab-kline-section");
+    if (chartEl) {
+      chartEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, []);
+
+  const handleViewDetail = useCallback((trigger: TriggerRecord) => {
+    setDetailTrigger(trigger);
+    setDrawerOpen(true);
+  }, []);
 
   const handleSaveStrategy = useCallback(async () => {
-    if (!backtestResult) return;
+    if (!result) return;
     try {
-      await createStrategy.mutateAsync({
-        name: `${config.symbol} ${config.timeframe} 策略`,
-        dna: buildDefaultDNA(config.symbol, config.timeframe),
-        symbol: config.symbol,
-        timeframe: config.timeframe,
+      await createStrategyMutation.mutateAsync({
+        name: `${pair} ${timeframe} 验证策略`,
+        dna: undefined,
+        symbol: pair,
+        timeframe,
         source: "lab",
       });
     } catch {
-      // handled
+      // handled by mutation
     }
-  }, [backtestResult, config, createStrategy]);
+  }, [result, pair, timeframe, createStrategyMutation]);
 
-  const toggleLegend = useCallback((id: string) => {
-    void id;
-    // TODO: integrate with chart series visibility
-  }, []);
+  // -- Trigger markers for chart --
+  const triggerMarkers = useMemo(
+    () =>
+      result?.triggers?.map((t) => ({
+        id: t.id,
+        time: t.time,
+        matched: t.matched,
+      })) ?? [],
+    [result?.triggers]
+  );
 
-  const datasets: Dataset[] = datasetsData?.datasets ?? datasetsData?.items ?? [];
-  const chartData =
-    ohlcvData?.data?.map(
-      (d: { timestamp: string; open: number; high: number; low: number; close: number }) => ({
-        timestamp: d.timestamp,
-        open: d.open,
-        high: d.high,
-        low: d.low,
-        close: d.close,
-      })
-    ) ?? [];
-  const chartSignals = backtestResult?.signals ?? [];
-
-  const stats = backtestResult
-    ? [
-        {
-          label: "年化收益",
-          value: formatPercent(backtestResult.total_return),
-          trend: (backtestResult.total_return >= 0 ? "up" : "down") as "up" | "down" | "neutral",
-        },
-        {
-          label: "夏普比率",
-          value: formatNumber(backtestResult.sharpe_ratio),
-          trend: (backtestResult.sharpe_ratio >= 1 ? "up" : "neutral") as "up" | "down" | "neutral",
-        },
-        {
-          label: "最大回撤",
-          value: formatPercent(backtestResult.max_drawdown),
-          trend: (backtestResult.max_drawdown <= -0.15 ? "down" : "neutral") as "up" | "down" | "neutral",
-        },
-        {
-          label: "胜率",
-          value: formatPercent(backtestResult.win_rate),
-          trend: (backtestResult.win_rate >= 0.5 ? "up" : "down") as "up" | "down" | "neutral",
-        },
-        {
-          label: "交易笔数",
-          value: String(backtestResult.total_trades),
-          trend: "neutral" as "up" | "down" | "neutral",
-        },
-      ]
-    : null;
+  // -- Collapsed summary --
+  const collapsedSummary = useMemo(() => {
+    const parts = [`${pair} ${timeframe}`];
+    if (whenConditions.length > 0) {
+      const whenStr = whenConditions
+        .filter((c) => c.subject)
+        .map((c) => `${c.subject} ${c.action} ${c.target}`)
+        .join("+");
+      parts.push(`WHEN: ${whenStr}`);
+    }
+    if (thenConditions.length > 0) {
+      const thenStr = thenConditions
+        .filter((c) => c.subject)
+        .map((c) => `${c.subject} ${c.action} ${c.target}`)
+        .join("+");
+      parts.push(`THEN: ${thenStr}`);
+    }
+    return parts.join(" / ");
+  }, [pair, timeframe, whenConditions, thenConditions]);
 
   return (
     <PageTransition>
       <div className="flex flex-col gap-4">
-        {/* 配置区 */}
-        <GlassCard className="p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-text-secondary">数据:</span>
-              <Select
-                value={config.datasetId || "__none__"}
-                onValueChange={(v) => {
-                  const ds = datasets.find((d) => d.dataset_id === v);
-                  setConfig({
-                    datasetId: v === "__none__" ? "" : v,
-                    symbol: ds?.symbol ?? config.symbol,
-                  });
-                }}
-              >
-                <SelectTrigger className="w-44 h-8 text-xs">
-                  <SelectValue placeholder="选择数据集" />
-                </SelectTrigger>
-                <SelectContent>
-                  {datasets.map((ds) => (
-                    <SelectItem key={ds.dataset_id} value={ds.dataset_id}>
-                      {ds.symbol} ({ds.interval})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-text-secondary">周期:</span>
-              <Select value={config.timeframe} onValueChange={(v) => setConfig({ timeframe: v })}>
-                <SelectTrigger className="w-28 h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {TIMEFRAME_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-text-secondary">评分:</span>
-              <Select value={config.scoreTemplate} onValueChange={(v) => setConfig({ scoreTemplate: v })}>
-                <SelectTrigger className="w-32 h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="profit_first">收益优先</SelectItem>
-                  <SelectItem value="steady">稳健优先</SelectItem>
-                  <SelectItem value="risk_first">风控优先</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {INDICATOR_BADGES.map((ind) => (
-              <Badge key={ind.id} variant="outline" className="h-7 text-xs gap-1 border-border-default">
-                <span className="inline-block h-2 w-2 rounded-full" style={{ background: ind.color }} />
-                {ind.type}({ind.period})
-              </Badge>
-            ))}
-
-            <div className="ml-auto">
-              <Button
-                size="sm"
-                onClick={handleRunBacktest}
-                disabled={runBacktest.isPending || !config.datasetId}
-                className="gap-1.5 bg-accent-gold text-black hover:bg-accent-gold/90"
-              >
-                <Play className="h-3.5 w-3.5" />
-                {runBacktest.isPending ? "回测中..." : "运行回测"}
-              </Button>
-            </div>
+        {/* ── Region 1: Condition Builder ── */}
+        <GlassCard className="p-4" hover={false}>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-text-primary">规律构建器</h3>
+            <button
+              type="button"
+              onClick={() => setBuilderCollapsed(!builderCollapsed)}
+              className="flex items-center gap-1 text-xs text-text-muted transition-colors hover:text-text-secondary"
+            >
+              {builderCollapsed ? (
+                <>
+                  <ChevronUp className="h-3.5 w-3.5" />
+                  展开
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="h-3.5 w-3.5" />
+                  收起
+                </>
+              )}
+            </button>
           </div>
+
+          {builderCollapsed ? (
+            <div className="flex items-center justify-between py-1">
+              <span className="truncate text-xs text-text-secondary">
+                {collapsedSummary}
+              </span>
+              <button
+                type="button"
+                onClick={() => setBuilderCollapsed(false)}
+                className="text-xs text-accent-gold"
+              >
+                展开
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {/* Data source row */}
+              <div>
+                <span className="mb-1.5 block text-xs font-medium text-text-muted">
+                  数据源
+                </span>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Select value={pair} onValueChange={setPair}>
+                    <SelectTrigger className="h-8 w-36 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SYMBOL_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={timeframe} onValueChange={setTimeframe}>
+                    <SelectTrigger className="h-8 w-24 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TIMEFRAME_SELECT_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <input
+                    type="date"
+                    value={dateRange.start}
+                    onChange={(e) =>
+                      setDateRange((prev) => ({ ...prev, start: e.target.value }))
+                    }
+                    className="h-8 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                  />
+                  <span className="text-xs text-text-muted">~</span>
+                  <input
+                    type="date"
+                    value={dateRange.end}
+                    onChange={(e) =>
+                      setDateRange((prev) => ({ ...prev, end: e.target.value }))
+                    }
+                    className="h-8 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                  />
+
+                  <div className="flex items-center gap-1">
+                    {QUICK_DATES.map((qd) => (
+                      <button
+                        key={qd.label}
+                        type="button"
+                        onClick={() => handleQuickDate(qd.days)}
+                        className="rounded px-2 py-1 text-[11px] text-text-muted transition-colors hover:bg-white/5 hover:text-text-secondary"
+                      >
+                        {qd.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* WHEN conditions */}
+              <ConditionPillGroup
+                label="WHEN"
+                description='找出"什么情况下"'
+                conditions={whenConditions}
+                onConditionsChange={setWhenConditions}
+              />
+
+              {/* THEN conditions */}
+              <ConditionPillGroup
+                label="THEN"
+                description='验证"触发后会发生什么"'
+                conditions={thenConditions}
+                onConditionsChange={setThenConditions}
+                isThen
+              />
+
+              {/* Action buttons */}
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={handleClearAll}
+                  className="flex items-center gap-1 text-xs text-text-muted transition-colors hover:text-loss"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  清空全部
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={handleValidate}
+                    disabled={isLoading || !hasConditions}
+                    className="gap-1.5 bg-accent-gold text-black hover:bg-accent-gold/90"
+                  >
+                    <Play className="h-3.5 w-3.5" />
+                    {isLoading ? "验证中..." : "验证规律"}
+                  </Button>
+
+                  {hasResult && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleSaveStrategy}
+                      disabled={createStrategyMutation.isPending}
+                      className="gap-1.5 border-accent-gold/30 text-accent-gold hover:bg-accent-gold/10"
+                    >
+                      <Save className="h-3.5 w-3.5" />
+                      保存为策略
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </GlassCard>
 
-        {/* K线图区 */}
-        <GlassCard className="p-4" hover={false}>
-          <ChartLegend
-            items={legendItems}
-            onToggle={toggleLegend}
-            extra={
-              <span className="text-xs text-text-muted">
-                {config.symbol} / {config.timeframe}
-              </span>
-            }
-          />
-          <div className="mt-2">
-            {ohlcvLoading ? (
-              <Skeleton className="h-[450px] w-full rounded-lg" />
-            ) : chartData.length > 0 ? (
-              <KlineChart data={chartData} signals={chartSignals} height={450} />
-            ) : (
-              <div className="flex h-[450px] items-center justify-center rounded-lg bg-[#0a0a0f]/50">
+        {/* ── Empty state / Loading / Results ── */}
+
+        {!hasResult && !isLoading && (
+          <GlassCard className="p-8" hover={false}>
+            <div className="flex flex-col items-center gap-4">
+              <FlaskConical className="h-16 w-16 text-text-muted/30" />
+              <div className="flex flex-col items-center gap-1 text-center">
+                <h3 className="text-base font-medium text-text-secondary">
+                  定义你的交易假设, 验证它的可靠性
+                </h3>
                 <p className="text-sm text-text-muted">
-                  {config.datasetId ? "加载中..." : "请选择数据集以查看K线图"}
+                  添加WHEN和THEN条件, 然后点击"验证规律"
                 </p>
               </div>
-            )}
-          </div>
-        </GlassCard>
-
-        {/* 回测统计 */}
-        {stats && (
-          <GlassCard className="p-4" hover={false}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-text-secondary">回测统计</h3>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleSaveStrategy}
-                disabled={createStrategy.isPending}
-                className="gap-1.5 border-accent-gold/30 text-accent-gold hover:bg-accent-gold/10"
-              >
-                <Save className="h-3.5 w-3.5" />
-                保存到策略库
-              </Button>
-            </div>
-            <div className="mt-3 grid grid-cols-5 gap-3">
-              {stats.map((stat) => (
-                <StatCard key={stat.label} {...stat} />
-              ))}
-            </div>
-          </GlassCard>
-        )}
-
-        {/* 交易信号 */}
-        {backtestResult && backtestResult.total_trades > 0 && (
-          <GlassCard className="p-4" hover={false}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-text-secondary">
-                交易信号 ({backtestResult.total_trades}笔)
-              </h3>
-              <div className="flex gap-2">
-                <Button size="sm" variant="ghost" className="gap-1 text-xs text-text-secondary">
-                  <Download className="h-3.5 w-3.5" />
-                  导出
-                </Button>
-                <Button size="sm" variant="ghost" className="gap-1 text-xs text-text-secondary">
-                  <BarChart3 className="h-3.5 w-3.5" />
-                  详细分析
-                </Button>
-              </div>
-            </div>
-            <ScrollArea className="mt-3 h-64">
-              <div className="flex flex-col gap-1.5">
-                {(backtestResult.signals ?? []).slice(0, 20).map((signal, i) => (
-                  <TradeSignalRow key={i} signal={signal} />
+              <div className="flex items-center gap-3">
+                {EXAMPLE_PRESETS.map((preset, i) => (
+                  <Button
+                    key={i}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handlePreset(i)}
+                    className="text-xs"
+                  >
+                    示例{i + 1}: {preset.label}
+                  </Button>
                 ))}
               </div>
-            </ScrollArea>
+            </div>
           </GlassCard>
         )}
+
+        {isLoading && (
+          <>
+            <GlassCard className="p-4" hover={false}>
+              <div className="flex items-center gap-6">
+                <Skeleton className="h-6 w-24" />
+                <Skeleton className="h-6 w-32" />
+                <Skeleton className="h-6 w-40" />
+              </div>
+            </GlassCard>
+            <GlassCard className="p-4" hover={false}>
+              <Skeleton className="h-[450px] w-full rounded-lg" />
+            </GlassCard>
+          </>
+        )}
+
+        {hasResult && !isLoading && (
+          <>
+            {/* ── Region 2: Validation Conclusion ── */}
+            <ValidationConclusion
+              result={result}
+              onSave={result.total_count > 0 ? handleSaveStrategy : undefined}
+            />
+
+            {/* ── Region 3: KlineChart ── */}
+            <GlassCard className="p-4" hover={false} id="lab-kline-section">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-3 text-xs text-text-muted">
+                  <span className="font-medium text-text-secondary">
+                    {pair} / {timeframe}
+                  </span>
+                  {result.match_count > 0 && (
+                    <span className="text-profit">符合 {result.match_count}</span>
+                  )}
+                  {result.mismatch_count > 0 && (
+                    <span className="text-loss">不符合 {result.mismatch_count}</span>
+                  )}
+                </div>
+              </div>
+              <KlineChart
+                ref={chartRef}
+                data={[]}
+                triggers={triggerMarkers}
+                height={450}
+              />
+            </GlassCard>
+
+            {/* ── Region 4: Distribution + Reference ── */}
+            {result.total_count > 0 && (
+              <GlassCard className="p-4" hover={false}>
+                <div className="grid grid-cols-2 gap-6">
+                  <DistributionChart distribution={result.distribution} />
+                  <ReferencePanel
+                    percentiles={result.percentiles}
+                    concentration={result.concentration}
+                    signal_frequency={result.signal_frequency}
+                    extremes={result.extremes}
+                  />
+                </div>
+              </GlassCard>
+            )}
+
+            {/* ── Region 5: Trigger Table ── */}
+            {result.triggers.length > 0 && (
+              <GlassCard className="p-4" hover={false}>
+                <TriggerTable
+                  triggers={result.triggers}
+                  onLocate={handleLocate}
+                  onViewDetail={handleViewDetail}
+                />
+              </GlassCard>
+            )}
+          </>
+        )}
+
+        {/* ── Trigger Detail Drawer ── */}
+        <TriggerDetailDrawer
+          trigger={detailTrigger}
+          open={drawerOpen}
+          onClose={() => {
+            setDrawerOpen(false);
+            setDetailTrigger(null);
+          }}
+        />
       </div>
     </PageTransition>
-  );
-}
-
-function TradeSignalRow({ signal }: { signal: TradeSignal }) {
-  const isBuy = signal.type === "buy";
-  return (
-    <div
-      className={`flex items-center gap-3 rounded-lg px-3 py-2 text-xs ${
-        isBuy ? "border-l-2 border-profit bg-profit/5" : "border-l-2 border-loss bg-loss/5"
-      }`}
-    >
-      <Badge
-        variant="outline"
-        className={`h-5 text-[10px] ${
-          isBuy ? "border-profit/30 text-profit" : "border-loss/30 text-loss"
-        }`}
-      >
-        {isBuy ? "买" : "卖"}
-      </Badge>
-      <span className="font-num text-text-secondary">{signal.timestamp}</span>
-      <span className="font-num text-text-primary">{formatCurrency(signal.price)}</span>
-      {signal.confidence != null && (
-        <span className="text-text-muted">置信 {signal.confidence}%</span>
-      )}
-      <span className="text-text-muted">{signal.reason}</span>
-    </div>
   );
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 
-from MyQuant.core.strategy.dna import StrategyDNA, SignalRole
+from core.strategy.dna import StrategyDNA, SignalRole
 
 
 @dataclass

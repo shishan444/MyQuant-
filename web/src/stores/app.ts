@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 interface AppState {
   sidebarCollapsed: boolean;
@@ -6,8 +7,18 @@ interface AppState {
   setSidebarCollapsed: (collapsed: boolean) => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
-  sidebarCollapsed: false,
-  toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
-  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
-}));
+export const useAppStore = create<AppState>()(
+  persist(
+    (set) => ({
+      sidebarCollapsed: false,
+      toggleSidebar: () =>
+        set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      setSidebarCollapsed: (collapsed) =>
+        set({ sidebarCollapsed: collapsed }),
+    }),
+    {
+      name: "myquant-app",
+      partialize: (s) => ({ sidebarCollapsed: s.sidebarCollapsed }),
+    }
+  )
+);

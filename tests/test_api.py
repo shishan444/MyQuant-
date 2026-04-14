@@ -772,6 +772,11 @@ class TestWebSocket:
     def test_websocket_receives_messages(self, client: TestClient) -> None:
         """WebSocket should be able to send/receive messages."""
         with client.websocket_connect("/ws/evolution/test-task-id") as websocket:
+            # First message is auto-subscribed confirmation
+            sub = websocket.receive_json()
+            assert sub["type"] == "subscribed"
+            assert sub["task_id"] == "test-task-id"
+
             # Send a ping
             websocket.send_json({"type": "ping"})
             # Receive a pong

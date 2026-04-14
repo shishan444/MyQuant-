@@ -1,109 +1,146 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from "react-router";
 import {
   FlaskConical,
   Dna,
-  Library,
+  BookOpen,
+  TrendingUp,
   Database,
   Settings,
   ChevronsLeft,
   ChevronsRight,
-  Activity,
-} from 'lucide-react';
-import { useAppStore } from '@/stores/app';
-import { cn } from '@/lib/utils';
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { useAppStore } from "@/stores/app";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
-const navItems = [
-  { to: '/lab', icon: FlaskConical, label: 'Strategy Lab' },
-  { to: '/evolution', icon: Dna, label: 'Evolution Center' },
-  { to: '/library', icon: Library, label: 'Strategy Library' },
-  { to: '/data', icon: Database, label: 'Data Management' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
+const NAV_ITEMS = [
+  { to: "/lab", icon: FlaskConical, label: "策略实验室" },
+  { to: "/evolution", icon: Dna, label: "进化中心" },
+  { to: "/strategies", icon: BookOpen, label: "策略库" },
+  { to: "/trading", icon: TrendingUp, label: "模拟交易" },
+  { to: "/data", icon: Database, label: "数据管理" },
+  { to: "/settings", icon: Settings, label: "设置" },
 ] as const;
 
+const PAGE_TITLES: Record<string, string> = {
+  "/lab": "策略实验室",
+  "/evolution": "进化中心",
+  "/strategies": "策略库",
+  "/trading": "模拟交易",
+  "/data": "数据管理",
+  "/settings": "设置",
+};
+
+export function getPageTitle(pathname: string): string {
+  return PAGE_TITLES[pathname] || "MyQuant";
+}
+
 export function Sidebar() {
-  const { sidebarCollapsed, toggleSidebar } = useAppStore();
+  const collapsed = useAppStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
 
   return (
-    <aside
-      className={cn(
-        'flex flex-col h-screen bg-[var(--bg-card)] border-r border-[var(--border)] transition-all duration-200 shrink-0',
-        sidebarCollapsed ? 'w-16' : 'w-[200px]',
-      )}
-    >
-      {/* Header */}
-      <div className="flex items-center h-14 px-3 border-b border-[var(--border)]">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="w-8 h-8 rounded-md bg-[var(--color-blue)] flex items-center justify-center shrink-0">
-            <span className="text-white font-bold text-sm">QT</span>
-          </div>
-          {!sidebarCollapsed && (
-            <span className="text-[var(--text-primary)] font-semibold text-sm truncate">
-              QuantTrader
+    <TooltipProvider delayDuration={0}>
+      <aside
+        className={cn(
+          "flex h-screen flex-col border-r border-border-default bg-bg-surface backdrop-blur-md transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]",
+          collapsed ? "w-16" : "w-60"
+        )}
+      >
+        {/* Logo */}
+        <div className="flex h-12 items-center border-b border-border-default px-4">
+          {!collapsed && (
+            <span className="text-lg font-semibold text-accent-gold font-mono tracking-tight">
+              MyQuant
             </span>
           )}
         </div>
-      </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 py-3 px-2 space-y-1 overflow-y-auto">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) =>
-              cn(
-                'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
-                isActive
-                  ? 'bg-[var(--color-blue)]/15 text-[var(--color-blue)]'
-                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
-                sidebarCollapsed && 'justify-center px-0',
-              )
-            }
-            title={sidebarCollapsed ? item.label : undefined}
-          >
-            <item.icon className="w-5 h-5 shrink-0" />
-            {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
-          </NavLink>
-        ))}
-      </nav>
-
-      {/* Active Evolution Task */}
-      {!sidebarCollapsed && (
-        <div className="px-3 py-3 border-t border-[var(--border)]">
-          <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)] mb-2">
-            <Activity className="w-3.5 h-3.5" />
-            <span>Active Evolution</span>
-          </div>
-          <div className="bg-[var(--bg-hover)] rounded-md px-3 py-2">
-            <div className="text-xs text-[var(--text-primary)] font-medium">
-              BTC Trend Follow
-            </div>
-            <div className="flex items-center gap-2 mt-1">
-              <div className="flex-1 h-1 bg-[var(--border)] rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-[var(--color-purple)] rounded-full"
-                  style={{ width: '67%' }}
-                />
-              </div>
-              <span className="text-[10px] text-[var(--text-secondary)]">G12/20</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Collapse Toggle */}
-      <div className="border-t border-[var(--border)] p-2">
-        <button
-          onClick={toggleSidebar}
-          className="w-full flex items-center justify-center h-8 rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
-        >
-          {sidebarCollapsed ? (
-            <ChevronsRight className="w-4 h-4" />
-          ) : (
-            <ChevronsLeft className="w-4 h-4" />
+        {/* Navigation */}
+        <nav className="flex-1 py-2">
+          {NAV_ITEMS.map(({ to, icon: Icon, label }) =>
+            collapsed ? (
+              <Tooltip key={to}>
+                <TooltipTrigger asChild>
+                  <NavLink
+                    to={to}
+                    className={({ isActive }) =>
+                      cn(
+                        "flex h-12 items-center justify-center transition-colors",
+                        isActive
+                          ? "bg-accent-gold/10 text-accent-gold border-l-2 border-accent-gold"
+                          : "text-text-secondary hover:text-text-primary hover:bg-white/5 border-l-2 border-transparent"
+                      )
+                    }
+                  >
+                    <Icon className="h-5 w-5" />
+                  </NavLink>
+                </TooltipTrigger>
+                <TooltipContent side="right">{label}</TooltipContent>
+              </Tooltip>
+            ) : (
+              <NavLink
+                key={to}
+                to={to}
+                className={({ isActive }) =>
+                  cn(
+                    "flex h-12 items-center gap-3 px-4 transition-colors",
+                    isActive
+                      ? "bg-accent-gold/10 text-accent-gold border-l-2 border-accent-gold"
+                      : "text-text-secondary hover:text-text-primary hover:bg-white/5 border-l-2 border-transparent"
+                  )
+                }
+              >
+                <Icon className="h-5 w-5 shrink-0" />
+                <span className="text-sm font-medium truncate">{label}</span>
+              </NavLink>
+            )
           )}
+        </nav>
+
+        {/* Collapse button */}
+        <div className="border-t border-border-default p-2">
+          <button
+            onClick={toggleSidebar}
+            className="flex h-10 w-full items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors"
+          >
+            {collapsed ? (
+              <ChevronsRight className="h-5 w-5" />
+            ) : (
+              <ChevronsLeft className="h-5 w-5" />
+            )}
+          </button>
+          {!collapsed && (
+            <p className="mt-1 text-center text-xs text-text-muted">
+              v1.0.0
+            </p>
+          )}
+        </div>
+      </aside>
+    </TooltipProvider>
+  );
+}
+
+export function Header() {
+  const { pathname } = useLocation();
+  const title = getPageTitle(pathname);
+
+  return (
+    <header className="flex h-12 shrink-0 items-center justify-between border-b border-border-default bg-bg-surface/90 px-6 backdrop-blur-md">
+      <h1 className="text-sm font-medium text-text-secondary">{title}</h1>
+      <div className="flex items-center gap-3">
+        <button className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors">
+          <TrendingUp className="h-4 w-4" />
+        </button>
+        <button className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors">
+          <Settings className="h-4 w-4" />
         </button>
       </div>
-    </aside>
+    </header>
   );
 }

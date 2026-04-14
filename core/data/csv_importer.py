@@ -114,7 +114,7 @@ def detect_format(path: Path) -> ImportFormat:
     # Fallback: try to see if first column is a timestamp number
     try:
         int(parts[0])
-        if len(parts) >= 6:
+        if len(parts) == 12:
             return ImportFormat.BINANCE_OFFICIAL
     except ValueError:
         pass
@@ -171,23 +171,19 @@ def validate_ohlcv(df: pd.DataFrame) -> list[str]:
         if count > 0:
             errors.append(f"Column '{col}' has {count} NaN values")
 
-    # Check high >= max(open, close, low)
-    for idx in df.index:
-        row = df.loc[idx]
-        if pd.isna(row["high"]) or pd.isna(row["open"]) or pd.isna(row["close"]) or pd.isna(row["low"]):
-            continue
-        if row["high"] < max(row["open"], row["close"], row["low"]):
-            errors.append(f"Row {idx}: high ({row['high']}) < max(O,C,L) ({max(row['open'], row['close'], row['low'])})")
-            break  # Report first violation only
+    # Check high >= max(open, close, low) -- vectorized
+    max_ocl = df[["open", "close", "low"]].max(axis=1)
+    high_violations = df["high"] < max_ocl
+    if high_violations.any():
+        idx = df.index[high_violations.values.argmax()]
+        errors.append(f"Row {idx}: high ({df.loc[idx, 'high']}) < max(O,C,L) ({max_ocl.loc[idx]})")
 
-    # Check low <= min(open, close, high)
-    for idx in df.index:
-        row = df.loc[idx]
-        if pd.isna(row["low"]) or pd.isna(row["open"]) or pd.isna(row["close"]) or pd.isna(row["high"]):
-            continue
-        if row["low"] > min(row["open"], row["close"], row["high"]):
-            errors.append(f"Row {idx}: low ({row['low']}) > min(O,C,H) ({min(row['open'], row['close'], row['high'])})")
-            break
+    # Check low <= min(open, close, high) -- vectorized
+    min_och = df[["open", "close", "high"]].min(axis=1)
+    low_violations = df["low"] > min_och
+    if low_violations.any():
+        idx = df.index[low_violations.values.argmax()]
+        errors.append(f"Row {idx}: low ({df.loc[idx, 'low']}) > min(O,C,H) ({min_och.loc[idx]})")
 
     # Check volume >= 0
     if (df["volume"] < 0).any():
@@ -292,13 +288,13 @@ def import_csv(
 
     # Write based on mode
     if mode == ImportMode.REPLACE or not parquet_path.exists():
-        from MyQuant.core.data.storage import save_parquet
+        from core.data.storage import save_parquet
         save_parquet(df, parquet_path)
     elif mode == ImportMode.MERGE:
-        from MyQuant.core.data.storage import merge_parquet
+        from core.data.storage import merge_parquet
         merge_parquet(df, parquet_path)
     else:  # NEW
-        from MyQuant.core.data.storage import save_parquet
+        from core.data.storage import save_parquet
         save_parquet(df, parquet_path)
 
     time_start = str(df.index.min())
@@ -367,7 +363,7 @@ def import_csv_batch(
     dataset_id = f"{detected_symbol}_{detected_interval}"
     parquet_path = data_dir / f"{dataset_id}.parquet"
 
-    from MyQuant.core.data.storage import save_parquet, merge_parquet
+    from core.data.storage import save_parquet, merge_parquet
 
     if mode == ImportMode.REPLACE or not parquet_path.exists():
         save_parquet(merged, parquet_path)

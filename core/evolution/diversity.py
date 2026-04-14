@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from typing import List
 
-from MyQuant.core.strategy.dna import StrategyDNA
-from MyQuant.core.evolution.population import create_random_dna
+from core.strategy.dna import StrategyDNA
+from core.evolution.population import create_random_dna
 
 
 def _gene_signature(dna: StrategyDNA) -> str:

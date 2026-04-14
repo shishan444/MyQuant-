@@ -100,6 +100,18 @@ class DNAModel(BaseModel):
     generation: int = 0
     parent_ids: List[str] = Field(default_factory=list)
     mutation_ops: List[str] = Field(default_factory=list)
+    layers: Optional[List[dict]] = None
+    cross_layer_logic: str = "AND"
+
+
+class TimeframeLayerModel(BaseModel):
+    """A single timeframe layer within an MTF strategy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    timeframe: str
+    signal_genes: List[SignalGeneModel] = Field(default_factory=list)
+    logic_genes: LogicGenesModel = Field(default_factory=LogicGenesModel)
 
 
 # ── Strategy Schemas ──
@@ -239,6 +251,9 @@ class EvolutionTaskCreate(BaseModel):
     max_generations: int = 200
     elite_ratio: float = 0.5
     n_workers: int = 6
+    indicator_pool: Optional[List[str]] = None
+    timeframe_pool: Optional[List[str]] = None
+    mode: Optional[str] = None
 
 
 class EvolutionTaskResponse(BaseModel):

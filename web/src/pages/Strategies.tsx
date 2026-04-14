@@ -4,7 +4,7 @@ import { BookOpen, Play, Pencil, Trash2, Search, Plus, Upload, Star } from "luci
 import { PageTransition } from "@/components/PageTransition";
 import { EmptyState } from "@/components/EmptyState";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -45,7 +45,7 @@ export function Strategies() {
   );
   const deleteMutation = useDeleteStrategy();
 
-  const allStrategies: Strategy[] = data?.items ?? [];
+  const allStrategies: Strategy[] = data?.strategies ?? [];
 
   const filteredStrategies = useMemo(() => {
     let result = allStrategies;

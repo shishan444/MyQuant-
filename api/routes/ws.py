@@ -1,21 +1,83 @@
-"""WebSocket endpoint for evolution progress updates."""
+"""WebSocket endpoint for evolution progress updates.
+
+Supports subscribing to specific task_id and receiving
+generation_complete push messages from the EvolutionRunner.
+"""
 from __future__ import annotations
+
+import asyncio
+import json
+from typing import Dict, Set
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter(tags=["websocket"])
 
+# ---------------------------------------------------------------------------
+# Connection manager: track active WS connections per task_id
+# ---------------------------------------------------------------------------
+
+class _ConnectionManager:
+    """Manages WebSocket connections grouped by task_id."""
+
+    def __init__(self) -> None:
+        self._connections: Dict[str, Set[WebSocket]] = {}
+
+    def add(self, task_id: str, ws: WebSocket) -> None:
+        self._connections.setdefault(task_id, set()).add(ws)
+
+    def remove(self, task_id: str, ws: WebSocket) -> None:
+        conns = self._connections.get(task_id)
+        if conns:
+            conns.discard(ws)
+            if not conns:
+                del self._connections[task_id]
+
+    async def push(self, task_id: str, payload: dict) -> None:
+        """Send a JSON message to all connections subscribed to task_id."""
+        conns = list(self._connections.get(task_id, set()))
+        msg = json.dumps(payload, ensure_ascii=False, default=str)
+        for ws in conns:
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                pass
+
+
+manager = _ConnectionManager()
+
+
+def get_manager() -> _ConnectionManager:
+    return manager
+
+
+# ---------------------------------------------------------------------------
+# WebSocket endpoint
+# ---------------------------------------------------------------------------
 
 @router.websocket("/ws/evolution/{task_id}")
 async def evolution_ws(websocket: WebSocket, task_id: str) -> None:
     """WebSocket for real-time evolution progress updates.
 
-    The server accepts a connection and responds to ping messages.
-    In production, this would stream generation updates from the
-    evolution engine.
+    Protocol:
+      Client -> Server:
+        {"type": "ping"}
+        {"type": "subscribe"}  (auto-subscribes to the URL's task_id)
+
+      Server -> Client:
+        {"type": "pong"}
+        {"type": "subscribed", "task_id": "..."}
+        {"type": "generation_complete", "task_id": "...", "generation": N, ...}
+        {"type": "evolution_complete", "task_id": "...", ...}
     """
     await websocket.accept()
+
+    # Auto-subscribe
+    manager.add(task_id, websocket)
+
     try:
+        await websocket.send_json({"type": "subscribed", "task_id": task_id})
+
         while True:
             data = await websocket.receive_json()
             msg_type = data.get("type", "")
@@ -34,3 +96,5 @@ async def evolution_ws(websocket: WebSocket, task_id: str) -> None:
                 })
     except WebSocketDisconnect:
         pass
+    finally:
+        manager.remove(task_id, websocket)

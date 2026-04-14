@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import Dict
 
-from MyQuant.core.scoring.metrics import compute_metrics
-from MyQuant.core.scoring.normalizer import normalize
-from MyQuant.core.scoring.templates import get_template, ScoringTemplate
+from core.scoring.metrics import compute_metrics
+from core.scoring.normalizer import normalize
+from core.scoring.templates import get_template, ScoringTemplate
 
 
 def score_strategy(

@@ -5,21 +5,29 @@ import random
 import uuid
 from typing import List, Optional
 
-from MyQuant.core.strategy.dna import (
-    SignalRole, SignalGene, LogicGenes, RiskGenes, ExecutionGenes, StrategyDNA,
+from core.strategy.dna import (
+    SignalRole, SignalGene, LogicGenes, RiskGenes, ExecutionGenes,
+    StrategyDNA, TimeframeLayer,
 )
-from MyQuant.core.strategy.validator import validate_dna
-from MyQuant.core.features.indicators import INDICATOR_REGISTRY
-from MyQuant.core.evolution.operators import mutate_params, mutate_indicator, mutate_logic, mutate_risk
+from core.strategy.validator import validate_dna
+from core.features.indicators import INDICATOR_REGISTRY
+from core.evolution.operators import mutate_params, mutate_indicator, mutate_logic, mutate_risk
 
 
 def create_random_dna(
     timeframe: str = "4h",
     symbol: str = "BTCUSDT",
+    timeframe_pool: Optional[List[str]] = None,
 ) -> StrategyDNA:
-    """Generate a completely random but valid StrategyDNA."""
+    """Generate a completely random but valid StrategyDNA.
+
+    Args:
+        timeframe: Primary execution timeframe.
+        symbol: Trading pair.
+        timeframe_pool: If provided, may generate multi-timeframe DNA
+                       by adding layers from this pool.
+    """
     # Pick random indicators for entry and exit
-    # Filter to trigger-capable indicators
     trigger_indicators = [
         name for name, defn in INDICATOR_REGISTRY.items()
         if not defn.guard_only
@@ -30,14 +38,12 @@ def create_random_dna(
         indicator_name = random.choice(indicator_pool)
         reg = INDICATOR_REGISTRY[indicator_name]
 
-        # Random params
         params = {}
         for pname, pdef in reg.params.items():
             val = random.uniform(pdef.min, pdef.max)
             params[pname] = int(round(val / pdef.step) * pdef.step) if pdef.type == "int" \
                 else round(round(val / pdef.step) * pdef.step, 2)
 
-        # Random condition
         cond_type = random.choice(reg.supported_conditions)
         condition = {"type": cond_type}
         if cond_type in ("lt", "gt", "le", "ge"):
@@ -62,21 +68,17 @@ def create_random_dna(
     signals = []
     signals.append(_make_signal(SignalRole.ENTRY_TRIGGER, trigger_indicators))
 
-    # Optionally add entry guard
     if random.random() < 0.5:
         signals.append(_make_signal(SignalRole.ENTRY_GUARD, all_indicators))
 
     signals.append(_make_signal(SignalRole.EXIT_TRIGGER, trigger_indicators))
 
-    # Optionally add exit guard
     if random.random() < 0.4:
         signals.append(_make_signal(SignalRole.EXIT_GUARD, all_indicators))
 
-    # Random logic
     entry_logic = random.choice(["AND", "OR"])
     exit_logic = random.choice(["AND", "OR"])
 
-    # Random risk
     stop_loss = round(random.uniform(0.01, 0.15), 4)
     position_size = round(random.uniform(0.10, 0.60), 2)
     take_profit = None
@@ -92,7 +94,6 @@ def create_random_dna(
     # Validate and retry if needed
     result = validate_dna(dna)
     if not result.is_valid:
-        # Fallback to a simple valid strategy
         dna = StrategyDNA(
             signal_genes=[
                 SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, None,
@@ -106,6 +107,79 @@ def create_random_dna(
         )
 
     return dna
+
+
+def create_random_mtf_layer(
+    timeframe: str,
+    symbol: str = "BTCUSDT",
+) -> TimeframeLayer:
+    """Generate a single random TimeframeLayer for MTF strategies."""
+    trigger_indicators = [
+        name for name, defn in INDICATOR_REGISTRY.items()
+        if not defn.guard_only
+    ]
+    all_indicators = list(INDICATOR_REGISTRY.keys())
+
+    signals = []
+    signals.append(SignalGene(
+        indicator=random.choice(trigger_indicators),
+        params=_random_params(random.choice(trigger_indicators)),
+        role=SignalRole.ENTRY_TRIGGER,
+        condition=_random_condition(random.choice(trigger_indicators)),
+    ))
+
+    if random.random() < 0.5:
+        ind = random.choice(all_indicators)
+        signals.append(SignalGene(
+            indicator=ind,
+            params=_random_params(ind),
+            role=SignalRole.ENTRY_GUARD,
+            condition=_random_condition(ind),
+        ))
+
+    signals.append(SignalGene(
+        indicator=random.choice(trigger_indicators),
+        params=_random_params(random.choice(trigger_indicators)),
+        role=SignalRole.EXIT_TRIGGER,
+        condition=_random_condition(random.choice(trigger_indicators)),
+    ))
+
+    return TimeframeLayer(
+        timeframe=timeframe,
+        signal_genes=signals,
+        logic_genes=LogicGenes(
+            entry_logic=random.choice(["AND", "OR"]),
+            exit_logic=random.choice(["AND", "OR"]),
+        ),
+    )
+
+
+def _random_params(indicator_name: str) -> dict:
+    """Generate random params for a given indicator."""
+    reg = INDICATOR_REGISTRY.get(indicator_name)
+    if not reg:
+        return {}
+    params = {}
+    for pname, pdef in reg.params.items():
+        val = random.uniform(pdef.min, pdef.max)
+        params[pname] = int(round(val / pdef.step) * pdef.step) if pdef.type == "int" \
+            else round(round(val / pdef.step) * pdef.step, 2)
+    return params
+
+
+def _random_condition(indicator_name: str) -> dict:
+    """Generate a random condition for a given indicator."""
+    reg = INDICATOR_REGISTRY.get(indicator_name)
+    if not reg or not reg.supported_conditions:
+        return {"type": "gt"}
+    cond_type = random.choice(reg.supported_conditions)
+    condition = {"type": cond_type}
+    if cond_type in ("lt", "gt", "le", "ge"):
+        if indicator_name == "RSI":
+            condition["threshold"] = random.choice([25, 30, 35, 40, 60, 65, 70, 75])
+        else:
+            condition["threshold"] = round(random.uniform(-1, 1), 2)
+    return condition
 
 
 def init_population(
