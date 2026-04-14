@@ -52,6 +52,7 @@ class ValidateResponse(BaseModel):
     concentration: Dict[str, Any] = {}
     signal_frequency: Dict[str, float] = {}
     extremes: List[Dict[str, Any]] = []
+    warnings: List[str] = []
 
 
 @router.post("/validate", response_model=ValidateResponse)
@@ -100,6 +101,7 @@ def run_validation(
         concentration=result.concentration,
         signal_frequency=result.signal_frequency,
         extremes=result.extremes,
+        warnings=result.warnings,
     )
 
 

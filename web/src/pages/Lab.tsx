@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import {
   Play,
   Save,
@@ -34,6 +34,7 @@ import {
 
 import { useValidateHypothesis } from "@/hooks/useValidation";
 import { useCreateStrategy } from "@/hooks/useStrategies";
+import { useAvailableSources } from "@/hooks/useDatasets";
 import { SYMBOL_OPTIONS, TIMEFRAME_SELECT_OPTIONS } from "@/lib/constants";
 
 import type {
@@ -41,6 +42,7 @@ import type {
   ValidateResponse,
   TriggerRecord,
 } from "@/types/api";
+import { useQuery } from "@tanstack/react-query";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -61,7 +63,7 @@ const EXAMPLE_PRESETS = [
       { subject: "close", action: "touch", target: "bb_upper", logic: "AND" as const },
     ],
     then: [
-      { subject: "price", action: "drop", target: "0", window: 8, logic: "AND" as const },
+      { subject: "close", action: "drop", target: "0", window: 8, logic: "AND" as const },
     ],
   },
   {
@@ -71,7 +73,7 @@ const EXAMPLE_PRESETS = [
       { subject: "volume", action: "spike", target: "2", logic: "AND" as const },
     ],
     then: [
-      { subject: "price", action: "rise", target: "0", window: 8, logic: "AND" as const },
+      { subject: "close", action: "rise", target: "0", window: 8, logic: "AND" as const },
     ],
   },
   {
@@ -80,7 +82,7 @@ const EXAMPLE_PRESETS = [
       { subject: "rsi", action: "gt", target: "70", logic: "AND" as const },
     ],
     then: [
-      { subject: "price", action: "drop", target: "0", window: 12, logic: "AND" as const },
+      { subject: "close", action: "drop", target: "0", window: 12, logic: "AND" as const },
     ],
   },
 ];
@@ -124,8 +126,60 @@ export function Lab() {
   const validateMutation = useValidateHypothesis();
   const createStrategyMutation = useCreateStrategy();
 
+  // -- Available data sources --
+  const { data: sourcesData } = useQuery(useAvailableSources());
+
+  // Build dynamic symbol and timeframe options from available sources
+  const dynamicSymbolOptions = useMemo(() => {
+    if (!sourcesData?.sources?.length) return SYMBOL_OPTIONS;
+    const seen = new Set<string>();
+    const opts: { value: string; label: string }[] = [];
+    for (const s of sourcesData.sources) {
+      if (!seen.has(s.symbol)) {
+        seen.add(s.symbol);
+        opts.push({ value: s.symbol, label: s.symbol });
+      }
+    }
+    return opts.length > 0 ? opts : SYMBOL_OPTIONS;
+  }, [sourcesData]);
+
+  const dynamicTimeframeOptions = useMemo(() => {
+    if (!sourcesData?.sources?.length) return TIMEFRAME_SELECT_OPTIONS;
+    const filtered = sourcesData.sources.filter((s) => s.symbol === pair);
+    if (filtered.length === 0) return TIMEFRAME_SELECT_OPTIONS;
+    const seen = new Set<string>();
+    const opts: { value: string; label: string }[] = [];
+    for (const s of filtered) {
+      if (!seen.has(s.timeframe)) {
+        seen.add(s.timeframe);
+        opts.push({ value: s.timeframe, label: s.timeframe });
+      }
+    }
+    return opts.length > 0 ? opts : TIMEFRAME_SELECT_OPTIONS;
+  }, [sourcesData, pair]);
+
+  // BUG-009: Auto-set default date range based on selected source
+  useEffect(() => {
+    const match = sourcesData?.sources?.find(
+      (s) => s.symbol === pair && s.timeframe === timeframe
+    );
+    if (match?.time_end) {
+      const end = new Date(match.time_end);
+      const start = new Date(end);
+      start.setFullYear(start.getFullYear() - 1);
+      const startDate = start.toISOString().slice(0, 10);
+      const clampStart = match.time_start && startDate < match.time_start
+        ? match.time_start
+        : startDate;
+      setDateRange({
+        start: clampStart,
+        end: end.toISOString().slice(0, 10),
+      });
+    }
+  }, [pair, timeframe, sourcesData]);
+
   // -- Derived --
-  const hasConditions = whenConditions.length > 0 || thenConditions.length > 0;
+  const hasConditions = whenConditions.length > 0 && thenConditions.length > 0;
   const isLoading = validateMutation.isPending;
   const hasResult = result !== null;
 
@@ -133,8 +187,12 @@ export function Lab() {
   const handleQuickDate = useCallback((days: number) => {
     const end = new Date();
     if (days === 0) {
-      // All: set very wide range
-      setDateRange({ start: "2015-01-01", end: end.toISOString().slice(0, 10) });
+      // All: use selected source's time_start, fallback to "2024-01-01"
+      const match = sourcesData?.sources?.find(
+        (s) => s.symbol === pair && s.timeframe === timeframe
+      );
+      const start = match?.time_start ?? "2024-01-01";
+      setDateRange({ start, end: end.toISOString().slice(0, 10) });
       return;
     }
     const start = new Date();
@@ -149,7 +207,7 @@ export function Lab() {
       start: start.toISOString().slice(0, 10),
       end: end.toISOString().slice(0, 10),
     });
-  }, []);
+  }, [pair, timeframe, sourcesData]);
 
   const handleValidate = useCallback(async () => {
     if (whenConditions.length === 0) {
@@ -301,7 +359,7 @@ export function Lab() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {SYMBOL_OPTIONS.map((o) => (
+                      {dynamicSymbolOptions.map((o) => (
                         <SelectItem key={o.value} value={o.value}>
                           {o.label}
                         </SelectItem>
@@ -314,7 +372,7 @@ export function Lab() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {TIMEFRAME_SELECT_OPTIONS.map((o) => (
+                      {dynamicTimeframeOptions.map((o) => (
                         <SelectItem key={o.value} value={o.value}>
                           {o.label}
                         </SelectItem>
@@ -394,7 +452,7 @@ export function Lab() {
                     {isLoading ? "验证中..." : "验证规律"}
                   </Button>
 
-                  {hasResult && (
+                  {hasResult && result.total_count > 0 && (
                     <Button
                       size="sm"
                       variant="outline"

@@ -1,5 +1,6 @@
 import { api } from "./api";
 import type {
+  AvailableSourcesResponse,
   Dataset,
   DatasetListResponse,
   OhlcvData,
@@ -59,5 +60,10 @@ export async function getDatasetPreview(
   params?: { rows?: number }
 ): Promise<{ rows: Record<string, unknown>[]; columns: string[] }> {
   const { data } = await api.get(`/api/data/datasets/${id}/preview`, { params });
+  return data;
+}
+
+export async function getAvailableSources(): Promise<AvailableSourcesResponse> {
+  const { data } = await api.get("/api/data/available-sources");
   return data;
 }

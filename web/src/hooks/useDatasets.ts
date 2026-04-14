@@ -9,6 +9,7 @@ export const datasetsKeys = {
   detail: (id: string) => ["datasets", "detail", id] as const,
   ohlcv: (id: string, params?: Record<string, string>) =>
     ["datasets", id, "ohlcv", params] as const,
+  availableSources: ["datasets", "available-sources"] as const,
 };
 
 export function useDatasets(filters?: { symbol?: string; interval?: string }) {
@@ -70,5 +71,13 @@ export function useDeleteDataset() {
       toast.success("数据集已删除");
     },
     onError: (err) => toast.error(`删除失败: ${err.message}`),
+  });
+}
+
+export function useAvailableSources() {
+  return queryOptions({
+    queryKey: datasetsKeys.availableSources,
+    queryFn: () => api.getAvailableSources(),
+    staleTime: 5 * 60 * 1000, // 5 minutes
   });
 }

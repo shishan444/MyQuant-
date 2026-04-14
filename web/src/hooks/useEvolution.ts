@@ -56,7 +56,7 @@ export function useCreateEvolutionTask() {
   return useMutation({
     mutationFn: api.createEvolutionTask,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: evolutionKeys.tasks() });
+      qc.invalidateQueries({ queryKey: ["evolution", "tasks"] });
       toast.success("进化任务已创建");
     },
     onError: (err) => toast.error(`创建失败: ${err.message}`),
@@ -68,7 +68,7 @@ export function useStopEvolutionTask() {
   return useMutation({
     mutationFn: api.stopEvolutionTask,
     onSuccess: (_data, taskId) => {
-      qc.invalidateQueries({ queryKey: evolutionKeys.tasks() });
+      qc.invalidateQueries({ queryKey: ["evolution", "tasks"] });
       qc.invalidateQueries({ queryKey: evolutionKeys.task(taskId) });
       toast.success("任务已停止");
     },
@@ -81,7 +81,7 @@ export function usePauseEvolutionTask() {
   return useMutation({
     mutationFn: api.pauseEvolutionTask,
     onSuccess: (_data, taskId) => {
-      qc.invalidateQueries({ queryKey: evolutionKeys.tasks() });
+      qc.invalidateQueries({ queryKey: ["evolution", "tasks"] });
       qc.invalidateQueries({ queryKey: evolutionKeys.task(taskId) });
       toast.success("任务已暂停", { description: "可以随时恢复" });
     },
@@ -94,7 +94,7 @@ export function useResumeEvolutionTask() {
   return useMutation({
     mutationFn: api.resumeEvolutionTask,
     onSuccess: (_data, taskId) => {
-      qc.invalidateQueries({ queryKey: evolutionKeys.tasks() });
+      qc.invalidateQueries({ queryKey: ["evolution", "tasks"] });
       qc.invalidateQueries({ queryKey: evolutionKeys.task(taskId) });
       toast.success("任务已恢复");
     },

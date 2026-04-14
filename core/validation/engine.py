@@ -42,6 +42,7 @@ class ValidationResult:
     concentration: Dict[str, List[float]] = field(default_factory=dict)
     signal_frequency: Dict[str, float] = field(default_factory=dict)
     extremes: List[Dict[str, Any]] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
 
 
 def validate_hypothesis(
@@ -100,14 +101,24 @@ def validate_hypothesis(
     # Compute indicators
     enhanced_df = compute_all_indicators(df)
 
+    # Collect warnings during evaluation
+    warnings: List[str] = []
+
     # Evaluate WHEN conditions
-    when_mask = _evaluate_conditions(enhanced_df, when_conditions)
+    when_mask = _evaluate_conditions(enhanced_df, when_conditions, warnings)
 
     # Find trigger indices
     trigger_indices = enhanced_df.index[when_mask].tolist()
 
     if not trigger_indices:
-        return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0)
+        return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0, warnings=warnings)
+
+    # Determine max THEN window across all THEN conditions
+    max_then_window = then_window
+    for cond in then_conditions:
+        cond_window = cond.get("window")
+        if cond_window is not None:
+            max_then_window = max(max_then_window, cond_window)
 
     # Evaluate THEN conditions for each trigger
     triggers = []
@@ -116,15 +127,15 @@ def validate_hypothesis(
         trigger_loc = enhanced_df.index.get_loc(trigger_idx)
         trigger_price = enhanced_df.loc[trigger_idx, "close"]
 
-        # Look ahead for THEN window
-        end_loc = min(trigger_loc + then_window + 1, len(enhanced_df))
+        # Look ahead for THEN window (use max window across conditions)
+        end_loc = min(trigger_loc + max_then_window + 1, len(enhanced_df))
         window_df = enhanced_df.iloc[trigger_loc + 1:end_loc]
 
         if len(window_df) == 0:
             continue
 
-        # Check THEN conditions
-        then_matched = _check_then_conditions(window_df, then_conditions, trigger_price)
+        # Check THEN conditions (each condition uses its own window)
+        then_matched = _check_then_conditions(window_df, then_conditions, trigger_price, trigger_loc, max_then_window)
 
         # Calculate change
         final_price = window_df.iloc[-1]["close"]
@@ -153,7 +164,7 @@ def validate_hypothesis(
         changes.append(change_pct)
 
     if not triggers:
-        return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0)
+        return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0, warnings=warnings)
 
     match_count = sum(1 for t in triggers if t.matched)
     total_count = len(triggers)
@@ -219,10 +230,11 @@ def validate_hypothesis(
         concentration=concentration,
         signal_frequency=signal_frequency,
         extremes=extremes,
+        warnings=warnings,
     )
 
 
-def _evaluate_conditions(df: pd.DataFrame, conditions: List[Dict]) -> pd.Series:
+def _evaluate_conditions(df: pd.DataFrame, conditions: List[Dict], warnings: List[str] | None = None) -> pd.Series:
     """Evaluate a list of conditions against a DataFrame."""
     if not conditions:
         return pd.Series(False, index=df.index)
@@ -231,7 +243,7 @@ def _evaluate_conditions(df: pd.DataFrame, conditions: List[Dict]) -> pd.Series:
     logic = "AND"
     for cond in conditions:
         logic = cond.get("logic", "AND")
-        mask = _evaluate_single_condition(df, cond)
+        mask = _evaluate_single_condition(df, cond, warnings)
         masks.append(mask)
 
     if not masks:
@@ -247,7 +259,7 @@ def _evaluate_conditions(df: pd.DataFrame, conditions: List[Dict]) -> pd.Series:
     return result.fillna(False)
 
 
-def _evaluate_single_condition(df: pd.DataFrame, cond: Dict) -> pd.Series:
+def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str] | None = None) -> pd.Series:
     """Evaluate a single condition."""
     subject = cond.get("subject", "")
     action = cond.get("action", "")
@@ -256,17 +268,16 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict) -> pd.Series:
     # Get subject series
     subject_series = _resolve_subject(df, subject)
     if subject_series is None:
+        if warnings is not None:
+            warnings.append(f"Subject '{subject}' not found in data columns")
         return pd.Series(False, index=df.index)
 
-    # Get target value/series
-    if isinstance(target, (int, float)):
-        target_val = float(target)
-    elif isinstance(target, str) and target in df.columns:
-        target_val = df[target]
-    else:
-        target_val = _resolve_target_value(target)
+    # Get target value/series using new resolver
+    target_val = _resolve_target(df, target)
 
     if target_val is None:
+        if warnings is not None:
+            warnings.append(f"Target '{target}' could not be resolved to a numeric value or data column")
         return pd.Series(False, index=df.index)
 
     # Apply action
@@ -286,6 +297,8 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict) -> pd.Series:
 
     fn = action_map.get(action)
     if fn is None:
+        if warnings is not None:
+            warnings.append(f"Action '{action}' is not a recognized action type")
         return pd.Series(False, index=df.index)
 
     return fn(subject_series, target_val)
@@ -297,6 +310,7 @@ def _resolve_subject(df: pd.DataFrame, subject: str) -> Optional[pd.Series]:
         "close": "close", "price": "close",
         "open": "open", "high": "high", "low": "low",
         "volume": "volume",
+        "kdj": "stoch_k",
     }
 
     if subject in subject_map:
@@ -321,11 +335,65 @@ def _resolve_target_value(target: str):
         return None
 
 
-def _check_then_conditions(window_df: pd.DataFrame, conditions: List[Dict], trigger_price: float) -> bool:
-    """Check if THEN conditions are met in the forward window."""
+def _resolve_target(df: pd.DataFrame, target):
+    """Resolve a target to a numeric value or a DataFrame column series.
+
+    Resolution order:
+    1. If target is already numeric, return as float.
+    2. Try to parse target string as float.
+    3. Try exact column name match in DataFrame.
+    4. Try fuzzy column name match (same logic as _resolve_subject).
+    """
+    if isinstance(target, (int, float)):
+        return float(target)
+
+    if not isinstance(target, str) or not target:
+        return None
+
+    # Try numeric parse
+    try:
+        return float(target)
+    except (ValueError, TypeError):
+        pass
+
+    # Exact column match
+    if target in df.columns:
+        return df[target]
+
+    # Fuzzy column match: strip underscores + lowercase, then substring match
+    target_normalized = target.lower().replace("_", "")
+    matches = [c for c in df.columns if target_normalized in c.lower().replace("_", "")]
+    if matches:
+        return df[matches[0]]
+
+    return None
+
+
+def _check_then_conditions(
+    window_df: pd.DataFrame,
+    conditions: List[Dict],
+    trigger_price: float,
+    trigger_loc: int = 0,
+    max_window: int = 8,
+) -> bool:
+    """Check if THEN conditions are met in the forward window.
+
+    Each condition can have its own ``window`` field; if present, the
+    window_df is trimmed to that condition's window before evaluation.
+    """
     for cond in conditions:
         action = cond.get("action", "")
         target_val = cond.get("target", 0)
+
+        # Per-condition window: trim the window_df if condition specifies its own window
+        cond_window = cond.get("window")
+        if cond_window is not None and cond_window < max_window:
+            cond_df = window_df.iloc[:cond_window]
+        else:
+            cond_df = window_df
+
+        if len(cond_df) == 0:
+            continue
 
         try:
             threshold = float(target_val)
@@ -333,7 +401,7 @@ def _check_then_conditions(window_df: pd.DataFrame, conditions: List[Dict], trig
             threshold = 0
 
         if action in ("drop", "lt", "le"):
-            min_price = window_df["close"].min()
+            min_price = cond_df["close"].min()
             change = ((min_price - trigger_price) / trigger_price) * 100
             if action == "drop" and change <= threshold:
                 return True
@@ -342,7 +410,7 @@ def _check_then_conditions(window_df: pd.DataFrame, conditions: List[Dict], trig
             if action == "le" and change <= threshold:
                 return True
         elif action in ("rise", "gt", "ge"):
-            max_price = window_df["close"].max()
+            max_price = cond_df["close"].max()
             change = ((max_price - trigger_price) / trigger_price) * 100
             if action == "rise" and change >= threshold:
                 return True

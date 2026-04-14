@@ -32,6 +32,7 @@ import {
   useEvolutionWebSocket,
 } from "@/hooks/useEvolution";
 import { useCreateStrategy } from "@/hooks/useStrategies";
+import { useAvailableSources } from "@/hooks/useDatasets";
 import { isActiveStatus, SCORE_TEMPLATE_LABELS } from "@/lib/constants";
 import type { EvolutionTask, DNA } from "@/types/api";
 
@@ -78,7 +79,22 @@ export function Evolution() {
     useEvolutionTasks({ limit: 20 })
   );
 
-  const allTasks: EvolutionTask[] = tasksData?.tasks ?? [];
+  // --- Available sources for dynamic symbol options ---
+  const { data: sourcesData } = useQuery(useAvailableSources());
+  const dynamicSymbolOptions = useMemo(() => {
+    if (!sourcesData?.sources?.length) return undefined;
+    const seen = new Set<string>();
+    const opts: { value: string; label: string }[] = [];
+    for (const s of sourcesData.sources) {
+      if (!seen.has(s.symbol)) {
+        seen.add(s.symbol);
+        opts.push({ value: s.symbol, label: s.symbol });
+      }
+    }
+    return opts.length > 0 ? opts : undefined;
+  }, [sourcesData]);
+
+  const allTasks: EvolutionTask[] = tasksData?.items ?? [];
 
   // Find active task (first running/pending)
   const activeTask = useMemo(
@@ -355,6 +371,7 @@ export function Evolution() {
                     disabled={!!activeTask}
                     isPending={createTask.isPending}
                     onSubmit={handleStartAuto}
+                    symbolOptions={dynamicSymbolOptions}
                   />
                 ) : (
                   <SeedConfigForm
@@ -362,6 +379,7 @@ export function Evolution() {
                     isPending={createTask.isPending}
                     onSubmit={handleStartSeed}
                     seedDna={seedDna}
+                    symbolOptions={dynamicSymbolOptions}
                   />
                 )}
               </div>

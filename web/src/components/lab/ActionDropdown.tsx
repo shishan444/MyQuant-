@@ -8,13 +8,15 @@ interface ActionOption {
 }
 
 const PRICE_ACTIONS: ActionOption[] = [
-  { value: "touch", label: "触碰", category: "穿越类" },
+  { value: "touch", label: "触及", category: "穿越类" },
   { value: "cross_above", label: "上穿", category: "穿越类" },
   { value: "cross_below", label: "下穿", category: "穿越类" },
   { value: "breakout", label: "突破", category: "突破类" },
   { value: "breakdown", label: "跌破", category: "突破类" },
   { value: "gt", label: "大于", category: "比较类" },
   { value: "lt", label: "小于", category: "比较类" },
+  { value: "ge", label: "大于等于", category: "比较类" },
+  { value: "le", label: "小于等于", category: "比较类" },
 ];
 
 const VOLUME_ACTIONS: ActionOption[] = [
@@ -27,6 +29,8 @@ const VOLUME_ACTIONS: ActionOption[] = [
 const INDICATOR_ACTIONS: ActionOption[] = [
   { value: "gt", label: "大于", category: "比较类" },
   { value: "lt", label: "小于", category: "比较类" },
+  { value: "ge", label: "大于等于", category: "比较类" },
+  { value: "le", label: "小于等于", category: "比较类" },
   { value: "cross_above", label: "上穿", category: "穿越类" },
   { value: "cross_below", label: "下穿", category: "穿越类" },
   { value: "touch", label: "触及", category: "穿越类" },

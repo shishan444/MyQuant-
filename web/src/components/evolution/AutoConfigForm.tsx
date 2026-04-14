@@ -22,6 +22,7 @@ import {
 interface AutoConfigFormProps {
   disabled: boolean;
   isPending: boolean;
+  symbolOptions?: { value: string; label: string }[];
   onSubmit: (config: {
     symbol: string;
     timeframePool: string[];
@@ -37,6 +38,7 @@ export function AutoConfigForm({
   disabled,
   isPending,
   onSubmit,
+  symbolOptions,
 }: AutoConfigFormProps) {
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframePool, setTimeframePool] = useState<string[]>(["4h"]);
@@ -100,7 +102,7 @@ export function AutoConfigForm({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {SYMBOL_OPTIONS.map((opt) => (
+            {(symbolOptions ?? SYMBOL_OPTIONS).map((opt) => (
               <SelectItem key={opt.value} value={opt.value}>
                 {opt.label}
               </SelectItem>

@@ -16,6 +16,8 @@ from api.db_ext import (
 )
 from api.deps import get_data_dir, get_db_path
 from api.schemas import (
+    AvailableSource,
+    AvailableSourcesResponse,
     DataImportResponse,
     DatasetListResponse,
     DatasetPreviewResponse,
@@ -375,3 +377,44 @@ def get_ohlcv(
         dataset_id=dataset_id,
         data=ohlcv_data,
     )
+
+
+@router.get("/available-sources", response_model=AvailableSourcesResponse)
+def get_available_sources(
+    data_dir: Path = Depends(get_data_dir),
+) -> AvailableSourcesResponse:
+    """Scan parquet files and return available symbol/timeframe combinations."""
+    import re
+    import pandas as pd
+
+    sources: list[AvailableSource] = []
+    if not data_dir.exists():
+        return AvailableSourcesResponse(sources=sources)
+
+    for pq_file in sorted(data_dir.glob("*.parquet")):
+        # Parse symbol and timeframe from filename: e.g. BTCUSDT_4h.parquet
+        stem = pq_file.stem
+        match = re.match(r"^([A-Za-z]+)_(\w+)$", stem)
+        if not match:
+            continue
+        symbol = match.group(1)
+        timeframe = match.group(2)
+
+        try:
+            df = load_parquet(pq_file)
+            if df is None or len(df) == 0:
+                continue
+            time_start = str(df.index[0]) if len(df.index) > 0 else None
+            time_end = str(df.index[-1]) if len(df.index) > 0 else None
+        except Exception:
+            time_start = None
+            time_end = None
+
+        sources.append(AvailableSource(
+            symbol=symbol,
+            timeframe=timeframe,
+            time_start=time_start[:10] if time_start else None,
+            time_end=time_end[:10] if time_end else None,
+        ))
+
+    return AvailableSourcesResponse(sources=sources)

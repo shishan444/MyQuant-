@@ -10,18 +10,26 @@ interface SubjectOption {
 
 const SUBJECT_OPTIONS: SubjectOption[] = [
   { value: "close", label: "收盘价", category: "价格类" },
+  { value: "price", label: "收盘价(price)", category: "价格类" },
   { value: "open", label: "开盘价", category: "价格类" },
   { value: "high", label: "最高价", category: "价格类" },
   { value: "low", label: "最低价", category: "价格类" },
   { value: "volume", label: "成交量", category: "量能类" },
   { value: "ema", label: "EMA", category: "趋势类" },
   { value: "sma", label: "SMA", category: "趋势类" },
+  { value: "adx", label: "ADX", category: "趋势类" },
   { value: "rsi", label: "RSI", category: "震荡类" },
   { value: "macd", label: "MACD", category: "震荡类" },
   { value: "kdj", label: "KDJ", category: "震荡类" },
+  { value: "cci", label: "CCI", category: "震荡类" },
+  { value: "roc", label: "ROC", category: "震荡类" },
   { value: "bb_upper", label: "布林带上轨", category: "波动类" },
   { value: "bb_middle", label: "布林带中轨", category: "波动类" },
   { value: "bb_lower", label: "布林带下轨", category: "波动类" },
+  { value: "atr", label: "ATR", category: "波动类" },
+  { value: "obv", label: "OBV", category: "量能类" },
+  { value: "mfi", label: "MFI", category: "量能类" },
+  { value: "cmf", label: "CMF", category: "量能类" },
 ];
 
 const CATEGORIES = [...new Set(SUBJECT_OPTIONS.map((o) => o.category))];

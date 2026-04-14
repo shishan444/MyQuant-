@@ -349,6 +349,17 @@ class OhlcvResponse(BaseModel):
 # ── Config Schemas ──
 
 
+class AvailableSource(BaseModel):
+    symbol: str
+    timeframe: str
+    time_start: Optional[str] = None
+    time_end: Optional[str] = None
+
+
+class AvailableSourcesResponse(BaseModel):
+    sources: List[AvailableSource]
+
+
 class ConfigResponse(BaseModel):
     symbols: List[str] = Field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
     timeframes: List[str] = Field(default_factory=lambda: ["1h", "4h", "1d"])

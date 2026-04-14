@@ -159,7 +159,7 @@ export interface StrategyListResponse {
 }
 
 export interface EvolutionTaskListResponse {
-  tasks: EvolutionTask[];
+  items: EvolutionTask[];
   total: number;
 }
 
@@ -249,4 +249,20 @@ export interface ValidateResponse {
   concentration: Record<string, number[]>;
   signal_frequency: Record<string, number>;
   extremes: Array<{ change_pct: number; time: string; is_match: boolean }>;
+  warnings: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Available data sources
+// ---------------------------------------------------------------------------
+
+export interface AvailableSource {
+  symbol: string;
+  timeframe: string;
+  time_start?: string;
+  time_end?: string;
+}
+
+export interface AvailableSourcesResponse {
+  sources: AvailableSource[];
 }

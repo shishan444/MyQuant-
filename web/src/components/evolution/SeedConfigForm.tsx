@@ -32,6 +32,7 @@ interface LayerData {
 interface SeedConfigFormProps {
   disabled: boolean;
   isPending: boolean;
+  symbolOptions?: { value: string; label: string }[];
   onSubmit: (config: {
     symbol: string;
     initialDna: DNA;
@@ -74,6 +75,7 @@ export function SeedConfigForm({
   isPending,
   onSubmit,
   seedDna,
+  symbolOptions,
 }: SeedConfigFormProps) {
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [scoreTemplate, setScoreTemplate] = useState("profit_first");
@@ -293,7 +295,7 @@ export function SeedConfigForm({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {SYMBOL_OPTIONS.map((opt) => (
+            {(symbolOptions ?? SYMBOL_OPTIONS).map((opt) => (
               <SelectItem key={opt.value} value={opt.value}>
                 {opt.label}
               </SelectItem>
@@ -498,7 +500,8 @@ export function SeedConfigForm({
           <span className="text-[11px] text-slate-500">止损</span>
           <Input
             type="number"
-            min={0.5}
+            step="1"
+            min={1}
             max={20}
             value={stopLoss}
             onChange={(e) => setStopLoss(Number(e.target.value) || 5)}
@@ -510,6 +513,7 @@ export function SeedConfigForm({
           <span className="text-[11px] text-slate-500">止盈</span>
           <Input
             type="number"
+            step="1"
             min={1}
             max={50}
             value={takeProfit}
@@ -522,6 +526,7 @@ export function SeedConfigForm({
           <span className="text-[11px] text-slate-500">仓位</span>
           <Input
             type="number"
+            step="1"
             min={10}
             max={100}
             value={positionSize}
