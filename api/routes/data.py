@@ -350,13 +350,12 @@ def get_ohlcv(
     df = load_parquet(parquet_path)
 
     # Apply time range filter
+    import pandas as pd
     if start is not None:
-        import pandas as pd
-        start_ts = pd.Timestamp(start)
+        start_ts = pd.Timestamp(start, tz="UTC") if df.index.tz else pd.Timestamp(start)
         df = df[df.index >= start_ts]
     if end is not None:
-        import pandas as pd
-        end_ts = pd.Timestamp(end)
+        end_ts = pd.Timestamp(end, tz="UTC") if df.index.tz else pd.Timestamp(end)
         df = df[df.index <= end_ts]
 
     # Apply limit
@@ -418,3 +417,163 @@ def get_available_sources(
         ))
 
     return AvailableSourcesResponse(sources=sources)
+
+
+def _safe_timestamp(date_str: Optional[str], tz_aware: bool):
+    """Parse a date string safely; return None on empty or invalid input."""
+    if not date_str:
+        return None
+    import pandas as pd
+    try:
+        return pd.Timestamp(date_str, tz="UTC") if tz_aware else pd.Timestamp(date_str)
+    except Exception:
+        return None
+
+
+def _apply_date_filter(df, start: Optional[str], end: Optional[str]):
+    """Filter DataFrame by date range, silently skipping invalid dates."""
+    tz_aware = df.index.tz is not None
+    start_ts = _safe_timestamp(start, tz_aware)
+    end_ts = _safe_timestamp(end, tz_aware)
+    if start_ts is not None:
+        df = df[df.index >= start_ts]
+    if end_ts is not None:
+        df = df[df.index <= end_ts]
+    return df
+
+
+@router.get("/ohlcv/{symbol}/{timeframe}")
+def get_ohlcv_by_symbol(
+    symbol: str,
+    timeframe: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    limit: int = 10000,
+    data_dir: Path = Depends(get_data_dir),
+) -> OhlcvResponse:
+    """Get OHLCV data by symbol+timeframe (resolves parquet file directly)."""
+    import re
+
+    safe_symbol = re.sub(r'[^A-Za-z0-9]', '', symbol)
+    parquet_path = data_dir / f"{safe_symbol}_{timeframe}.parquet"
+
+    if not parquet_path.exists():
+        raise HTTPException(status_code=404, detail=f"No data for {symbol}/{timeframe}")
+
+    df = load_parquet(parquet_path)
+    if df is None or len(df) == 0:
+        raise HTTPException(status_code=404, detail="Empty dataset")
+
+    df = _apply_date_filter(df, start, end)
+
+    df = df.sort_index()
+    df = df.head(limit)
+
+    ohlcv_data = []
+    for idx, row_data in df.iterrows():
+        ohlcv_data.append({
+            "timestamp": str(idx),
+            "open": float(row_data.get("open", 0)),
+            "high": float(row_data.get("high", 0)),
+            "low": float(row_data.get("low", 0)),
+            "close": float(row_data.get("close", 0)),
+            "volume": float(row_data.get("volume", 0)),
+        })
+
+    return OhlcvResponse(
+        dataset_id=f"{safe_symbol}_{timeframe}",
+        data=ohlcv_data,
+    )
+
+
+@router.get("/chart-indicators/{symbol}/{timeframe}")
+def get_chart_indicators(
+    symbol: str,
+    timeframe: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    ema_periods: Optional[str] = None,
+    boll_enabled: bool = True,
+    boll_period: int = 20,
+    boll_std: float = 2.0,
+    rsi_enabled: bool = True,
+    rsi_period: int = 14,
+    data_dir: Path = Depends(get_data_dir),
+) -> Dict[str, Any]:
+    """Compute chart indicators (EMA, BOLL, RSI) for chart rendering."""
+    import re
+
+    from core.features.indicators import _compute_indicator
+
+    safe_symbol = re.sub(r'[^A-Za-z0-9]', '', symbol)
+    parquet_path = data_dir / f"{safe_symbol}_{timeframe}.parquet"
+
+    if not parquet_path.exists():
+        raise HTTPException(status_code=404, detail=f"No data for {symbol}/{timeframe}")
+
+    df = load_parquet(parquet_path)
+    if df is None or len(df) == 0:
+        raise HTTPException(status_code=404, detail="Empty dataset")
+
+    df = _apply_date_filter(df, start, end)
+
+    df = df.sort_index()
+
+    result: Dict[str, Any] = {"ema": {}, "boll": None, "rsi": None}
+
+    # Compute EMA for requested periods
+    if ema_periods:
+        periods = [int(p.strip()) for p in ema_periods.split(",") if p.strip()]
+        for period in periods:
+            try:
+                ema_df = _compute_indicator(df, "EMA", {"period": period})
+                col_name = f"ema_{period}"
+                if col_name in ema_df.columns:
+                    series = ema_df[col_name].dropna()
+                    result["ema"][str(period)] = [
+                        {"time": str(idx), "value": float(val)}
+                        for idx, val in series.items()
+                    ]
+            except Exception:
+                continue
+
+    # Compute Bollinger Bands
+    if boll_enabled:
+        try:
+            bb_df = _compute_indicator(df, "BB", {"period": boll_period, "std": boll_std})
+            upper_col = f"bb_upper_{boll_period}_{boll_std}"
+            middle_col = f"bb_middle_{boll_period}_{boll_std}"
+            lower_col = f"bb_lower_{boll_period}_{boll_std}"
+            if all(col in bb_df.columns for col in [upper_col, middle_col, lower_col]):
+                result["boll"] = {
+                    "upper": [
+                        {"time": str(idx), "value": float(val)}
+                        for idx, val in bb_df[upper_col].dropna().items()
+                    ],
+                    "middle": [
+                        {"time": str(idx), "value": float(val)}
+                        for idx, val in bb_df[middle_col].dropna().items()
+                    ],
+                    "lower": [
+                        {"time": str(idx), "value": float(val)}
+                        for idx, val in bb_df[lower_col].dropna().items()
+                    ],
+                }
+        except Exception:
+            pass
+
+    # Compute RSI
+    if rsi_enabled:
+        try:
+            rsi_df = _compute_indicator(df, "RSI", {"period": rsi_period})
+            col_name = f"rsi_{rsi_period}"
+            if col_name in rsi_df.columns:
+                series = rsi_df[col_name].dropna()
+                result["rsi"] = [
+                    {"time": str(idx), "value": float(val)}
+                    for idx, val in series.items()
+                ]
+        except Exception:
+            pass
+
+    return result

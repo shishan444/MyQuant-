@@ -13,6 +13,7 @@ import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { KlineChart } from "@/components/charts/KlineChart";
 import type { KlineChartHandle } from "@/components/charts/KlineChart";
+import { ChartToolbar } from "@/components/charts/ChartToolbar";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -30,18 +31,23 @@ import {
   ReferencePanel,
   TriggerTable,
   TriggerDetailDrawer,
+  SaveStrategyDialog,
 } from "@/components/lab";
 
 import { useValidateHypothesis } from "@/hooks/useValidation";
 import { useCreateStrategy } from "@/hooks/useStrategies";
 import { useAvailableSources } from "@/hooks/useDatasets";
+import { getOhlcvBySymbol, getChartIndicators } from "@/services/datasets";
 import { SYMBOL_OPTIONS, TIMEFRAME_SELECT_OPTIONS } from "@/lib/constants";
-
 import type {
   ConditionInput,
   ValidateResponse,
   TriggerRecord,
+  ChartIndicatorsResponse,
 } from "@/types/api";
+import type { IndicatorData } from "@/components/charts/KlineChart";
+import type { BollingerBandData } from "@/types/chart";
+import { useChartSettings } from "@/stores/chart-settings";
 import { useQuery } from "@tanstack/react-query";
 
 // ---------------------------------------------------------------------------
@@ -91,13 +97,33 @@ const EXAMPLE_PRESETS = [
 // Helper
 // ---------------------------------------------------------------------------
 
+/** Format a Date as YYYY-MM-DD in local timezone (avoids toISOString UTC shift). */
+function toLocalDateStr(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** Clamp a YYYY-MM-DD string to a valid date (e.g. 04-31 -> 04-30). */
+function clampDate(dateStr: string): string {
+  if (!dateStr) return dateStr;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  if (!y || !m || !d) return dateStr;
+  const lastDay = new Date(y, m, 0).getDate();
+  const clampedDay = Math.min(d, lastDay);
+  const mm = String(m).padStart(2, "0");
+  const dd = String(clampedDay).padStart(2, "0");
+  return `${y}-${mm}-${dd}`;
+}
+
 function getDefaultDates(): { start: string; end: string } {
   const end = new Date();
   const start = new Date();
   start.setFullYear(start.getFullYear() - 1);
   return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
+    start: toLocalDateStr(start),
+    end: toLocalDateStr(end),
   };
 }
 
@@ -116,11 +142,17 @@ export function Lab() {
 
   // -- Result state --
   const [result, setResult] = useState<ValidateResponse | null>(null);
+  const [candleData, setCandleData] = useState<Array<{ timestamp: string; open: number; high: number; low: number; close: number; volume?: number }>>([]);
   const [detailTrigger, setDetailTrigger] = useState<TriggerRecord | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [indicatorResponse, setIndicatorResponse] = useState<ChartIndicatorsResponse | null>(null);
 
   // -- Refs --
   const chartRef = useRef<KlineChartHandle>(null);
+
+  // -- Chart settings --
+  const chartSettings = useChartSettings();
 
   // -- Mutations --
   const validateMutation = useValidateHypothesis();
@@ -158,7 +190,7 @@ export function Lab() {
     return opts.length > 0 ? opts : TIMEFRAME_SELECT_OPTIONS;
   }, [sourcesData, pair]);
 
-  // BUG-009: Auto-set default date range based on selected source
+  // Auto-set default date range
   useEffect(() => {
     const match = sourcesData?.sources?.find(
       (s) => s.symbol === pair && s.timeframe === timeframe
@@ -167,45 +199,71 @@ export function Lab() {
       const end = new Date(match.time_end);
       const start = new Date(end);
       start.setFullYear(start.getFullYear() - 1);
-      const startDate = start.toISOString().slice(0, 10);
+      const startDate = toLocalDateStr(start);
       const clampStart = match.time_start && startDate < match.time_start
         ? match.time_start
         : startDate;
-      setDateRange({
-        start: clampStart,
-        end: end.toISOString().slice(0, 10),
+      const newEnd = toLocalDateStr(end);
+      setDateRange((prev) => {
+        if (prev.start === clampStart && prev.end === newEnd) return prev;
+        return { start: clampStart, end: newEnd };
       });
     }
   }, [pair, timeframe, sourcesData]);
+
+  // -- baseTimeframe = timeframe (data source period) --
+  const baseTimeframe = timeframe;
 
   // -- Derived --
   const hasConditions = whenConditions.length > 0 && thenConditions.length > 0;
   const isLoading = validateMutation.isPending;
   const hasResult = result !== null;
 
+  // Collect referenced timeframes from conditions
+  const referencedTimeframes = useMemo(() => {
+    const tfs = new Set<string>();
+    for (const c of [...whenConditions, ...thenConditions]) {
+      if (c.timeframe && c.timeframe !== baseTimeframe) {
+        tfs.add(c.timeframe);
+      }
+    }
+    return Array.from(tfs);
+  }, [whenConditions, thenConditions, baseTimeframe]);
+
+  // Extract volume data from candle data
+  const volumeData = useMemo(
+    () =>
+      candleData
+        .filter((d) => d.volume != null)
+        .map((d) => ({
+          time: d.timestamp,
+          value: d.volume!,
+          color: d.close >= d.open ? "rgba(0,200,83,0.2)" : "rgba(255,23,68,0.2)",
+        })),
+    [candleData],
+  );
+
   // -- Handlers --
   const handleQuickDate = useCallback((days: number) => {
     const end = new Date();
     if (days === 0) {
-      // All: use selected source's time_start, fallback to "2024-01-01"
       const match = sourcesData?.sources?.find(
         (s) => s.symbol === pair && s.timeframe === timeframe
       );
       const start = match?.time_start ?? "2024-01-01";
-      setDateRange({ start, end: end.toISOString().slice(0, 10) });
+      setDateRange({ start, end: toLocalDateStr(end) });
       return;
     }
     const start = new Date();
     if (days === -1) {
-      // This year
       start.setMonth(0, 1);
       start.setHours(0, 0, 0, 0);
     } else {
       start.setDate(start.getDate() - days);
     }
     setDateRange({
-      start: start.toISOString().slice(0, 10),
-      end: end.toISOString().slice(0, 10),
+      start: toLocalDateStr(start),
+      end: toLocalDateStr(end),
     });
   }, [pair, timeframe, sourcesData]);
 
@@ -219,25 +277,75 @@ export function Lab() {
       return;
     }
 
+    // Validate dates before submitting
+    if (!dateRange.start || !dateRange.end) {
+      toast.error("请输入有效的日期范围（非法日期如 04-31 会被浏览器清除）");
+      return;
+    }
+    if (dateRange.start > dateRange.end) {
+      toast.error("开始日期不能晚于结束日期");
+      return;
+    }
+
+    // Clamp dates before submitting (fixes invalid dates like 04-31)
+    const safeStart = clampDate(dateRange.start);
+    const safeEnd = clampDate(dateRange.end);
+
     try {
       const res = await validateMutation.mutateAsync({
         pair,
         timeframe,
-        start: dateRange.start,
-        end: dateRange.end,
+        base_timeframe: baseTimeframe,
+        start: safeStart,
+        end: safeEnd,
         when: whenConditions,
         then: thenConditions,
       });
       setResult(res);
+
+      // Fetch OHLCV and chart indicators independently (each can fail without blocking the other)
+      const enabledEma = chartSettings.emaList.filter((e) => e.enabled);
+      const indParams = {
+        start: safeStart,
+        end: safeEnd,
+        ema_periods: enabledEma.map((e) => e.period).join(",") || undefined,
+        boll_enabled: chartSettings.boll.enabled,
+        boll_period: chartSettings.boll.period,
+        boll_std: chartSettings.boll.std,
+        rsi_enabled: chartSettings.rsi.enabled,
+        rsi_period: chartSettings.rsi.period,
+      };
+
+      // Fetch OHLCV data (critical for chart)
+      try {
+        const ohlcvRes = await getOhlcvBySymbol(pair, timeframe, {
+          start: safeStart,
+          end: safeEnd,
+          limit: 10000,
+        });
+        setCandleData(ohlcvRes.data);
+      } catch (err) {
+        // silently handle
+      }
+
+      // Fetch indicator data (optional, failure should not affect chart)
+      try {
+        const indRes = await getChartIndicators(pair, timeframe, indParams);
+        setIndicatorResponse(indRes);
+      } catch (err) {
+        // indicators unavailable - chart still works without them
+      }
     } catch {
       // handled by mutation
     }
-  }, [pair, timeframe, dateRange, whenConditions, thenConditions, validateMutation]);
+  }, [pair, timeframe, baseTimeframe, dateRange, whenConditions, thenConditions, validateMutation]);
 
   const handleClearAll = useCallback(() => {
     setWhenConditions([]);
     setThenConditions([]);
     setResult(null);
+    setCandleData([]);
+    setIndicatorResponse(null);
   }, []);
 
   const handlePreset = useCallback((idx: number) => {
@@ -249,7 +357,6 @@ export function Lab() {
 
   const handleLocate = useCallback((trigger: TriggerRecord) => {
     chartRef.current?.scrollToTime(trigger.time);
-    // Scroll the page to the chart
     const chartEl = document.getElementById("lab-kline-section");
     if (chartEl) {
       chartEl.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -261,16 +368,20 @@ export function Lab() {
     setDrawerOpen(true);
   }, []);
 
-  const handleSaveStrategy = useCallback(async () => {
+  const handleSaveStrategy = useCallback(async (data: { name: string; description: string; tags: string }) => {
     if (!result) return;
     try {
       await createStrategyMutation.mutateAsync({
-        name: `${pair} ${timeframe} 验证策略`,
+        name: data.name,
         dna: undefined,
         symbol: pair,
         timeframe,
         source: "lab",
+        tags: data.tags,
+        notes: data.description,
       });
+      toast.success("策略已保存");
+      setSaveDialogOpen(false);
     } catch {
       // handled by mutation
     }
@@ -284,8 +395,45 @@ export function Lab() {
         time: t.time,
         matched: t.matched,
       })) ?? [],
-    [result?.triggers]
+    [result?.triggers],
   );
+
+  // -- Chart indicator data for KlineChart --
+  const chartIndicators = useMemo<IndicatorData[] | undefined>(() => {
+    if (!indicatorResponse) return undefined;
+    const indicators: IndicatorData[] = [];
+
+    // EMA indicators
+    const emaList = chartSettings.emaList.filter((e) => e.enabled);
+    for (const ema of emaList) {
+      const emaData = indicatorResponse.ema?.[String(ema.period)];
+      if (emaData) {
+        indicators.push({
+          id: `ema_${ema.period}`,
+          type: "ema",
+          color: ema.color,
+          data: emaData,
+        });
+      }
+    }
+
+    // RSI indicator
+    if (chartSettings.rsi.enabled && indicatorResponse.rsi) {
+      indicators.push({
+        id: "rsi",
+        type: "rsi",
+        color: "#A78BFA",
+        data: indicatorResponse.rsi,
+      });
+    }
+
+    return indicators.length > 0 ? indicators : undefined;
+  }, [indicatorResponse, chartSettings.emaList, chartSettings.rsi.enabled]);
+
+  const chartBollData = useMemo<BollingerBandData | undefined>(() => {
+    if (!indicatorResponse?.boll || !chartSettings.boll.enabled) return undefined;
+    return indicatorResponse.boll;
+  }, [indicatorResponse?.boll, chartSettings.boll.enabled]);
 
   // -- Collapsed summary --
   const collapsedSummary = useMemo(() => {
@@ -310,7 +458,7 @@ export function Lab() {
   return (
     <PageTransition>
       <div className="flex flex-col gap-4">
-        {/* ── Region 1: Condition Builder ── */}
+        {/* Region 1: Condition Builder */}
         <GlassCard className="p-4" hover={false}>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-text-primary">规律构建器</h3>
@@ -320,15 +468,9 @@ export function Lab() {
               className="flex items-center gap-1 text-xs text-text-muted transition-colors hover:text-text-secondary"
             >
               {builderCollapsed ? (
-                <>
-                  <ChevronUp className="h-3.5 w-3.5" />
-                  展开
-                </>
+                <><ChevronUp className="h-3.5 w-3.5" />展开</>
               ) : (
-                <>
-                  <ChevronDown className="h-3.5 w-3.5" />
-                  收起
-                </>
+                <><ChevronDown className="h-3.5 w-3.5" />收起</>
               )}
             </button>
           </div>
@@ -386,7 +528,7 @@ export function Lab() {
                     onChange={(e) =>
                       setDateRange((prev) => ({ ...prev, start: e.target.value }))
                     }
-                    className="h-8 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                    className="h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer"
                   />
                   <span className="text-xs text-text-muted">~</span>
                   <input
@@ -395,7 +537,7 @@ export function Lab() {
                     onChange={(e) =>
                       setDateRange((prev) => ({ ...prev, end: e.target.value }))
                     }
-                    className="h-8 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                    className="h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer"
                   />
 
                   <div className="flex items-center gap-1">
@@ -419,6 +561,8 @@ export function Lab() {
                 description='找出"什么情况下"'
                 conditions={whenConditions}
                 onConditionsChange={setWhenConditions}
+                baseTimeframe={baseTimeframe}
+                referencedTimeframes={referencedTimeframes}
               />
 
               {/* THEN conditions */}
@@ -428,6 +572,8 @@ export function Lab() {
                 conditions={thenConditions}
                 onConditionsChange={setThenConditions}
                 isThen
+                baseTimeframe={baseTimeframe}
+                referencedTimeframes={referencedTimeframes}
               />
 
               {/* Action buttons */}
@@ -456,7 +602,7 @@ export function Lab() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={handleSaveStrategy}
+                      onClick={() => setSaveDialogOpen(true)}
                       disabled={createStrategyMutation.isPending}
                       className="gap-1.5 border-accent-gold/30 text-accent-gold hover:bg-accent-gold/10"
                     >
@@ -470,7 +616,7 @@ export function Lab() {
           )}
         </GlassCard>
 
-        {/* ── Empty state / Loading / Results ── */}
+        {/* Empty state / Loading / Results */}
 
         {!hasResult && !isLoading && (
           <GlassCard className="p-8" hover={false}>
@@ -518,13 +664,39 @@ export function Lab() {
 
         {hasResult && !isLoading && (
           <>
-            {/* ── Region 2: Validation Conclusion ── */}
+            {/* Region 2: Validation Conclusion */}
             <ValidationConclusion
               result={result}
-              onSave={result.total_count > 0 ? handleSaveStrategy : undefined}
+              onSave={result.total_count > 0 ? () => setSaveDialogOpen(true) : undefined}
             />
 
-            {/* ── Region 3: KlineChart ── */}
+            {/* Low match rate suggestion */}
+            {result.total_count > 0 && result.match_rate < 20 && (
+              <GlassCard className="p-3" hover={false}>
+                <p className="text-xs text-text-muted">
+                  符合率较低 ({result.match_rate}%)。建议：扩大时间范围、调整条件参数、或切换到更高周期进行验证。
+                </p>
+              </GlassCard>
+            )}
+
+            {/* No matches suggestion */}
+            {result.total_count === 0 && (
+              <GlassCard className="p-4" hover={false}>
+                <div className="flex flex-col items-center gap-3 text-center">
+                  <p className="text-sm text-text-muted">未找到符合条件的触发记录</p>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={handleClearAll}>
+                      调整条件
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => handleQuickDate(0)}>
+                      扩大时间范围
+                    </Button>
+                  </div>
+                </div>
+              </GlassCard>
+            )}
+
+            {/* Region 3: KlineChart */}
             <GlassCard className="p-4" hover={false} id="lab-kline-section">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-3 text-xs text-text-muted">
@@ -538,16 +710,32 @@ export function Lab() {
                     <span className="text-loss">不符合 {result.mismatch_count}</span>
                   )}
                 </div>
+                <ChartToolbar
+                  onZoomIn={() => chartRef.current?.zoomIn()}
+                  onZoomOut={() => chartRef.current?.zoomOut()}
+                  onReset={() => chartRef.current?.resetView()}
+                  onFullscreen={() => {
+                    const el = document.getElementById("lab-kline-section");
+                    if (el && !document.fullscreenElement) {
+                      el.requestFullscreen().catch(() => {});
+                    } else {
+                      document.exitFullscreen().catch(() => {});
+                    }
+                  }}
+                />
               </div>
               <KlineChart
                 ref={chartRef}
-                data={[]}
+                data={candleData}
+                indicators={chartIndicators}
+                bollData={chartBollData}
                 triggers={triggerMarkers}
-                height={450}
+                height={650}
+                volumeData={volumeData}
               />
             </GlassCard>
 
-            {/* ── Region 4: Distribution + Reference ── */}
+            {/* Region 4: Distribution + Reference */}
             {result.total_count > 0 && (
               <GlassCard className="p-4" hover={false}>
                 <div className="grid grid-cols-2 gap-6">
@@ -562,20 +750,22 @@ export function Lab() {
               </GlassCard>
             )}
 
-            {/* ── Region 5: Trigger Table ── */}
+            {/* Region 5: Trigger Table */}
             {result.triggers.length > 0 && (
               <GlassCard className="p-4" hover={false}>
                 <TriggerTable
                   triggers={result.triggers}
                   onLocate={handleLocate}
                   onViewDetail={handleViewDetail}
+                  pair={pair}
+                  timeframe={timeframe}
                 />
               </GlassCard>
             )}
           </>
         )}
 
-        {/* ── Trigger Detail Drawer ── */}
+        {/* Trigger Detail Drawer */}
         <TriggerDetailDrawer
           trigger={detailTrigger}
           open={drawerOpen}
@@ -583,6 +773,17 @@ export function Lab() {
             setDrawerOpen(false);
             setDetailTrigger(null);
           }}
+        />
+
+        {/* Save Strategy Dialog */}
+        <SaveStrategyDialog
+          open={saveDialogOpen}
+          onClose={() => setSaveDialogOpen(false)}
+          onSave={handleSaveStrategy}
+          pair={pair}
+          timeframe={timeframe}
+          matchRate={result?.match_rate ?? 0}
+          totalCount={result?.total_count ?? 0}
         />
       </div>
     </PageTransition>

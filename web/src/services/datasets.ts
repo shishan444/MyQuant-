@@ -1,6 +1,7 @@
 import { api } from "./api";
 import type {
   AvailableSourcesResponse,
+  ChartIndicatorsResponse,
   Dataset,
   DatasetListResponse,
   OhlcvData,
@@ -65,5 +66,32 @@ export async function getDatasetPreview(
 
 export async function getAvailableSources(): Promise<AvailableSourcesResponse> {
   const { data } = await api.get("/api/data/available-sources");
+  return data;
+}
+
+export async function getOhlcvBySymbol(
+  symbol: string,
+  timeframe: string,
+  params?: { start?: string; end?: string; limit?: number }
+): Promise<OhlcvData> {
+  const { data } = await api.get(`/api/data/ohlcv/${symbol}/${timeframe}`, { params });
+  return data;
+}
+
+export async function getChartIndicators(
+  symbol: string,
+  timeframe: string,
+  params?: {
+    start?: string;
+    end?: string;
+    ema_periods?: string;
+    boll_enabled?: boolean;
+    boll_period?: number;
+    boll_std?: number;
+    rsi_enabled?: boolean;
+    rsi_period?: number;
+  }
+): Promise<ChartIndicatorsResponse> {
+  const { data } = await api.get(`/api/data/chart-indicators/${symbol}/${timeframe}`, { params });
   return data;
 }

@@ -210,16 +210,26 @@ export interface ConditionInput {
   target: string;
   window?: number;
   logic: "AND" | "OR";
+  timeframe?: string;
 }
 
 export interface ValidateRequest {
   pair: string;
   timeframe: string;
+  base_timeframe?: string;
   start: string;
   end: string;
   when: ConditionInput[];
   then: ConditionInput[];
   indicator_params?: Record<string, unknown>;
+}
+
+export interface ChartIndicatorConfig {
+  ema_periods: number[];
+  ema_colors: string[];
+  boll: { enabled: boolean; period: number; std: number; color: string };
+  rsi: { enabled: boolean; period: number; overbought: number; oversold: number };
+  vol: { enabled: boolean; position: "overlay" | "separate" };
 }
 
 export interface TriggerRecord {
@@ -265,4 +275,18 @@ export interface AvailableSource {
 
 export interface AvailableSourcesResponse {
   sources: AvailableSource[];
+}
+
+// ---------------------------------------------------------------------------
+// Chart indicators (computed by backend)
+// ---------------------------------------------------------------------------
+
+export interface ChartIndicatorsResponse {
+  ema: Record<string, Array<{ time: string; value: number }>>;
+  boll: {
+    upper: Array<{ time: string; value: number }>;
+    middle: Array<{ time: string; value: number }>;
+    lower: Array<{ time: string; value: number }>;
+  } | null;
+  rsi: Array<{ time: string; value: number }> | null;
 }
