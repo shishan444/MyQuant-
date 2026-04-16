@@ -5,12 +5,16 @@ import type { ConditionInput } from "@/types/api";
 import { SubjectDropdown, getSubjectLabel } from "./SubjectDropdown";
 import { ActionDropdown, getActionLabel } from "./ActionDropdown";
 import { TargetInput, getTargetLabel } from "./TargetInput";
+import { TimeframeLabel } from "./TimeframeLabel";
+import { TimeframeSelector } from "./TimeframeSelector";
 
 interface ConditionPillProps {
   condition: ConditionInput;
   onChange: (updated: ConditionInput) => void;
   onDelete: () => void;
   isThen?: boolean;
+  baseTimeframe: string;
+  referencedTimeframes?: string[];
 }
 
 export function ConditionPill({
@@ -18,6 +22,8 @@ export function ConditionPill({
   onChange,
   onDelete,
   isThen = false,
+  baseTimeframe,
+  referencedTimeframes = [],
 }: ConditionPillProps) {
   const [editing, setEditing] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -41,21 +47,31 @@ export function ConditionPill({
 
   const handleTargetChange = (v: string) => {
     const updated = { ...condition, target: v };
-    // After target is set in editing mode, collapse back
     onChange(updated);
     if (editing && isComplete && v) {
       setEditing(false);
     }
   };
 
+  const handleTimeframeChange = (v: string) => {
+    onChange({ ...condition, timeframe: v });
+  };
+
+  const effectiveTimeframe = condition.timeframe || baseTimeframe;
+
   if (editing) {
     return (
       <div
         className={cn(
-          "inline-flex items-center gap-2 rounded-full border px-3 py-1.5",
+          "inline-flex min-w-[320px] items-center gap-2 rounded-full border px-3 py-1.5",
           "border-accent-gold bg-bg-surface/80",
         )}
       >
+        <TimeframeSelector
+          value={condition.timeframe || ""}
+          onChange={handleTimeframeChange}
+          baseTimeframe={baseTimeframe}
+        />
         <SubjectDropdown value={condition.subject} onChange={handleSubjectChange} />
         {condition.subject && (
           <ActionDropdown
@@ -71,6 +87,8 @@ export function ConditionPill({
             onChange={handleTargetChange}
             action={condition.action}
             subject={condition.subject}
+            baseTimeframe={baseTimeframe}
+            referencedTimeframes={referencedTimeframes}
           />
         )}
         {isThen && (
@@ -120,6 +138,9 @@ export function ConditionPill({
       onMouseLeave={() => setHovered(false)}
       onClick={() => setEditing(true)}
     >
+      <span className="mr-1.5">
+        <TimeframeLabel timeframe={effectiveTimeframe} />
+      </span>
       <span className="text-xs text-text-primary">
         {subjectLabel}
         <span className="mx-1 text-text-muted">*</span>

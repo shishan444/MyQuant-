@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ChevronUp, ChevronDown, ChevronsUpDown, MapPin, Eye } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronsUpDown, MapPin, Eye, Download } from "lucide-react";
 import { cn, formatCurrency, formatDateTime } from "@/lib/utils";
 import type { TriggerRecord } from "@/types/api";
 
@@ -7,15 +7,18 @@ interface TriggerTableProps {
   triggers: TriggerRecord[];
   onLocate: (trigger: TriggerRecord) => void;
   onViewDetail: (trigger: TriggerRecord) => void;
+  pair?: string;
+  timeframe?: string;
 }
 
 type SortField = "time" | "trigger_price" | "change_pct";
 type SortOrder = "asc" | "desc" | null;
 
-const PAGE_SIZE = 20;
+const PAGE_SIZES = [10, 20, 50];
 
-export function TriggerTable({ triggers, onLocate, onViewDetail }: TriggerTableProps) {
+export function TriggerTable({ triggers, onLocate, onViewDetail, pair, timeframe }: TriggerTableProps) {
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [sortField, setSortField] = useState<SortField>("time");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [hoveredId, setHoveredId] = useState<number | null>(null);
@@ -35,8 +38,8 @@ export function TriggerTable({ triggers, onLocate, onViewDetail }: TriggerTableP
     });
   }, [triggers, sortField, sortOrder]);
 
-  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
-  const paged = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.ceil(sorted.length / pageSize);
+  const paged = sorted.slice((page - 1) * pageSize, page * pageSize);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -57,12 +60,35 @@ export function TriggerTable({ triggers, onLocate, onViewDetail }: TriggerTableP
     return <ChevronUp className="h-3 w-3 text-accent-gold" />;
   };
 
+  const handleExportCsv = () => {
+    const header = "#,时间,触发价格,幅度,结果";
+    const rows = sorted.map((t) =>
+      `${t.id},${t.time},${t.trigger_price},${t.change_pct},${t.matched ? "符合" : "不符合"}`
+    );
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `验证结果_${pair ?? "data"}_${timeframe ?? "tf"}_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div>
       <div className="mb-3 flex items-center justify-between">
         <h4 className="text-sm font-semibold text-text-secondary">
           触发记录 -- 共 {triggers.length} 次
         </h4>
+        <button
+          type="button"
+          onClick={handleExportCsv}
+          className="flex items-center gap-1 text-xs text-text-muted transition-colors hover:text-accent-gold"
+        >
+          <Download className="h-3.5 w-3.5" />
+          导出CSV
+        </button>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border-default">
@@ -171,10 +197,21 @@ export function TriggerTable({ triggers, onLocate, onViewDetail }: TriggerTableP
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="mt-3 flex items-center justify-between text-xs text-text-muted">
-          <span>
-            显示 {(page - 1) * PAGE_SIZE + 1}-{Math.min(page * PAGE_SIZE, triggers.length)} /
-            共{triggers.length}条
-          </span>
+          <div className="flex items-center gap-2">
+            <span>
+              显示 {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, triggers.length)} /
+              共{triggers.length}条
+            </span>
+            <select
+              value={pageSize}
+              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+              className="h-6 rounded border border-border-default bg-bg-surface px-1 text-xs text-text-primary outline-none"
+            >
+              {PAGE_SIZES.map((s) => (
+                <option key={s} value={s}>{s}条/页</option>
+              ))}
+            </select>
+          </div>
           <div className="flex items-center gap-1">
             <button
               type="button"

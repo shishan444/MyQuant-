@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ConditionInput } from "@/types/api";
 import { ConditionPill } from "./ConditionPill";
+import { DropdownPortal } from "./DropdownPortal";
 
 interface ConditionPillGroupProps {
   label: "WHEN" | "THEN";
@@ -10,6 +11,8 @@ interface ConditionPillGroupProps {
   conditions: ConditionInput[];
   onConditionsChange: (conditions: ConditionInput[]) => void;
   isThen?: boolean;
+  baseTimeframe: string;
+  referencedTimeframes?: string[];
 }
 
 function AndOrConnector({
@@ -20,9 +23,12 @@ function AndOrConnector({
   onToggle: (v: "AND" | "OR") => void;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
   return (
-    <div className="relative">
+    <>
       <button
+        ref={triggerRef}
         type="button"
         className={cn(
           "h-6 min-w-[48px] rounded border px-2 text-[11px] font-semibold",
@@ -32,37 +38,34 @@ function AndOrConnector({
       >
         {logic}
       </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div
-            className={cn(
-              "absolute left-0 top-full z-50 mt-1 w-16 overflow-hidden rounded-md",
-              "border border-border-default bg-bg-surface shadow-xl",
-            )}
-          >
-            {(["AND", "OR"] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                className={cn(
-                  "flex w-full items-center justify-center px-2 py-1.5 text-[11px] font-semibold transition-colors",
-                  logic === v
-                    ? "bg-accent-gold/10 text-accent-gold"
-                    : "text-text-muted hover:bg-white/5",
-                )}
-                onClick={() => {
-                  onToggle(v);
-                  setOpen(false);
-                }}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
+      <DropdownPortal triggerRef={triggerRef} open={open} onClose={() => setOpen(false)}>
+        <div
+          className={cn(
+            "overflow-hidden rounded-md",
+            "border border-border-default bg-bg-surface shadow-xl",
+          )}
+        >
+          {(["AND", "OR"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              className={cn(
+                "flex w-full items-center justify-center px-2 py-1.5 text-[11px] font-semibold transition-colors",
+                logic === v
+                  ? "bg-accent-gold/10 text-accent-gold"
+                  : "text-text-muted hover:bg-white/5",
+              )}
+              onClick={() => {
+                onToggle(v);
+                setOpen(false);
+              }}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
+      </DropdownPortal>
+    </>
   );
 }
 
@@ -72,6 +75,8 @@ export function ConditionPillGroup({
   conditions,
   onConditionsChange,
   isThen = false,
+  baseTimeframe,
+  referencedTimeframes = [],
 }: ConditionPillGroupProps) {
   const handleAdd = () => {
     const newCondition: ConditionInput = {
@@ -79,6 +84,7 @@ export function ConditionPillGroup({
       action: "",
       target: "",
       logic: "AND",
+      timeframe: baseTimeframe,
       ...(isThen ? { window: 8 } : {}),
     };
     onConditionsChange([...conditions, newCondition]);
@@ -137,6 +143,8 @@ export function ConditionPillGroup({
               onChange={(updated) => handleUpdate(i, updated)}
               onDelete={() => handleDelete(i)}
               isThen={isThen}
+              baseTimeframe={baseTimeframe}
+              referencedTimeframes={referencedTimeframes}
             />
           </div>
         ))}
@@ -145,7 +153,7 @@ export function ConditionPillGroup({
           type="button"
           onClick={handleAdd}
           className={cn(
-            "flex items-center gap-1 rounded-full border border-dashed px-3 py-1.5",
+            "flex min-w-[320px] items-center justify-center gap-1 rounded-full border border-dashed px-3 py-1.5",
             "border-border-default text-xs text-text-muted transition-colors",
             "hover:border-solid hover:border-accent-gold/50 hover:text-text-secondary",
           )}

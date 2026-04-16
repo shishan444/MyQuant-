@@ -1,5 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
+import { DropdownPortal } from "./DropdownPortal";
 
 interface ActionOption {
   value: string;
@@ -17,6 +18,8 @@ const PRICE_ACTIONS: ActionOption[] = [
   { value: "lt", label: "小于", category: "比较类" },
   { value: "ge", label: "大于等于", category: "比较类" },
   { value: "le", label: "小于等于", category: "比较类" },
+  { value: "consecutive_up", label: "连涨N根", category: "连续类" },
+  { value: "consecutive_down", label: "连跌N根", category: "连续类" },
 ];
 
 const VOLUME_ACTIONS: ActionOption[] = [
@@ -34,6 +37,8 @@ const INDICATOR_ACTIONS: ActionOption[] = [
   { value: "cross_above", label: "上穿", category: "穿越类" },
   { value: "cross_below", label: "下穿", category: "穿越类" },
   { value: "touch", label: "触及", category: "穿越类" },
+  { value: "divergence_top", label: "顶背离", category: "形态类" },
+  { value: "divergence_bottom", label: "底背离", category: "形态类" },
 ];
 
 const THEN_DIRECTION_ACTIONS: ActionOption[] = [
@@ -41,12 +46,16 @@ const THEN_DIRECTION_ACTIONS: ActionOption[] = [
   { value: "rise", label: "上涨", category: "方向" },
 ];
 
+const INDICATOR_PATTERN_SUBJECTS = new Set(["rsi", "macd", "kdj", "stoch", "cci", "roc"]);
+
 function getActionsForSubject(subject: string, isThen: boolean): ActionOption[] {
   if (isThen) {
     if (subject === "close" || subject === "price" || subject === "open" || subject === "high" || subject === "low") {
       return THEN_DIRECTION_ACTIONS;
     }
-    return INDICATOR_ACTIONS;
+    return INDICATOR_ACTIONS.filter(
+      (a) => a.category !== "形态类" || INDICATOR_PATTERN_SUBJECTS.has(subject),
+    );
   }
 
   if (["close", "open", "high", "low", "price"].includes(subject)) {
@@ -55,7 +64,12 @@ function getActionsForSubject(subject: string, isThen: boolean): ActionOption[] 
   if (subject === "volume") {
     return VOLUME_ACTIONS;
   }
-  return INDICATOR_ACTIONS;
+
+  // For indicator subjects, include pattern actions only for oscillators
+  if (INDICATOR_PATTERN_SUBJECTS.has(subject)) {
+    return INDICATOR_ACTIONS;
+  }
+  return INDICATOR_ACTIONS.filter((a) => a.category !== "形态类");
 }
 
 const LABEL_MAP: Record<string, string> = {};
@@ -77,6 +91,7 @@ interface ActionDropdownProps {
 
 export function ActionDropdown({ value, onChange, subject, isThen = false }: ActionDropdownProps) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   const actions = useMemo(() => getActionsForSubject(subject, isThen), [subject, isThen]);
   const categories = useMemo(
@@ -87,8 +102,9 @@ export function ActionDropdown({ value, onChange, subject, isThen = false }: Act
   const currentLabel = getActionLabel(value);
 
   return (
-    <div className="relative">
+    <>
       <button
+        ref={triggerRef}
         type="button"
         className={cn(
           "h-7 rounded-md border px-2 text-xs transition-colors",
@@ -100,48 +116,44 @@ export function ActionDropdown({ value, onChange, subject, isThen = false }: Act
         {currentLabel}
       </button>
 
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div
-            className={cn(
-              "absolute left-0 top-full z-50 mt-1 w-36",
-              "rounded-lg border border-border-default bg-bg-surface shadow-xl",
-            )}
-          >
-            <div className="max-h-48 overflow-y-auto py-1">
-              {categories.map((cat) => {
-                const items = actions.filter((a) => a.category === cat);
-                return (
-                  <div key={cat}>
-                    <div className="px-2 py-1 text-[10px] font-semibold text-text-muted">
-                      {cat}
-                    </div>
-                    {items.map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        className={cn(
-                          "flex w-full items-center px-3 py-1.5 text-xs transition-colors",
-                          value === opt.value
-                            ? "bg-accent-gold/10 text-accent-gold"
-                            : "text-text-primary hover:bg-white/5",
-                        )}
-                        onClick={() => {
-                          onChange(opt.value);
-                          setOpen(false);
-                        }}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
+      <DropdownPortal triggerRef={triggerRef} open={open} onClose={() => setOpen(false)} width={144}>
+        <div
+          className={cn(
+            "rounded-lg border border-border-default bg-bg-surface shadow-xl",
+          )}
+        >
+          <div className="max-h-48 overflow-y-auto py-1">
+            {categories.map((cat) => {
+              const items = actions.filter((a) => a.category === cat);
+              return (
+                <div key={cat}>
+                  <div className="px-2 py-1 text-[10px] font-semibold text-text-muted">
+                    {cat}
                   </div>
-                );
-              })}
-            </div>
+                  {items.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className={cn(
+                        "flex w-full items-center px-3 py-1.5 text-xs transition-colors",
+                        value === opt.value
+                          ? "bg-accent-gold/10 text-accent-gold"
+                          : "text-text-primary hover:bg-white/5",
+                      )}
+                      onClick={() => {
+                        onChange(opt.value);
+                        setOpen(false);
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
           </div>
-        </>
-      )}
-    </div>
+        </div>
+      </DropdownPortal>
+    </>
   );
 }

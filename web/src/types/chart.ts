@@ -26,3 +26,22 @@ export interface EquitySeries {
   color: string;
   data: Array<{ time: string; value: number }>;
 }
+
+export interface BollingerBandData {
+  upper: Array<{ time: string; value: number }>;
+  middle: Array<{ time: string; value: number }>;
+  lower: Array<{ time: string; value: number }>;
+}
+
+export interface MTFIndicatorData {
+  sourceTimeframe: string;
+  indicatorName: string;
+  color: string;
+  data: Array<{ time: string; value: number }>;
+}
+
+export interface LegendGroup {
+  id: string;
+  label: string;
+  items: LegendItem[];
+}

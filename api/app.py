@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .db_ext import init_db_ext
 from .routes import config, data, evolution, strategies, ws
 from .routes import validate as validate_route
+from .routes import chart_config
 from .schemas import HealthResponse
 
 
@@ -94,6 +95,7 @@ def create_app(
     app.include_router(data.router)
     app.include_router(ws.router)
     app.include_router(validate_route.router)
+    app.include_router(chart_config.router)
 
     # Health check endpoint
     @app.get("/api/health", response_model=HealthResponse)

@@ -20,6 +20,7 @@ class ConditionInput(BaseModel):
     target: str = ""
     window: Optional[int] = None
     logic: str = "AND"
+    timeframe: Optional[str] = None
 
 
 class ValidateRequest(BaseModel):
@@ -30,6 +31,7 @@ class ValidateRequest(BaseModel):
     when: List[ConditionInput]
     then: List[ConditionInput]
     indicator_params: Optional[Dict[str, Any]] = None
+    base_timeframe: Optional[str] = None
 
 
 class TriggerRecordResponse(BaseModel):
@@ -70,6 +72,7 @@ def run_validation(
         then_conditions=[c.model_dump() for c in payload.then],
         indicator_params=payload.indicator_params,
         data_dir=str(data_dir),
+        base_timeframe=payload.base_timeframe,
     )
 
     return ValidateResponse(

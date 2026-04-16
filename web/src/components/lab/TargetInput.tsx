@@ -1,11 +1,14 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { cn } from "@/lib/utils";
+import { DropdownPortal } from "./DropdownPortal";
 
 interface TargetInputProps {
   value: string;
   onChange: (v: string) => void;
   action: string;
   subject: string;
+  baseTimeframe: string;
+  referencedTimeframes: string[];
 }
 
 const INDICATOR_TARGETS = [
@@ -16,11 +19,23 @@ const INDICATOR_TARGETS = [
   { value: "sma", label: "SMA" },
 ];
 
+const CROSS_TF_INDICATORS = [
+  { value: "ema_20", label: "EMA(20)" },
+  { value: "ema_50", label: "EMA(50)" },
+  { value: "bb_upper", label: "BOLL上轨" },
+  { value: "bb_lower", label: "BOLL下轨" },
+];
+
 export function getTargetLabel(value: string): string {
   const found = INDICATOR_TARGETS.find((t) => t.value === value);
   if (found) return found.label;
   if (value === "" || value === undefined) return "选择参考值";
   if (!isNaN(Number(value))) return `${value}%`;
+  // Cross-timeframe format: "4h:ema_20"
+  if (value.includes(":")) {
+    const [tf, indicator] = value.split(":");
+    return `${tf.toUpperCase()} ${indicator}`;
+  }
   return value;
 }
 
@@ -32,59 +47,40 @@ function isMultiplierAction(action: string): boolean {
   return ["spike", "shrink"].includes(action);
 }
 
-export function TargetInput({ value, onChange, action, subject: _subject }: TargetInputProps) {
-  const [open, setOpen] = useState(false);
+function isConsecutiveAction(action: string): boolean {
+  return ["consecutive_up", "consecutive_down"].includes(action);
+}
+
+export function TargetInput({ value, onChange, action, subject: _subject, baseTimeframe, referencedTimeframes }: TargetInputProps) {
+  // Form D: consecutive actions -> count input
+  if (isConsecutiveAction(action)) {
+    const numVal = value || "3";
+    return (
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-text-muted">N=</span>
+        <input
+          type="number"
+          value={numVal}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-7 w-12 rounded-md border border-border-default bg-bg-surface px-1.5 text-xs text-text-primary text-center outline-none focus:border-accent-gold"
+          min="2"
+          max="20"
+          step="1"
+        />
+        <span className="text-xs text-text-muted">根K线</span>
+      </div>
+    );
+  }
 
   // Form A: cross/touch/breakout/breakdown -> select indicator line
   if (isCrossAction(action)) {
-    const currentLabel = INDICATOR_TARGETS.find((t) => t.value === value)?.label ?? "选择参考值";
-
     return (
-      <div className="relative">
-        <button
-          type="button"
-          className={cn(
-            "h-7 rounded-md border px-2 text-xs transition-colors",
-            "border-border-default bg-bg-surface text-text-primary",
-            "hover:border-accent-gold/50",
-          )}
-          onClick={() => setOpen(!open)}
-        >
-          {currentLabel}
-        </button>
-        {open && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-            <div
-              className={cn(
-                "absolute left-0 top-full z-50 mt-1 w-36",
-                "rounded-lg border border-border-default bg-bg-surface shadow-xl",
-              )}
-            >
-              <div className="py-1">
-                {INDICATOR_TARGETS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className={cn(
-                      "flex w-full items-center px-3 py-1.5 text-xs transition-colors",
-                      value === opt.value
-                        ? "bg-accent-gold/10 text-accent-gold"
-                        : "text-text-primary hover:bg-white/5",
-                    )}
-                    onClick={() => {
-                      onChange(opt.value);
-                      setOpen(false);
-                    }}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
-      </div>
+      <CrossTargetDropdown
+        value={value}
+        onChange={onChange}
+        baseTimeframe={baseTimeframe}
+        referencedTimeframes={referencedTimeframes}
+      />
     );
   }
 
@@ -123,5 +119,114 @@ export function TargetInput({ value, onChange, action, subject: _subject }: Targ
       />
       <span className="text-xs text-text-muted">%</span>
     </div>
+  );
+}
+
+function CrossTargetDropdown({
+  value,
+  onChange,
+  baseTimeframe,
+  referencedTimeframes,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  baseTimeframe: string;
+  referencedTimeframes: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const currentLabel = (() => {
+    const found = INDICATOR_TARGETS.find((t) => t.value === value);
+    if (found) return found.label;
+    if (value.includes(":")) {
+      const [tf, indicator] = value.split(":");
+      return `${tf.toUpperCase()} ${indicator}`;
+    }
+    return "选择参考值";
+  })();
+
+  const crossTfs = referencedTimeframes.filter((tf) => tf !== baseTimeframe);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={cn(
+          "h-7 rounded-md border px-2 text-xs transition-colors",
+          "border-border-default bg-bg-surface text-text-primary",
+          "hover:border-accent-gold/50",
+        )}
+        onClick={() => setOpen(!open)}
+      >
+        {currentLabel}
+      </button>
+
+      <DropdownPortal triggerRef={triggerRef} open={open} onClose={() => setOpen(false)} width={160}>
+        <div
+          className={cn(
+            "rounded-lg border border-border-default bg-bg-surface shadow-xl",
+          )}
+        >
+          <div className="max-h-56 overflow-y-auto py-1">
+            {/* Standard indicator targets */}
+            <div className="px-2 py-1 text-[10px] font-semibold text-text-muted">
+              指标线
+            </div>
+            {INDICATOR_TARGETS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                className={cn(
+                  "flex w-full items-center px-3 py-1.5 text-xs transition-colors",
+                  value === opt.value
+                    ? "bg-accent-gold/10 text-accent-gold"
+                    : "text-text-primary hover:bg-white/5",
+                )}
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+
+            {/* Cross-timeframe targets */}
+            {crossTfs.length > 0 && (
+              <>
+                <div className="px-2 py-1 text-[10px] font-semibold text-text-muted">
+                  跨周期指标
+                </div>
+                {crossTfs.map((tf) =>
+                  CROSS_TF_INDICATORS.map((ind) => {
+                    const tv = `${tf}:${ind.value}`;
+                    return (
+                      <button
+                        key={tv}
+                        type="button"
+                        className={cn(
+                          "flex w-full items-center px-3 py-1.5 text-xs transition-colors",
+                          value === tv
+                            ? "bg-accent-gold/10 text-accent-gold"
+                            : "text-text-primary hover:bg-white/5",
+                        )}
+                        onClick={() => {
+                          onChange(tv);
+                          setOpen(false);
+                        }}
+                      >
+                        {tf.toUpperCase()} {ind.label}
+                      </button>
+                    );
+                  }),
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </DropdownPortal>
+    </>
   );
 }

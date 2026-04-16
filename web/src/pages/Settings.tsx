@@ -16,6 +16,26 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/services/api";
+import { useChartSettings } from "@/stores/chart-settings";
+import { cn } from "@/lib/utils";
+import { Plus, Trash2 } from "lucide-react";
+
+// ---------------------------------------------------------------------------
+// Tab definitions
+// ---------------------------------------------------------------------------
+
+type SettingsTab = "general" | "indicators" | "data" | "about";
+
+const TABS: { value: SettingsTab; label: string }[] = [
+  { value: "general", label: "通用" },
+  { value: "indicators", label: "指标参数" },
+  { value: "data", label: "数据管理" },
+  { value: "about", label: "关于" },
+];
+
+// ---------------------------------------------------------------------------
+// Main Settings component
+// ---------------------------------------------------------------------------
 
 interface AppConfig {
   language: string;
@@ -46,6 +66,7 @@ const DEFAULT_CONFIG: AppConfig = {
 };
 
 export function Settings() {
+  const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [config, setConfig] = useState<AppConfig | null>(null);
 
   useEffect(() => {
@@ -77,13 +98,53 @@ export function Settings() {
   return (
     <PageTransition>
       <div className="flex flex-col gap-6 max-w-2xl">
-        <GeneralSettings config={config} onSave={savePartial} />
-        <BinanceApiSettings config={config} onSave={savePartial} />
-        <TradingSettings config={config} onSave={savePartial} />
+        {/* Tab bar */}
+        <div className="flex gap-0 border-b border-border-default">
+          {TABS.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => setActiveTab(tab.value)}
+              className={cn(
+                "px-4 py-2 text-sm font-medium transition-colors border-b-2",
+                activeTab === tab.value
+                  ? "border-accent-gold text-accent-gold"
+                  : "border-transparent text-text-muted hover:text-text-secondary",
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab content */}
+        {activeTab === "general" && (
+          <>
+            <GeneralSettings config={config} onSave={savePartial} />
+            <BinanceApiSettings config={config} onSave={savePartial} />
+            <TradingSettings config={config} onSave={savePartial} />
+          </>
+        )}
+        {activeTab === "indicators" && <IndicatorSettings />}
+        {activeTab === "data" && (
+          <GlassCard className="p-6" hover={false}>
+            <p className="text-sm text-text-muted">数据管理功能请前往数据管理页面</p>
+          </GlassCard>
+        )}
+        {activeTab === "about" && (
+          <GlassCard className="p-6" hover={false}>
+            <h2 className="text-base font-medium text-text-primary mb-2">MyQuant v3.0</h2>
+            <p className="text-sm text-text-muted">策略实验室 - 多周期假设验证与智能进化平台</p>
+          </GlassCard>
+        )}
       </div>
     </PageTransition>
   );
 }
+
+// ---------------------------------------------------------------------------
+// General settings (unchanged from original)
+// ---------------------------------------------------------------------------
 
 function GeneralSettings({ config, onSave }: { config: AppConfig; onSave: (u: Partial<AppConfig>) => void }) {
   const [language, setLanguage] = useState(config.language);
@@ -109,9 +170,7 @@ function GeneralSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
           <Label className="text-sm text-text-secondary">主题</Label>
           <span className="text-sm text-text-primary">深色模式</span>
         </div>
-
         <Separator className="bg-border-default" />
-
         <div className="flex items-center justify-between">
           <Label className="text-sm text-text-secondary">语言</Label>
           <Select value={language} onValueChange={setLanguage}>
@@ -124,9 +183,7 @@ function GeneralSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
             </SelectContent>
           </Select>
         </div>
-
         <Separator className="bg-border-default" />
-
         <div className="flex items-center justify-between">
           <Label className="text-sm text-text-secondary">时区</Label>
           <Select value={timezone} onValueChange={setTimezone}>
@@ -141,9 +198,7 @@ function GeneralSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
             </SelectContent>
           </Select>
         </div>
-
         <Separator className="bg-border-default" />
-
         <div className="flex items-center justify-between">
           <Label className="text-sm text-text-secondary">通知</Label>
           <div className="flex items-center gap-4">
@@ -167,8 +222,6 @@ function BinanceApiSettings({ config, onSave }: { config: AppConfig; onSave: (u:
   const [secretKey, setSecretKey] = useState(config.binance_secret_key);
   const [showApi, setShowApi] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
-  const [permRead] = useState(true);
-  const [permTrade] = useState(true);
   const [connected, setConnected] = useState(config.binance_connected);
   const [testing, setTesting] = useState(false);
 
@@ -222,9 +275,7 @@ function BinanceApiSettings({ config, onSave }: { config: AppConfig; onSave: (u:
             </button>
           </div>
         </div>
-
         <Separator className="bg-border-default" />
-
         <div className="flex items-center gap-3">
           <Label className="text-sm text-text-secondary w-24 shrink-0">Secret Key</Label>
           <div className="relative flex-1">
@@ -244,25 +295,7 @@ function BinanceApiSettings({ config, onSave }: { config: AppConfig; onSave: (u:
             </button>
           </div>
         </div>
-
         <Separator className="bg-border-default" />
-
-        <div className="flex items-center gap-3">
-          <Label className="text-sm text-text-secondary w-24 shrink-0">权限</Label>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Switch checked={permRead} disabled />
-              <span className="text-xs text-text-secondary">读取</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={permTrade} disabled />
-              <span className="text-xs text-text-secondary">交易</span>
-            </div>
-          </div>
-        </div>
-
-        <Separator className="bg-border-default" />
-
         <div className="flex items-center gap-3">
           <Label className="text-sm text-text-secondary w-24 shrink-0">状态</Label>
           <div className="flex items-center gap-2">
@@ -311,9 +344,7 @@ function TradingSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
             className="h-8 w-40 text-xs font-num"
           />
         </div>
-
         <Separator className="bg-border-default" />
-
         <div className="flex items-center gap-3">
           <Label className="text-sm text-text-secondary w-28 shrink-0">手续费率</Label>
           <div className="flex items-center gap-2">
@@ -334,9 +365,7 @@ function TradingSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
             <span className="text-xs text-text-muted">% (Taker)</span>
           </div>
         </div>
-
         <Separator className="bg-border-default" />
-
         <div className="flex items-center gap-3">
           <Label className="text-sm text-text-secondary w-28 shrink-0">最大持仓</Label>
           <Input
@@ -347,14 +376,227 @@ function TradingSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
           />
           <span className="text-xs text-text-muted">个策略同时运行</span>
         </div>
-
         <Separator className="bg-border-default" />
-
         <div className="flex items-center gap-3">
           <Label className="text-sm text-text-secondary w-28 shrink-0">数据刷新</Label>
           <span className="text-sm text-text-primary">实时 (WebSocket)</span>
         </div>
       </div>
     </GlassCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Indicator settings tab
+// ---------------------------------------------------------------------------
+
+function IndicatorSettings() {
+  const settings = useChartSettings();
+
+  const handleSave = async () => {
+    try {
+      const params = settings.getIndicatorParams();
+      await api.put("/api/config/chart_indicators", params);
+      toast.success("指标配置已保存");
+    } catch {
+      toast.error("保存失败");
+    }
+  };
+
+  return (
+    <>
+      {/* EMA section */}
+      <GlassCard className="p-6" hover={false}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-medium text-text-primary">EMA 配置</h2>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => settings.addEma(20)}
+            className="gap-1"
+          >
+            <Plus className="h-3 w-3" />
+            添加 EMA
+          </Button>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          {settings.emaList.map((ema, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <Switch
+                checked={ema.enabled}
+                onCheckedChange={(v) => settings.updateEma(i, { enabled: v })}
+              />
+              <span className="text-xs text-text-muted w-8">EMA</span>
+              <Input
+                type="number"
+                value={ema.period}
+                onChange={(e) => settings.updateEma(i, { period: Number(e.target.value) || 10 })}
+                className="h-8 w-20 text-xs font-num"
+                min={2}
+                max={500}
+              />
+              <input
+                type="color"
+                value={ema.color}
+                onChange={(e) => settings.updateEma(i, { color: e.target.value })}
+                className="h-8 w-8 cursor-pointer rounded border border-border-default bg-transparent"
+              />
+              <button
+                type="button"
+                onClick={() => settings.removeEma(i)}
+                className="rounded p-1 text-text-muted transition-colors hover:bg-loss/10 hover:text-loss"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+          {settings.emaList.length === 0 && (
+            <p className="text-xs text-text-muted">暂无 EMA 配置，点击上方按钮添加</p>
+          )}
+        </div>
+      </GlassCard>
+
+      {/* BOLL section */}
+      <GlassCard className="p-6" hover={false}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-medium text-text-primary">BOLL 配置</h2>
+          <Switch
+            checked={settings.boll.enabled}
+            onCheckedChange={(v) => settings.setBoll({ enabled: v })}
+          />
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <Label className="text-sm text-text-secondary w-16 shrink-0">周期</Label>
+            <Input
+              type="number"
+              value={settings.boll.period}
+              onChange={(e) => settings.setBoll({ period: Number(e.target.value) || 20 })}
+              className="h-8 w-20 text-xs font-num"
+              min={2}
+            />
+          </div>
+          <Separator className="bg-border-default" />
+          <div className="flex items-center gap-3">
+            <Label className="text-sm text-text-secondary w-16 shrink-0">标准差</Label>
+            <Input
+              type="number"
+              value={settings.boll.std}
+              onChange={(e) => settings.setBoll({ std: Number(e.target.value) || 2 })}
+              className="h-8 w-20 text-xs font-num"
+              min={0.5}
+              max={4}
+              step={0.5}
+            />
+          </div>
+          <Separator className="bg-border-default" />
+          <div className="flex items-center gap-3">
+            <Label className="text-sm text-text-secondary w-16 shrink-0">颜色</Label>
+            <input
+              type="color"
+              value={settings.boll.color}
+              onChange={(e) => settings.setBoll({ color: e.target.value })}
+              className="h-8 w-8 cursor-pointer rounded border border-border-default bg-transparent"
+            />
+          </div>
+        </div>
+      </GlassCard>
+
+      {/* RSI section */}
+      <GlassCard className="p-6" hover={false}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-medium text-text-primary">RSI 配置</h2>
+          <Switch
+            checked={settings.rsi.enabled}
+            onCheckedChange={(v) => settings.setRsi({ enabled: v })}
+          />
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <Label className="text-sm text-text-secondary w-16 shrink-0">周期</Label>
+            <Input
+              type="number"
+              value={settings.rsi.period}
+              onChange={(e) => settings.setRsi({ period: Number(e.target.value) || 14 })}
+              className="h-8 w-20 text-xs font-num"
+              min={2}
+            />
+          </div>
+          <Separator className="bg-border-default" />
+          <div className="flex items-center gap-3">
+            <Label className="text-sm text-text-secondary w-16 shrink-0">超买线</Label>
+            <Input
+              type="number"
+              value={settings.rsi.overbought}
+              onChange={(e) => settings.setRsi({ overbought: Number(e.target.value) || 70 })}
+              className="h-8 w-20 text-xs font-num"
+              min={50}
+              max={100}
+            />
+          </div>
+          <Separator className="bg-border-default" />
+          <div className="flex items-center gap-3">
+            <Label className="text-sm text-text-secondary w-16 shrink-0">超卖线</Label>
+            <Input
+              type="number"
+              value={settings.rsi.oversold}
+              onChange={(e) => settings.setRsi({ oversold: Number(e.target.value) || 30 })}
+              className="h-8 w-20 text-xs font-num"
+              min={0}
+              max={50}
+            />
+          </div>
+        </div>
+      </GlassCard>
+
+      {/* VOL section */}
+      <GlassCard className="p-6" hover={false}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-medium text-text-primary">成交量配置</h2>
+          <Switch
+            checked={settings.vol.enabled}
+            onCheckedChange={(v) => settings.setVol({ enabled: v })}
+          />
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Label className="text-sm text-text-secondary w-16 shrink-0">位置</Label>
+          <Select
+            value={settings.vol.position}
+            onValueChange={(v) => settings.setVol({ position: v as "overlay" | "separate" })}
+          >
+            <SelectTrigger className="w-32 h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="overlay">叠加在主图</SelectItem>
+              <SelectItem value="separate">独立子图</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </GlassCard>
+
+      {/* Actions */}
+      <div className="flex items-center justify-between">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={settings.resetToDefaults}
+          className="text-text-muted"
+        >
+          恢复默认
+        </Button>
+        <Button
+          size="sm"
+          onClick={handleSave}
+          className="bg-accent-gold text-black hover:bg-accent-gold/90"
+        >
+          保存配置
+        </Button>
+      </div>
+    </>
   );
 }

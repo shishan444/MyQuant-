@@ -153,3 +153,39 @@ export const STATUS_LABELS: Record<EvolutionTaskStatus, string> = {
 export function isActiveStatus(status: EvolutionTaskStatus): boolean {
   return status === "running" || status === "pending";
 }
+
+// ---------------------------------------------------------------------------
+// MTF (Multi-Timeframe) colors
+// ---------------------------------------------------------------------------
+
+export const MTF_TIMEFRAME_COLORS: Record<string, string> = {
+  "15m": "#3B82F6",
+  "1h": "#10B981",
+  "4h": "#F59E0B",
+  "1d": "#8B5CF6",
+  "3d": "#EF4444",
+};
+
+export const EMA_DEFAULT_COLORS = [
+  "#3B82F6",
+  "#10B981",
+  "#F59E0B",
+  "#8B5CF6",
+  "#EF4444",
+  "#EC4899",
+] as const;
+
+export const PATTERN_ACTIONS = [
+  { value: "divergence_top", label: "顶背离" },
+  { value: "divergence_bottom", label: "底背离" },
+  { value: "consecutive_up", label: "连涨N根" },
+  { value: "consecutive_down", label: "连跌N根" },
+] as const;
+
+export const CHART_INDICATOR_DEFAULTS: import("@/types/api").ChartIndicatorConfig = {
+  ema_periods: [10, 20, 50],
+  ema_colors: ["#3B82F6", "#10B981", "#F59E0B"],
+  boll: { enabled: true, period: 20, std: 2.0, color: "#F59E0B" },
+  rsi: { enabled: true, period: 14, overbought: 70, oversold: 30 },
+  vol: { enabled: true, position: "overlay" },
+};

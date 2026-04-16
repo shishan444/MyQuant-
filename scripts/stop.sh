@@ -8,7 +8,7 @@ APP_DIR="$(dirname "$SCRIPT_DIR")"
 API_PID_FILE="$APP_DIR/.myquant_api.pid"
 WEB_PID_FILE="$APP_DIR/.myquant_web.pid"
 API_PORT="${MYQUANT_API_PORT:-8000}"
-WEB_PORT="${MYQUANT_WEB_PORT:-5173}"
+WEB_PORT="${MYQUANT_WEB_PORT:-8080}"
 
 # 颜色
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -86,6 +86,18 @@ stop_web() {
             sleep 1
             info "Web 前端已停止"
         fi
+    fi
+
+    # 兜底: 通过进程名查找残留 vite 进程
+    local stale_pids
+    stale_pids=$(ps aux | grep '[n]ode.*vite' | awk '{print $2}' || true)
+    if [[ -n "$stale_pids" ]]; then
+        info "发现残留 vite 进程: $stale_pids"
+        for pid in $stale_pids; do
+            kill "$pid" 2>/dev/null || true
+        done
+        sleep 1
+        info "残留 vite 进程已清理"
     fi
 }
 

@@ -1,0 +1,32 @@
+{
+  "ema_periods": [
+    7,
+    22,
+    75,
+    99,
+    360
+  ],
+  "ema_colors": [
+    "#3B82F6",
+    "#10B981",
+    "#F59E0B",
+    "#8B5CF6",
+    "#EF4444"
+  ],
+  "boll": {
+    "enabled": true,
+    "period": 18,
+    "std": 2,
+    "color": "#F59E0B"
+  },
+  "rsi": {
+    "enabled": true,
+    "period": 6,
+    "overbought": 70,
+    "oversold": 30
+  },
+  "vol": {
+    "enabled": true,
+    "position": "overlay"
+  }
+}

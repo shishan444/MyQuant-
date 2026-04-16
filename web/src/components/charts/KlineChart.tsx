@@ -128,6 +128,8 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   const bollSeriesRefs = useRef<ISeriesApi<"Line">[]>([]);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const mtfSeriesRefs = useRef<ISeriesApi<"Line">[]>([]);
+  const triggerOffsetSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const initialFitDoneRef = useRef(false);
 
   // Legend state
   const [legendGroups, setLegendGroups] = useState<LegendGroup[]>([]);
@@ -299,6 +301,10 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       ...DARK_CHART_THEME,
       width: mainRef.current.clientWidth,
       height: mainHeight,
+      rightPriceScale: {
+        ...DARK_CHART_THEME.rightPriceScale,
+        autoScale: false,
+      },
     });
 
     const candleSeries = mainChart.addSeries(CandlestickSeries, {
@@ -368,6 +374,10 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       setLegendValues(vals);
     });
 
+    // Note: autoScale is disabled to prevent wrong price range.
+    // Price range is manually set on initial load and via reset button.
+    // User can freely zoom/pan the price axis without auto-reset.
+
     return () => {
       resizeObserver.disconnect();
       mainChart.remove();
@@ -382,6 +392,8 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       bollSeriesRefs.current = [];
       volumeSeriesRef.current = null;
       mtfSeriesRefs.current = [];
+      triggerOffsetSeriesRef.current = null;
+      initialFitDoneRef.current = false;
     };
   }, [height]);
 
@@ -521,7 +533,15 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       }
     }
 
-    // -- Build markers --
+    // -- Build markers (signals on candle, triggers on offset series) --
+
+    // Remove old trigger offset series
+    if (triggerOffsetSeriesRef.current) {
+      mainChart.removeSeries(triggerOffsetSeriesRef.current);
+      triggerOffsetSeriesRef.current = null;
+    }
+
+    // Signal markers stay on candle series
     const markers: Array<{
       time: Time;
       position: "aboveBar" | "belowBar";
@@ -540,23 +560,73 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       });
     }
 
-    for (const t of memoizedTriggers) {
-      markers.push({
-        time: toTime(t.time),
-        position: "aboveBar",
-        color: t.matched ? "#00C853" : "#EF4444",
-        shape: "circle",
-        text: `(${t.id})`,
-      });
-    }
-
     if (markersPluginRef.current) {
       markersPluginRef.current.setMarkers(markers);
     } else {
       markersPluginRef.current = createSeriesMarkers(candleSeries, markers);
     }
 
-    mainChart.timeScale().fitContent();
+    // Trigger markers on offset series (1.2% above candle high)
+    if (memoizedTriggers.length > 0) {
+      const candleHighMap = new Map<number, number>();
+      for (const c of memoizedCandles) {
+        candleHighMap.set(c.time as number, c.high);
+      }
+
+      const TRIGGER_OFFSET = 1.012;
+      const offsetData: Array<{ time: Time; value: number }> = [];
+      const triggerMarkers: Array<{
+        time: Time;
+        position: "aboveBar" | "belowBar";
+        color: string;
+        shape: "circle";
+        text: string;
+      }> = [];
+
+      for (const t of memoizedTriggers) {
+        const triggerTime = toTime(t.time);
+        const high = candleHighMap.get(triggerTime as number);
+        if (high !== undefined) {
+          offsetData.push({ time: triggerTime, value: high * TRIGGER_OFFSET });
+          triggerMarkers.push({
+            time: triggerTime,
+            position: "aboveBar",
+            color: t.matched ? "#00C853" : "#EF4444",
+            shape: "circle",
+            text: `(${t.id})`,
+          });
+        }
+      }
+
+      if (offsetData.length > 0) {
+        const offsetSeries = mainChart.addSeries(LineSeries, {
+          color: "transparent",
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        offsetSeries.setData(offsetData);
+        triggerOffsetSeriesRef.current = offsetSeries;
+        createSeriesMarkers(offsetSeries, triggerMarkers);
+      }
+    }
+
+    // -- Fit content and set price range --
+    if (!initialFitDoneRef.current && memoizedCandles.length > 0) {
+      mainChart.timeScale().fitContent();
+      // Compute tight price range from candle data
+      const allPrices = memoizedCandles.flatMap((c) => [c.high, c.low]);
+      const minP = Math.min(...allPrices);
+      const maxP = Math.max(...allPrices);
+      const priceRange = maxP - minP;
+      const margin = priceRange * 0.08;
+      mainChart.priceScale("right").setVisibleRange({
+        from: minP - margin,
+        to: maxP + margin,
+      });
+      initialFitDoneRef.current = true;
+    }
   }, [memoizedCandles, memoizedIndicators, memoizedSignals, memoizedTriggers, memoizedBollData, memoizedVolumeData, memoizedMtfIndicators, chartSettings.boll]);
 
   // -------------------------------------------------------------------------
@@ -673,7 +743,21 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
               });
             }
           }}
-          onReset={() => mainChartRef.current?.timeScale().fitContent()}
+          onReset={() => {
+            const chart = mainChartRef.current;
+            if (!chart) return;
+            chart.timeScale().fitContent();
+            // Re-fit price range after reset
+            const candles = candleSeriesRef.current?.data?.();
+            if (candles && candles.length > 0) {
+              const prices = candles.flatMap((c: { high: number; low: number }) => [c.high, c.low]);
+              const minP = Math.min(...prices);
+              const maxP = Math.max(...prices);
+              const range = maxP - minP;
+              const margin = range * 0.08;
+              chart.priceScale("right").setVisibleRange({ from: minP - margin, to: maxP + margin });
+            }
+          }}
           onFullscreen={handleFullscreen}
         />
       </div>

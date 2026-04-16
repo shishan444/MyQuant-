@@ -55,6 +55,7 @@ def validate_hypothesis(
     indicator_params: Optional[Dict[str, Any]] = None,
     then_window: int = 8,
     data_dir: Optional[str] = None,
+    base_timeframe: Optional[str] = None,
 ) -> ValidationResult:
     """Validate a WHEN->THEN hypothesis against historical data.
 
@@ -68,15 +69,20 @@ def validate_hypothesis(
         indicator_params: Optional indicator parameter overrides
         then_window: Number of bars to check for THEN fulfillment
         data_dir: Optional path to market data directory
+        base_timeframe: Optional base timeframe for MTF validation
 
     Returns:
         ValidationResult with all statistics
     """
     from pathlib import Path
     import re
+    from core.validation.mtf import load_mtf_data, merge_to_base, get_timeframe_minutes
 
     if data_dir is None:
         data_dir = str(Path(__file__).resolve().parent.parent.parent / "data" / "market")
+
+    # Determine effective base timeframe
+    effective_base = base_timeframe or timeframe
 
     # Load data
     safe_symbol = re.sub(r'[^A-Za-z0-9]', '', pair)
@@ -98,8 +104,34 @@ def validate_hypothesis(
     if len(df) == 0:
         return ValidationResult(match_rate=0, total_count=0, match_count=0, mismatch_count=0)
 
-    # Compute indicators
+    # Compute indicators for base timeframe
     enhanced_df = compute_all_indicators(df)
+
+    # MTF: collect referenced timeframes and merge higher-TF indicators
+    all_conditions = when_conditions + then_conditions
+    referenced_tfs = set()
+    for cond in all_conditions:
+        cond_tf = cond.get("timeframe", "")
+        if cond_tf and cond_tf != effective_base:
+            referenced_tfs.add(cond_tf)
+
+    if referenced_tfs:
+        try:
+            mtf_data = load_mtf_data(pair, list(referenced_tfs), start, end, data_dir)
+            if mtf_data:
+                # Compute indicators on each higher-TF DataFrame
+                mtf_with_indicators = {}
+                for tf, tf_df in mtf_data.items():
+                    mtf_with_indicators[tf] = compute_all_indicators(tf_df)
+
+                base_tf_minutes = get_timeframe_minutes(timeframe)
+                tf_minutes_map = {tf: get_timeframe_minutes(tf) for tf in mtf_with_indicators}
+                enhanced_df = merge_to_base(
+                    enhanced_df, mtf_with_indicators,
+                    base_tf_minutes, tf_minutes_map,
+                )
+        except Exception as exc:
+            warnings.append(f"MTF data loading failed, falling back to single timeframe: {exc}")
 
     # Collect warnings during evaluation
     warnings: List[str] = []
@@ -293,6 +325,10 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str]
         "le": lambda s, t: s <= t,
         "spike": lambda s, t: _spike_condition(s, df, t),
         "shrink": lambda s, t: _shrink_condition(s, df, t),
+        "divergence_top": lambda s, t: _resolve_pattern(df, "divergence_top", s.name if hasattr(s, "name") else subject),
+        "divergence_bottom": lambda s, t: _resolve_pattern(df, "divergence_bottom", s.name if hasattr(s, "name") else subject),
+        "consecutive_up": lambda s, t: _resolve_pattern(df, "consecutive_up", s.name if hasattr(s, "name") else subject, t),
+        "consecutive_down": lambda s, t: _resolve_pattern(df, "consecutive_down", s.name if hasattr(s, "name") else subject, t),
     }
 
     fn = action_map.get(action)
@@ -325,24 +361,15 @@ def _resolve_subject(df: pd.DataFrame, subject: str) -> Optional[pd.Series]:
     return None
 
 
-def _resolve_target_value(target: str):
-    """Parse a target string into a numeric value."""
-    if isinstance(target, (int, float)):
-        return float(target)
-    try:
-        return float(target)
-    except (ValueError, TypeError):
-        return None
-
-
 def _resolve_target(df: pd.DataFrame, target):
     """Resolve a target to a numeric value or a DataFrame column series.
 
     Resolution order:
     1. If target is already numeric, return as float.
     2. Try to parse target string as float.
-    3. Try exact column name match in DataFrame.
-    4. Try fuzzy column name match (same logic as _resolve_subject).
+    3. Try cross-timeframe format "tf:indicator" (e.g. "4h:ema_20").
+    4. Try exact column name match in DataFrame.
+    5. Try fuzzy column name match (same logic as _resolve_subject).
     """
     if isinstance(target, (int, float)):
         return float(target)
@@ -356,6 +383,21 @@ def _resolve_target(df: pd.DataFrame, target):
     except (ValueError, TypeError):
         pass
 
+    # Cross-timeframe reference: "4h:ema_20" -> look for "ema_20_4h" column
+    if ":" in target:
+        parts = target.split(":", 1)
+        if len(parts) == 2:
+            tf_suffix, indicator = parts[0], parts[1]
+            # Try direct suffixed column name
+            suffixed = f"{indicator}_{tf_suffix}"
+            if suffixed in df.columns:
+                return df[suffixed]
+            # Fuzzy match on suffixed name
+            suffixed_normalized = suffixed.lower().replace("_", "")
+            matches = [c for c in df.columns if suffixed_normalized in c.lower().replace("_", "")]
+            if matches:
+                return df[matches[0]]
+
     # Exact column match
     if target in df.columns:
         return df[target]
@@ -367,6 +409,52 @@ def _resolve_target(df: pd.DataFrame, target):
         return df[matches[0]]
 
     return None
+
+
+def _resolve_pattern(
+    df: pd.DataFrame,
+    pattern: str,
+    subject_col: str,
+    target=None,
+) -> pd.Series:
+    """Resolve pattern-type actions using patterns module."""
+    from core.validation.patterns import (
+        detect_divergence_top,
+        detect_divergence_bottom,
+        detect_consecutive_up,
+        detect_consecutive_down,
+    )
+
+    # Resolve the actual column name
+    if subject_col not in df.columns:
+        # Try fuzzy match
+        matches = [c for c in df.columns if subject_col.lower().replace("_", "") in c.lower().replace("_", "")]
+        if not matches:
+            return pd.Series(False, index=df.index)
+        subject_col = matches[0]
+
+    if pattern == "divergence_top":
+        return detect_divergence_top(df, subject_col)
+    elif pattern == "divergence_bottom":
+        return detect_divergence_bottom(df, subject_col)
+    elif pattern == "consecutive_up":
+        count = 3
+        if target is not None:
+            try:
+                count = int(float(target))
+            except (ValueError, TypeError):
+                pass
+        return detect_consecutive_up(df, subject_col, count)
+    elif pattern == "consecutive_down":
+        count = 3
+        if target is not None:
+            try:
+                count = int(float(target))
+            except (ValueError, TypeError):
+                pass
+        return detect_consecutive_down(df, subject_col, count)
+
+    return pd.Series(False, index=df.index)
 
 
 def _check_then_conditions(
