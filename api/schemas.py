@@ -85,6 +85,8 @@ class RiskGenesModel(BaseModel):
     stop_loss: float = 0.05
     take_profit: Optional[float] = None
     position_size: float = 0.3
+    leverage: int = Field(default=1, ge=1, le=10)
+    direction: str = Field(default="long", pattern="^(long|short|mixed)$")
 
 
 class DNAModel(BaseModel):
@@ -181,6 +183,9 @@ class BacktestRequest(BaseModel):
     fee: float = 0.001
     slippage: float = 0.0005
     score_template: str = "profit_first"
+    data_start: Optional[str] = None
+    data_end: Optional[str] = None
+    timeframe_pool: Optional[List[str]] = None
 
 
 class BacktestResponse(BaseModel):
@@ -206,6 +211,8 @@ class BacktestResponse(BaseModel):
     run_source: str = "lab"
     equity_curve: Optional[List[Dict[str, Any]]] = None
     signals: Optional[List[Dict[str, Any]]] = None
+    total_funding_cost: float = 0.0
+    liquidated: bool = False
 
 
 class CompareRequest(BaseModel):
@@ -254,6 +261,11 @@ class EvolutionTaskCreate(BaseModel):
     indicator_pool: Optional[List[str]] = None
     timeframe_pool: Optional[List[str]] = None
     mode: Optional[str] = None
+    walk_forward_enabled: bool = False
+    leverage: int = Field(default=1, ge=1, le=10)
+    direction: str = Field(default="long", pattern="^(long|short|mixed)$")
+    data_start: Optional[str] = None
+    data_end: Optional[str] = None
 
 
 class EvolutionTaskResponse(BaseModel):
@@ -275,6 +287,20 @@ class EvolutionTaskResponse(BaseModel):
     created_at: str
     updated_at: str
     stop_reason: Optional[str] = None
+    best_score: Optional[float] = None
+    leverage: int = 1
+    direction: str = "long"
+    data_start: Optional[str] = None
+    data_end: Optional[str] = None
+    data_time_start: Optional[str] = None
+    data_time_end: Optional[str] = None
+    data_row_count: int = 0
+    indicator_pool: Optional[List[str]] = None
+    timeframe_pool: Optional[List[str]] = None
+    mode: Optional[str] = None
+    champion_metrics: Optional[Dict[str, Any]] = None
+    champion_dimension_scores: Optional[Dict[str, Any]] = None
+    walk_forward_enabled: bool = False
 
 
 class EvolutionTaskListResponse(BaseModel):

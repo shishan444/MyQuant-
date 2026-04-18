@@ -57,6 +57,9 @@ export async function runBacktest(payload: {
   init_cash?: number;
   fee?: number;
   slippage?: number;
+  data_start?: string;
+  data_end?: string;
+  timeframe_pool?: string[];
 }): Promise<BacktestResult> {
   const { data } = await api.post("/api/strategies/backtest", payload);
   return data;

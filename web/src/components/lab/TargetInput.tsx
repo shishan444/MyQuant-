@@ -17,6 +17,10 @@ const INDICATOR_TARGETS = [
   { value: "bb_lower", label: "布林带下轨" },
   { value: "ema", label: "EMA" },
   { value: "sma", label: "SMA" },
+  { value: "rvol", label: "RVOL" },
+  { value: "vwma", label: "VWMA" },
+  { value: "aroon_up", label: "Aroon Up" },
+  { value: "aroon_down", label: "Aroon Down" },
 ];
 
 const CROSS_TF_INDICATORS = [
@@ -51,6 +55,18 @@ function isConsecutiveAction(action: string): boolean {
   return ["consecutive_up", "consecutive_down"].includes(action);
 }
 
+function isLookbackAction(action: string): boolean {
+  return ["lookback_any", "lookback_all"].includes(action);
+}
+
+function isSeriesCrossAction(action: string): boolean {
+  return ["cross_above_series", "cross_below_series"].includes(action);
+}
+
+function isSupportResistanceAction(action: string): boolean {
+  return ["touch_bounce", "role_reversal", "wick_touch"].includes(action);
+}
+
 export function TargetInput({ value, onChange, action, subject: _subject, baseTimeframe, referencedTimeframes }: TargetInputProps) {
   // Form D: consecutive actions -> count input
   if (isConsecutiveAction(action)) {
@@ -68,6 +84,104 @@ export function TargetInput({ value, onChange, action, subject: _subject, baseTi
           step="1"
         />
         <span className="text-xs text-text-muted">根K线</span>
+      </div>
+    );
+  }
+
+  // Form E: lookback actions -> window input
+  if (isLookbackAction(action)) {
+    const numVal = value || "5";
+    return (
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-text-muted">窗口=</span>
+        <input
+          type="number"
+          value={numVal}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-7 w-12 rounded-md border border-border-default bg-bg-surface px-1.5 text-xs text-text-primary text-center outline-none focus:border-accent-gold"
+          min="2"
+          max="20"
+          step="1"
+        />
+        <span className="text-xs text-text-muted">根K线</span>
+      </div>
+    );
+  }
+
+  // Form F: series cross actions -> indicator target dropdown
+  if (isSeriesCrossAction(action)) {
+    return (
+      <CrossTargetDropdown
+        value={value}
+        onChange={onChange}
+        baseTimeframe={baseTimeframe}
+        referencedTimeframes={referencedTimeframes}
+      />
+    );
+  }
+
+  // Form G: support/resistance actions -> direction/role selector
+  if (isSupportResistanceAction(action)) {
+    if (action === "touch_bounce") {
+      const options = [
+        { value: "support", label: "支撑" },
+        { value: "resistance", label: "压力" },
+      ];
+      const current = options.find((o) => o.value === value) || options[0];
+      return (
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-text-muted">方向:</span>
+          <select
+            value={current.value}
+            onChange={(e) => onChange(e.target.value)}
+            className="h-7 rounded-md border border-border-default bg-bg-surface px-1.5 text-xs text-text-primary outline-none focus:border-accent-gold"
+          >
+            {options.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+    if (action === "role_reversal") {
+      const options = [
+        { value: "resistance", label: "变压力" },
+        { value: "support", label: "变支撑" },
+      ];
+      const current = options.find((o) => o.value === value) || options[0];
+      return (
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-text-muted">角色:</span>
+          <select
+            value={current.value}
+            onChange={(e) => onChange(e.target.value)}
+            className="h-7 rounded-md border border-border-default bg-bg-surface px-1.5 text-xs text-text-primary outline-none focus:border-accent-gold"
+          >
+            {options.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+    // wick_touch
+    const options = [
+      { value: "above", label: "上方" },
+      { value: "below", label: "下方" },
+    ];
+    const current = options.find((o) => o.value === value) || options[0];
+    return (
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-text-muted">方向:</span>
+        <select
+          value={current.value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-7 rounded-md border border-border-default bg-bg-surface px-1.5 text-xs text-text-primary outline-none focus:border-accent-gold"
+        >
+          {options.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
       </div>
     );
   }

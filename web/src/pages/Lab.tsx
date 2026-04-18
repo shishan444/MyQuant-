@@ -6,8 +6,10 @@ import {
   ChevronDown,
   ChevronUp,
   RotateCcw,
+  BarChart3,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useLocation, useNavigate } from "react-router";
 
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
@@ -32,6 +34,7 @@ import {
   TriggerTable,
   TriggerDetailDrawer,
   SaveStrategyDialog,
+  BacktestModePanel,
 } from "@/components/lab";
 
 import { useValidateHypothesis } from "@/hooks/useValidation";
@@ -39,11 +42,13 @@ import { useCreateStrategy } from "@/hooks/useStrategies";
 import { useAvailableSources } from "@/hooks/useDatasets";
 import { getOhlcvBySymbol, getChartIndicators } from "@/services/datasets";
 import { SYMBOL_OPTIONS, TIMEFRAME_SELECT_OPTIONS } from "@/lib/constants";
+import { generateDnaFromValidation } from "@/lib/dna-generator";
 import type {
   ConditionInput,
   ValidateResponse,
   TriggerRecord,
   ChartIndicatorsResponse,
+  DNA,
 } from "@/types/api";
 import type { IndicatorData } from "@/components/charts/KlineChart";
 import type { BollingerBandData } from "@/types/chart";
@@ -132,6 +137,37 @@ function getDefaultDates(): { start: string; end: string } {
 // ---------------------------------------------------------------------------
 
 export function Lab() {
+  // -- Router state (DNA from Evolution) --
+  const location = useLocation();
+  const navigate = useNavigate();
+  const routeState = location.state as {
+    dna?: DNA;
+    symbol?: string;
+    timeframe?: string;
+    dataStart?: string;
+    dataEnd?: string;
+  } | null;
+
+  // -- Lab mode --
+  type LabMode = "hypothesis" | "backtest";
+  const [labMode, setLabMode] = useState<LabMode>(
+    routeState?.dna ? "backtest" : "hypothesis"
+  );
+
+  // -- Backtest mode state (from route) --
+  const [backtestDna] = useState<DNA | null>(routeState?.dna ?? null);
+  const [backtestSymbol] = useState(routeState?.symbol ?? "BTCUSDT");
+  const [backtestTimeframe] = useState(routeState?.timeframe ?? "4h");
+  const [backtestDataStart] = useState(routeState?.dataStart);
+  const [backtestDataEnd] = useState(routeState?.dataEnd);
+
+  // Clear route state on first load so refresh returns to hypothesis mode
+  useEffect(() => {
+    if (routeState?.dna) {
+      window.history.replaceState({}, "");
+    }
+  }, []);
+
   // -- Builder state --
   const [pair, setPair] = useState("BTCUSDT");
   const [timeframe, setTimeframe] = useState("4h");
@@ -371,9 +407,12 @@ export function Lab() {
   const handleSaveStrategy = useCallback(async (data: { name: string; description: string; tags: string }) => {
     if (!result) return;
     try {
+      const generatedDna = generateDnaFromValidation(
+        whenConditions, thenConditions, pair, timeframe
+      );
       await createStrategyMutation.mutateAsync({
         name: data.name,
-        dna: undefined,
+        dna: generatedDna,
         symbol: pair,
         timeframe,
         source: "lab",
@@ -385,7 +424,11 @@ export function Lab() {
     } catch {
       // handled by mutation
     }
-  }, [result, pair, timeframe, createStrategyMutation]);
+  }, [result, whenConditions, thenConditions, pair, timeframe, createStrategyMutation]);
+
+  const handleHypothesisToBacktest = useCallback((dna: DNA) => {
+    navigate("/lab", { state: { dna, symbol: pair, timeframe, dataStart: dateRange.start, dataEnd: dateRange.end } });
+  }, [pair, timeframe, dateRange, navigate]);
 
   // -- Trigger markers for chart --
   const triggerMarkers = useMemo(
@@ -458,6 +501,62 @@ export function Lab() {
   return (
     <PageTransition>
       <div className="flex flex-col gap-4">
+        {/* Mode switcher */}
+        <div className="flex items-center gap-1 rounded-lg border border-slate-700/30 bg-white/[0.02] p-1 w-fit">
+          <button
+            type="button"
+            onClick={() => setLabMode("hypothesis")}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+              labMode === "hypothesis"
+                ? "bg-amber-400/15 text-amber-400"
+                : "text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            <FlaskConical className="h-3.5 w-3.5" />
+            假设验证
+          </button>
+          <button
+            type="button"
+            onClick={() => setLabMode("backtest")}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+              labMode === "backtest"
+                ? "bg-amber-400/15 text-amber-400"
+                : "text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            <BarChart3 className="h-3.5 w-3.5" />
+            策略回测
+          </button>
+        </div>
+
+        {/* Backtest mode */}
+        {labMode === "backtest" && (
+          <GlassCard className="p-5" hover={false}>
+            {backtestDna ? (
+              <BacktestModePanel
+                initialDna={backtestDna}
+                initialSymbol={backtestSymbol}
+                initialTimeframe={backtestTimeframe}
+                initialDataStart={backtestDataStart}
+                initialDataEnd={backtestDataEnd}
+              />
+            ) : (
+              <div className="flex flex-col items-center gap-3 py-12 text-center">
+                <BarChart3 className="h-10 w-10 text-slate-700" />
+                <p className="text-xs text-slate-500">
+                  请从进化中心选择一个策略进行可视化验证
+                </p>
+                <p className="text-[11px] text-slate-600">
+                  或手动输入 DNA 数据
+                </p>
+              </div>
+            )}
+          </GlassCard>
+        )}
+
+        {/* Hypothesis mode (original Lab UI) */}
+        {labMode === "hypothesis" && (
+          <>
         {/* Region 1: Condition Builder */}
         <GlassCard className="p-4" hover={false}>
           <div className="flex items-center justify-between mb-3">
@@ -668,6 +767,8 @@ export function Lab() {
             <ValidationConclusion
               result={result}
               onSave={result.total_count > 0 ? () => setSaveDialogOpen(true) : undefined}
+              onBacktest={handleHypothesisToBacktest}
+              seedDna={result.total_count > 0 ? generateDnaFromValidation(whenConditions, thenConditions, pair, timeframe) : undefined}
             />
 
             {/* Low match rate suggestion */}
@@ -785,6 +886,8 @@ export function Lab() {
           matchRate={result?.match_rate ?? 0}
           totalCount={result?.total_count ?? 0}
         />
+          </>
+        )}
       </div>
     </PageTransition>
   );

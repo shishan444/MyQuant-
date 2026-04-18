@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
+import numpy as np
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Dict, Optional, Tuple
 
 import pandas as pd
 import vectorbt as vbt
@@ -22,6 +24,52 @@ class BacktestResult:
     total_trades: int
     equity_curve: pd.Series
     trades_df: pd.DataFrame | None = None
+    total_funding_cost: float = 0.0
+    liquidated: bool = False
+    data_bars: int = 0
+    trade_win_rate: float | None = None
+    trade_returns: np.ndarray | None = None
+    bars_per_year: int = 2190
+
+
+def _apply_funding_costs(
+    equity_curve: pd.Series, leverage: int, timeframe: str,
+) -> tuple[pd.Series, float]:
+    """Deduct leveraged funding costs; return adjusted curve and total cost."""
+    if leverage <= 1:
+        return equity_curve, 0.0
+
+    RATE_PER_8H = 0.001
+    hours_per_bar = {
+        "1m": 1/60, "5m": 5/60, "15m": 0.25, "30m": 0.5,
+        "1h": 1, "4h": 4, "1d": 24, "3d": 72,
+    }[timeframe]
+    periods_per_bar = math.ceil(hours_per_bar / 8)
+    borrowed_ratio = (leverage - 1) / leverage
+    cost_rate = RATE_PER_8H * periods_per_bar * borrowed_ratio
+
+    adjusted = equity_curve.copy()
+    total_cost = 0.0
+    for i in range(1, len(adjusted)):
+        cost = adjusted.iloc[i - 1] * cost_rate
+        total_cost += cost
+        adjusted.iloc[i] = adjusted.iloc[i] - cost
+    return adjusted, total_cost
+
+
+def _check_liquidation(
+    equity_curve: pd.Series, leverage: int, init_cash: float,
+) -> bool:
+    """Force-liquidate when margin loss exceeds 90% of effective capital."""
+    if leverage <= 1:
+        return False
+    maintenance = init_cash * (1 - 0.9 / leverage)
+    liquidated = equity_curve < maintenance
+    if liquidated.any():
+        idx = liquidated.idxmax()
+        equity_curve.loc[idx:] = 0
+        return True
+    return False
 
 
 class BacktestEngine:
@@ -33,24 +81,24 @@ class BacktestEngine:
         self.fee = fee
         self.slippage = slippage
 
-    def run(self, dna: StrategyDNA, enhanced_df: pd.DataFrame) -> BacktestResult:
-        """Run backtest for a single strategy DNA.
-
-        Args:
-            dna: Strategy genome.
-            enhanced_df: DataFrame with OHLCV + indicator columns.
-
-        Returns:
-            BacktestResult with key metrics.
-        """
-        entries, exits = dna_to_signals(dna, enhanced_df)
+    def _build_portfolio(
+        self,
+        dna: StrategyDNA,
+        enhanced_df: pd.DataFrame,
+        dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None,
+    ):
+        """Construct a vectorbt Portfolio from DNA signals."""
+        entries, exits = dna_to_signals(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
 
         close = enhanced_df["close"]
         open_ = enhanced_df["open"]
         high = enhanced_df["high"]
         low = enhanced_df["low"]
 
-        portfolio = vbt.Portfolio.from_signals(
+        direction_map = {"long": 0, "short": 1}
+        size = dna.risk_genes.position_size * dna.risk_genes.leverage
+
+        portfolio_kwargs = dict(
             close=close,
             entries=entries,
             exits=exits,
@@ -61,85 +109,123 @@ class BacktestEngine:
             fees=self.fee,
             slippage=self.slippage,
             sl_stop=dna.risk_genes.stop_loss,
+            tp_stop=dna.risk_genes.take_profit,
+            size=size,
+            size_type="percent",
+            accumulate=False,
+            direction=direction_map.get(dna.risk_genes.direction, 0),
         )
 
-        # Extract equity curve (value() is a method in vectorbt 0.28)
+        return vbt.Portfolio.from_signals(**portfolio_kwargs)
+
+    def run(
+        self,
+        dna: StrategyDNA,
+        enhanced_df: pd.DataFrame,
+        dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None,
+    ) -> BacktestResult:
+        """Run backtest for a single strategy DNA.
+
+        Args:
+            dna: Strategy genome.
+            enhanced_df: DataFrame with OHLCV + indicator columns.
+            dfs_by_timeframe: Optional dict of {timeframe: DataFrame} for MTF signals.
+
+        Returns:
+            BacktestResult with key metrics computed from adjusted equity curve.
+        """
+        portfolio = self._build_portfolio(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+
         equity_curve = portfolio.value()
         if isinstance(equity_curve, pd.DataFrame):
             equity_curve = equity_curve.iloc[:, 0]
 
-        total_return = float(portfolio.total_return())
-        if pd.isna(total_return):
-            total_return = 0.0
+        # Funding costs for leveraged positions
+        timeframe = dna.execution_genes.timeframe
+        equity_curve, total_funding_cost = _apply_funding_costs(
+            equity_curve, dna.risk_genes.leverage, timeframe,
+        )
 
+        # Liquidation check
+        liquidated = _check_liquidation(
+            equity_curve, dna.risk_genes.leverage, self.init_cash,
+        )
+
+        # Trade count from portfolio (vectorbt tracks this accurately)
         total_trades_val = portfolio.trades.count()
         if isinstance(total_trades_val, pd.Series):
             total_trades_val = int(total_trades_val.sum())
         total_trades_val = int(total_trades_val) if not pd.isna(total_trades_val) else 0
 
-        # Compute metrics directly
-        sharpe = 0.0
-        max_dd = 0.0
-        win_rate = 0.0
+        # Compute ALL metrics using trade-level data where available
+        from core.scoring.metrics import compute_metrics
+        bars_per_year_map = {"15m": 365 * 96, "30m": 365 * 48, "1h": 365 * 24,
+                             "4h": 365 * 6, "1d": 365, "3d": 365 // 3}
+        bars_per_year = bars_per_year_map.get(timeframe, 365 * 6)
 
+        # Extract trade-level data from vectorbt
+        trade_win_rate = None
+        trade_returns = None
         if total_trades_val > 0:
             try:
-                stats = portfolio.stats()
-                sharpe = stats.get("Sharpe Ratio", 0.0)
-                if pd.isna(sharpe) or sharpe is None:
-                    sharpe = 0.0
+                trade_pnl = portfolio.trades.pnl
+                if hasattr(trade_pnl, 'values'):
+                    pnl_arr = np.array(trade_pnl.values).flatten()
+                else:
+                    pnl_arr = np.array(trade_pnl).flatten()
 
-                max_dd_val = stats.get("Max Drawdown [%]", 0.0)
-                if pd.isna(max_dd_val) or max_dd_val is None:
-                    max_dd_val = 0.0
-                max_dd = -abs(float(max_dd_val)) / 100
-
-                wr_val = stats.get("Win Rate [%]", 0.0)
-                if pd.isna(wr_val) or wr_val is None:
-                    wr_val = 0.0
-                win_rate = float(wr_val) / 100
+                if len(pnl_arr) > 0:
+                    winning = int((pnl_arr > 0).sum())
+                    trade_win_rate = winning / len(pnl_arr)
+                    trade_returns = pnl_arr / self.init_cash
             except Exception:
                 pass
 
-        # Extract trades
+        metrics = compute_metrics(
+            equity_curve, total_trades=total_trades_val,
+            bars_per_year=bars_per_year,
+            trade_win_rate=trade_win_rate,
+            trade_returns=trade_returns,
+        )
+
+        sharpe = metrics["sharpe_ratio"]
+        max_dd = metrics["max_drawdown"]
+        win_rate = metrics["win_rate"]
+
+        # Also compute raw total_return from adjusted curve for display
+        if len(equity_curve) >= 2 and equity_curve.iloc[0] > 0:
+            raw_return = float(equity_curve.iloc[-1] / equity_curve.iloc[0] - 1)
+        else:
+            raw_return = 0.0
+
         trades = portfolio.trades.records_readable if hasattr(portfolio.trades, "records_readable") else None
 
         return BacktestResult(
-            total_return=total_return,
+            total_return=raw_return,
             sharpe_ratio=float(sharpe),
             max_drawdown=float(max_dd),
             win_rate=float(win_rate),
             total_trades=total_trades_val,
             equity_curve=equity_curve,
             trades_df=trades,
+            total_funding_cost=total_funding_cost,
+            liquidated=liquidated,
+            data_bars=len(enhanced_df),
+            trade_win_rate=trade_win_rate,
+            trade_returns=trade_returns,
+            bars_per_year=bars_per_year,
         )
 
     def run_with_portfolio(
-        self, dna: StrategyDNA, enhanced_df: pd.DataFrame,
+        self,
+        dna: StrategyDNA,
+        enhanced_df: pd.DataFrame,
+        dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None,
     ) -> Tuple["BacktestResult", object]:
         """Run backtest and return (BacktestResult, vectorbt Portfolio) tuple.
 
         The Portfolio object exposes .plot() for quick visualization.
         """
-        entries, exits = dna_to_signals(dna, enhanced_df)
-
-        close = enhanced_df["close"]
-        open_ = enhanced_df["open"]
-        high = enhanced_df["high"]
-        low = enhanced_df["low"]
-
-        portfolio = vbt.Portfolio.from_signals(
-            close=close,
-            entries=entries,
-            exits=exits,
-            open=open_,
-            high=high,
-            low=low,
-            init_cash=self.init_cash,
-            fees=self.fee,
-            slippage=self.slippage,
-            sl_stop=dna.risk_genes.stop_loss,
-        )
-
-        result = self.run(dna, enhanced_df)
+        portfolio = self._build_portfolio(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+        result = self.run(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
         return result, portfolio

@@ -36,9 +36,15 @@ const INDICATOR_ACTIONS: ActionOption[] = [
   { value: "le", label: "小于等于", category: "比较类" },
   { value: "cross_above", label: "上穿", category: "穿越类" },
   { value: "cross_below", label: "下穿", category: "穿越类" },
+  { value: "cross_above_series", label: "上穿指标线", category: "穿越类" },
+  { value: "cross_below_series", label: "下穿指标线", category: "穿越类" },
   { value: "touch", label: "触及", category: "穿越类" },
+  { value: "lookback_any", label: "回溯N根满足", category: "回溯类" },
+  { value: "lookback_all", label: "回溯N根全满足", category: "回溯类" },
   { value: "divergence_top", label: "顶背离", category: "形态类" },
   { value: "divergence_bottom", label: "底背离", category: "形态类" },
+  { value: "touch_bounce", label: "触碰反弹", category: "支撑压力类" },
+  { value: "role_reversal", label: "角色转换", category: "支撑压力类" },
 ];
 
 const THEN_DIRECTION_ACTIONS: ActionOption[] = [
@@ -73,7 +79,15 @@ function getActionsForSubject(subject: string, isThen: boolean): ActionOption[] 
 }
 
 const LABEL_MAP: Record<string, string> = {};
-const allActions = [...PRICE_ACTIONS, ...VOLUME_ACTIONS, ...INDICATOR_ACTIONS, ...THEN_DIRECTION_ACTIONS];
+const allActions = [...PRICE_ACTIONS, ...VOLUME_ACTIONS, ...INDICATOR_ACTIONS, ...THEN_DIRECTION_ACTIONS,
+  // Add unique new actions for label map
+  { value: "touch_bounce", label: "触碰反弹", category: "支撑压力类" },
+  { value: "role_reversal", label: "角色转换", category: "支撑压力类" },
+  { value: "cross_above_series", label: "上穿指标线", category: "穿越类" },
+  { value: "cross_below_series", label: "下穿指标线", category: "穿越类" },
+  { value: "lookback_any", label: "回溯N根满足", category: "回溯类" },
+  { value: "lookback_all", label: "回溯N根全满足", category: "回溯类" },
+];
 for (const opt of allActions) {
   LABEL_MAP[opt.value] = opt.label;
 }

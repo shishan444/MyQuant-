@@ -1,4 +1,5 @@
-import { Pause, Square, Play } from "lucide-react";
+import { useState, useCallback } from "react";
+import { Pause, Square, Play, AlertTriangle, CheckCircle, Database, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Progress } from "@/components/ui/progress";
 import { StatCard } from "@/components/StatCard";
@@ -37,6 +38,7 @@ export function ProgressPanel({
   const isActive = isActiveStatus(task.status);
   const isPaused = task.status === "paused";
   const reachedTarget = bestScore >= targetScore;
+  const [showChampion, setShowChampion] = useState(false);
 
   return (
     <div className="flex flex-col gap-4">
@@ -104,6 +106,84 @@ export function ProgressPanel({
           trend="neutral"
         />
       </div>
+
+      {/* Diagnostics tags */}
+      <div className="flex items-center gap-2">
+        {task.data_row_count != null && task.data_row_count > 0 ? (
+          <div className="flex items-center gap-1 text-[11px] text-emerald-400">
+            <Database className="h-3 w-3" />
+            <span>{task.data_row_count.toLocaleString()} 条K线</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1 text-[11px] text-amber-500">
+            <AlertTriangle className="h-3 w-3" />
+            <span>数据范围未确认</span>
+          </div>
+        )}
+        {task.leverage > 1 && (
+          <div className="flex items-center gap-1 text-[11px] text-amber-400">
+            <span>{task.leverage}x</span>
+          </div>
+        )}
+        <div className={cn(
+          "flex items-center gap-1 text-[11px]",
+          task.direction === "short" ? "text-red-400" : "text-emerald-400"
+        )}>
+          <CheckCircle className="h-3 w-3" />
+          <span>{task.direction === "short" ? "做空" : "做多"}</span>
+        </div>
+      </div>
+
+      {/* Champion preview (from WS real-time updates) */}
+      {task.champion_dna && (
+        <div className="rounded-lg border border-slate-700/30 bg-white/[0.01]">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between px-3 py-2 text-xs text-slate-400 hover:text-slate-300"
+            onClick={() => setShowChampion(!showChampion)}
+          >
+            <span>当前 Champion</span>
+            {showChampion ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          </button>
+          {showChampion && (
+            <div className="border-t border-slate-700/30 px-3 py-2">
+              <div className="flex items-center gap-3 text-xs text-slate-500">
+                <span>
+                  {(task.champion_dna.risk_genes?.direction ?? "long") === "long" ? "做多" : "做空"}
+                </span>
+                <span>
+                  止损 {((task.champion_dna.risk_genes?.stop_loss ?? 0.03) * 100).toFixed(1)}%
+                </span>
+                <span>
+                  止盈 {((task.champion_dna.risk_genes?.take_profit ?? 0.06) * 100).toFixed(1)}%
+                </span>
+                {(task.champion_dna.risk_genes?.leverage ?? 1) > 1 && (
+                  <span className="text-amber-400">
+                    {task.champion_dna.risk_genes?.leverage}x
+                  </span>
+                )}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-600">
+                信号: {(task.champion_dna.signal_genes?.length ?? 0) + (task.champion_dna.layers?.length ?? 0)} 个基因
+              </div>
+              {task.champion_metrics && (
+                <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+                  <span className="text-slate-500">
+                    年化 <span className={task.champion_metrics.annual_return > 0 ? "text-emerald-400" : "text-red-400"}>
+                      {(task.champion_metrics.annual_return * 100).toFixed(1)}%
+                    </span>
+                  </span>
+                  <span className="text-slate-500">
+                    夏普 <span className={task.champion_metrics.sharpe_ratio > 0 ? "text-emerald-400" : "text-red-400"}>
+                      {task.champion_metrics.sharpe_ratio.toFixed(2)}
+                    </span>
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Control buttons */}
       {(isActive || isPaused) && (

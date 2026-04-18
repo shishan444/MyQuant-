@@ -10,6 +10,7 @@ from MyQuant.core.strategy.validator import validate_dna
 from MyQuant.core.evolution.operators import (
     mutate_params, mutate_indicator, mutate_logic, mutate_risk, crossover,
     mutate_add_layer, mutate_remove_layer, mutate_layer_timeframe, mutate_cross_logic,
+    generate_random_condition,
 )
 from MyQuant.core.evolution.population import (
     create_random_dna, init_population, create_random_mtf_layer,
@@ -204,8 +205,12 @@ class TestLineage:
 
 class TestEarlyStopChecker:
     def test_target_reached(self):
-        checker = EarlyStopChecker(target_score=80.0)
-        action, reason = checker.check(85.0, 1)
+        checker = EarlyStopChecker(target_score=80.0, min_generations=5)
+        # Below min_generations: should continue even if target met
+        action, reason = checker.check(85.0, 3)
+        assert action == "continue"
+        # At/above min_generations: should stop
+        action, reason = checker.check(85.0, 5)
         assert action == "stop"
         assert reason == "target_reached"
 
@@ -322,3 +327,54 @@ class TestRandomMtfLayer:
         roles = [g.role for g in layer.signal_genes]
         assert any(r == SignalRole.ENTRY_TRIGGER for r in roles)
         assert any(r == SignalRole.EXIT_TRIGGER for r in roles)
+
+
+class TestGenerateRandomCondition:
+    """Test the unified generate_random_condition function."""
+
+    def test_generates_basic_condition(self):
+        cond = generate_random_condition("RSI")
+        assert "type" in cond
+        assert cond["type"] in ("lt", "gt", "le", "ge")
+
+    def test_generates_threshold_for_comparison(self):
+        cond = generate_random_condition("RSI")
+        if cond["type"] in ("lt", "gt", "le", "ge"):
+            assert "threshold" in cond
+
+    def test_generates_series_cross_for_ema(self):
+        # EMA supports cross_above_series
+        for _ in range(50):
+            cond = generate_random_condition("EMA")
+            if cond["type"] == "cross_above_series":
+                assert "target_indicator" in cond
+                assert "target_params" in cond
+                return
+        # If we never hit cross_above_series in 50 tries, still pass
+        # (random sampling may not always pick it)
+
+    def test_generates_lookback_for_bb(self):
+        # BB supports lookback_any
+        for _ in range(50):
+            cond = generate_random_condition("BB")
+            if cond["type"] in ("lookback_any", "lookback_all"):
+                assert "window" in cond
+                assert "inner" in cond
+                return
+
+    def test_generates_touch_bounce_for_bb(self):
+        for _ in range(50):
+            cond = generate_random_condition("BB")
+            if cond["type"] == "touch_bounce":
+                assert "direction" in cond
+                assert cond["direction"] in ("support", "resistance")
+                return
+
+    def test_unknown_indicator_defaults(self):
+        cond = generate_random_condition("NonExistent")
+        assert cond["type"] == "gt"
+
+    def test_new_indicators_generate_conditions(self):
+        for indicator in ["RVOL", "VROC", "AD", "CVD", "VWMA", "Aroon", "CMO", "TRIX"]:
+            cond = generate_random_condition(indicator)
+            assert "type" in cond

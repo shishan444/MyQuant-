@@ -4,11 +4,11 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from api.deps import get_db_path
+from api.deps import get_db_path, get_data_dir
 from api.schemas import (
     DNAModel,
     EvolutionHistoryRecord,
@@ -33,6 +33,28 @@ def _dna_model_to_dna(dna_model: DNAModel) -> StrategyDNA:
     """Convert a Pydantic DNAModel to a core StrategyDNA."""
     data = dna_model.model_dump()
     return StrategyDNA.from_dict(data)
+
+
+def _parse_json_list(raw: Optional[str]) -> Optional[List[str]]:
+    """Parse a JSON-encoded list from a DB text column."""
+    if not raw:
+        return None
+    try:
+        val = json.loads(raw)
+        return val if isinstance(val, list) else None
+    except (json.JSONDecodeError, Exception):
+        return None
+
+
+def _parse_json_dict(raw: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Parse a JSON-encoded dict from a DB text column."""
+    if not raw:
+        return None
+    try:
+        val = json.loads(raw)
+        return val if isinstance(val, dict) else None
+    except (json.JSONDecodeError, Exception):
+        return None
 
 
 def _task_row_to_response(row: Dict[str, Any]) -> EvolutionTaskResponse:
@@ -70,6 +92,20 @@ def _task_row_to_response(row: Dict[str, Any]) -> EvolutionTaskResponse:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         stop_reason=row.get("stop_reason"),
+        best_score=row.get("best_score"),
+        leverage=row.get("leverage", 1),
+        direction=row.get("direction", "long"),
+        data_start=row.get("data_start"),
+        data_end=row.get("data_end"),
+        data_time_start=row.get("data_time_start"),
+        data_time_end=row.get("data_time_end"),
+        data_row_count=row.get("data_row_count", 0),
+        indicator_pool=_parse_json_list(row.get("indicator_pool")),
+        timeframe_pool=_parse_json_list(row.get("timeframe_pool")),
+        mode=row.get("mode"),
+        champion_metrics=_parse_json_dict(row.get("champion_metrics")),
+        champion_dimension_scores=_parse_json_dict(row.get("champion_dimension_scores")),
+        walk_forward_enabled=bool(row.get("walk_forward_enabled", 0)),
     )
 
 
@@ -77,9 +113,18 @@ def _task_row_to_response(row: Dict[str, Any]) -> EvolutionTaskResponse:
 def create_task(
     payload: EvolutionTaskCreate,
     db_path: Path = Depends(get_db_path),
+    data_dir: Path = Depends(get_data_dir),
 ) -> EvolutionTaskResponse:
     """Create a new evolution task."""
     task_id = str(uuid.uuid4())
+
+    # --- Auto-derive execution timeframe from timeframe_pool ---
+    # Sort pool by duration (longest first), execution TF = shortest
+    tf_pool = payload.timeframe_pool
+    if tf_pool and len(tf_pool) > 1:
+        tf_pool = sort_timeframes(tf_pool)
+        # Override timeframe with the shortest in pool
+        payload.timeframe = tf_pool[-1]
 
     # Build initial DNA: use provided or generate a default
     if payload.initial_dna:
@@ -93,8 +138,56 @@ def create_task(
             ],
             logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
             execution_genes=ExecutionGenes(timeframe=payload.timeframe, symbol=payload.symbol),
-            risk_genes=RiskGenes(stop_loss=0.03, take_profit=0.06, position_size=1.0),
+            risk_genes=RiskGenes(stop_loss=0.03, take_profit=0.06, position_size=1.0,
+                                 leverage=payload.leverage, direction=payload.direction),
         )
+
+    # Force override leverage/direction on seed DNA with task-level constraints
+    dna.risk_genes.leverage = payload.leverage
+    # mixed mode: don't override direction, allow evolution to explore both
+    if payload.direction != "mixed":
+        dna.risk_genes.direction = payload.direction
+
+    # Validate data availability
+    import re
+    safe_symbol = re.sub(r'[^A-Za-z0-9]', '', payload.symbol)
+    timeframe = payload.timeframe
+
+    parquet_path = data_dir / f"{safe_symbol}_{timeframe}.parquet"
+    # Try aliases
+    if not parquet_path.exists():
+        aliases = {"1h": ["1h", "60m"], "4h": ["4h"], "1d": ["1d", "1D"]}
+        for alias in aliases.get(timeframe, [timeframe]):
+            alt_path = data_dir / f"{safe_symbol}_{alias}.parquet"
+            if alt_path.exists():
+                parquet_path = alt_path
+                break
+
+    data_time_start = None
+    data_time_end = None
+    data_row_count = 0
+
+    if not parquet_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"无 {payload.symbol}/{payload.timeframe} 的K线数据"
+        )
+
+    # Read parquet time range
+    try:
+        import pandas as pd
+        df = pd.read_parquet(parquet_path)
+        data_row_count = len(df)
+        if data_row_count > 0:
+            if isinstance(df.index, pd.DatetimeIndex):
+                data_time_start = str(df.index.min())
+                data_time_end = str(df.index.max())
+            elif "timestamp" in df.columns or "date" in df.columns:
+                ts_col = "timestamp" if "timestamp" in df.columns else "date"
+                data_time_start = str(df[ts_col].min())
+                data_time_end = str(df[ts_col].max())
+    except Exception:
+        pass
 
     save_task(
         db_path,
@@ -106,15 +199,28 @@ def create_task(
         initial_dna=dna,
     )
 
-    # Update extended columns
+    # Update extended columns (including leverage/direction constraints and data info)
     conn = _get_connection(db_path)
     conn.execute(
         """UPDATE evolution_task
            SET population_size = ?, max_generations = ?,
-               elite_ratio = ?, n_workers = ?, status = 'pending'
+               elite_ratio = ?, n_workers = ?, status = 'pending',
+               leverage = ?, direction = ?,
+               data_start = ?, data_end = ?,
+               data_time_start = ?, data_time_end = ?, data_row_count = ?,
+               indicator_pool = ?, timeframe_pool = ?, mode = ?,
+               walk_forward_enabled = ?
            WHERE task_id = ?""",
         (payload.population_size, payload.max_generations,
-         payload.elite_ratio, payload.n_workers, task_id),
+         payload.elite_ratio, payload.n_workers,
+         payload.leverage, payload.direction,
+         payload.data_start, payload.data_end,
+         data_time_start, data_time_end, data_row_count,
+         json.dumps(payload.indicator_pool) if payload.indicator_pool else None,
+         json.dumps(payload.timeframe_pool) if payload.timeframe_pool else None,
+         payload.mode,
+         1 if payload.walk_forward_enabled else 0,
+         task_id),
     )
     conn.commit()
     conn.close()
@@ -290,3 +396,19 @@ def _get_connection(db_path: Path):
     conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
     return conn
+
+
+# ── Timeframe utilities ──
+
+_TF_DURATION_MINUTES = {
+    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+    "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480,
+    "12h": 720, "1d": 1440, "3d": 4320, "1w": 10080,
+}
+
+
+def sort_timeframes(tfs: List[str]) -> List[str]:
+    """Sort timeframes by duration, longest first."""
+    def _key(tf: str) -> int:
+        return _TF_DURATION_MINUTES.get(tf, 0)
+    return sorted(tfs, key=_key, reverse=True)

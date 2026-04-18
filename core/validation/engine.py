@@ -329,6 +329,13 @@ def _evaluate_single_condition(df: pd.DataFrame, cond: Dict, warnings: List[str]
         "divergence_bottom": lambda s, t: _resolve_pattern(df, "divergence_bottom", s.name if hasattr(s, "name") else subject),
         "consecutive_up": lambda s, t: _resolve_pattern(df, "consecutive_up", s.name if hasattr(s, "name") else subject, t),
         "consecutive_down": lambda s, t: _resolve_pattern(df, "consecutive_down", s.name if hasattr(s, "name") else subject, t),
+        # Phase 2: dynamic context actions
+        "cross_above_series": lambda s, t: _cross_above_series_condition(df, cond, s),
+        "cross_below_series": lambda s, t: _cross_below_series_condition(df, cond, s),
+        "lookback_any": lambda s, t: _lookback_condition(df, cond, s, "any"),
+        # Phase 4: support/resistance actions
+        "touch_bounce": lambda s, t: _resolve_snr_pattern(df, "touch_bounce", s.name if hasattr(s, "name") else subject, cond),
+        "role_reversal": lambda s, t: _resolve_snr_pattern(df, "role_reversal", s.name if hasattr(s, "name") else subject, cond),
     }
 
     fn = action_map.get(action)
@@ -453,6 +460,88 @@ def _resolve_pattern(
             except (ValueError, TypeError):
                 pass
         return detect_consecutive_down(df, subject_col, count)
+
+    return pd.Series(False, index=df.index)
+
+
+def _cross_above_series_condition(
+    df: pd.DataFrame, cond: Dict, subject_series: pd.Series,
+) -> pd.Series:
+    """Cross above another indicator series."""
+    target_series = _resolve_subject(df, cond.get("target", ""))
+    if target_series is None:
+        return pd.Series(False, index=df.index)
+    return (subject_series.shift(1) < target_series.shift(1)) & (subject_series >= target_series)
+
+
+def _cross_below_series_condition(
+    df: pd.DataFrame, cond: Dict, subject_series: pd.Series,
+) -> pd.Series:
+    """Cross below another indicator series."""
+    target_series = _resolve_subject(df, cond.get("target", ""))
+    if target_series is None:
+        return pd.Series(False, index=df.index)
+    return (subject_series.shift(1) > target_series.shift(1)) & (subject_series <= target_series)
+
+
+def _lookback_condition(
+    df: pd.DataFrame, cond: Dict, subject_series: pd.Series, mode: str,
+) -> pd.Series:
+    """Lookback window: check if inner condition is met within window bars."""
+    window = cond.get("window", 5)
+    inner_action = cond.get("inner_action", "price_above")
+    target_val = cond.get("target", 0)
+
+    if inner_action in ("gt", "lt", "ge", "le"):
+        threshold = target_val
+        if isinstance(threshold, str):
+            try:
+                threshold = float(threshold)
+            except (ValueError, TypeError):
+                threshold = 0
+        if inner_action == "gt":
+            inner_signal = subject_series > threshold
+        elif inner_action == "lt":
+            inner_signal = subject_series < threshold
+        elif inner_action == "ge":
+            inner_signal = subject_series >= threshold
+        else:
+            inner_signal = subject_series <= threshold
+    else:
+        # Default: price_above
+        inner_signal = df["close"] > subject_series
+
+    if mode == "any":
+        return inner_signal.rolling(window=window, min_periods=1).apply(any, raw=False).fillna(False).astype(bool)
+    else:
+        return inner_signal.rolling(window=window, min_periods=1).apply(all, raw=False).fillna(False).astype(bool)
+
+
+def _resolve_snr_pattern(
+    df: pd.DataFrame,
+    pattern: str,
+    subject_col: str,
+    cond: Dict,
+) -> pd.Series:
+    """Resolve support/resistance pattern actions using patterns module."""
+    from core.validation.patterns import detect_touch_bounce, detect_role_reversal
+
+    # Resolve the actual column name
+    if subject_col not in df.columns:
+        matches = [c for c in df.columns if subject_col.lower().replace("_", "") in c.lower().replace("_", "")]
+        if not matches:
+            return pd.Series(False, index=df.index)
+        subject_col = matches[0]
+
+    if pattern == "touch_bounce":
+        direction = cond.get("direction", "support")
+        proximity_pct = float(cond.get("proximity_pct", 0.01))
+        bounce_pct = float(cond.get("bounce_pct", 0.005))
+        return detect_touch_bounce(df, subject_col, direction, proximity_pct, bounce_pct)
+    elif pattern == "role_reversal":
+        role = cond.get("role", "resistance")
+        lookback = int(cond.get("lookback", 10))
+        return detect_role_reversal(df, subject_col, role, lookback)
 
     return pd.Series(False, index=df.index)
 

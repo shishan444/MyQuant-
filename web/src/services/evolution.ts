@@ -31,6 +31,11 @@ export async function createEvolutionTask(payload: {
   indicator_pool?: string[];
   timeframe_pool?: string[];
   mode?: "auto" | "seed";
+  leverage?: number;
+  direction?: "long" | "short" | "mixed";
+  data_start?: string;
+  data_end?: string;
+  walk_forward_enabled?: boolean;
 }): Promise<EvolutionTask> {
   const { data } = await api.post("/api/evolution/tasks", payload);
   return data;
@@ -56,7 +61,12 @@ export async function getEvolutionHistory(
   params?: { limit?: number; offset?: number }
 ): Promise<EvolutionHistoryResponse> {
   const { data } = await api.get(`/api/evolution/tasks/${id}/history`, { params });
-  return data;
+  // Backend returns { task_id, generations }, frontend expects { records, total }
+  const generations = data.generations ?? data.records ?? [];
+  return {
+    records: generations,
+    total: generations.length,
+  };
 }
 
 export async function getTaskStrategies(taskId: string): Promise<{

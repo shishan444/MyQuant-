@@ -165,3 +165,105 @@ def _is_strictly_decreasing(arr: np.ndarray) -> bool:
         if arr[i] >= arr[i - 1]:
             return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Support/Resistance pattern detection
+# ---------------------------------------------------------------------------
+
+def detect_touch_bounce(
+    df: pd.DataFrame,
+    indicator_col: str,
+    direction: str = "support",
+    proximity_pct: float = 0.01,
+    bounce_pct: float = 0.005,
+) -> pd.Series:
+    """Detect touch-bounce pattern against an indicator line.
+
+    Args:
+        df: OHLCV DataFrame with indicator column.
+        indicator_col: Column name of the indicator line.
+        direction: "support" or "resistance".
+        proximity_pct: Proximity threshold as percentage of line value.
+        bounce_pct: Minimum bounce percentage to qualify.
+
+    Returns:
+        Boolean Series indicating touch-bounce events.
+    """
+    if indicator_col not in df.columns:
+        return pd.Series(False, index=df.index)
+
+    result = pd.Series(False, index=df.index)
+    line = df[indicator_col].values
+    low = df["low"].values
+    high = df["high"].values
+    close = df["close"].values
+    n = len(df)
+
+    for i in range(1, n - 1):
+        if np.isnan(line[i]):
+            continue
+
+        tolerance = abs(line[i]) * proximity_pct
+
+        if direction == "support":
+            # Low touches near the line + close above + next bar closes higher
+            touches = abs(low[i] - line[i]) <= tolerance
+            closes_above = close[i] > line[i]
+            bounces = close[i + 1] > close[i] * (1 + bounce_pct)
+            if touches and closes_above and bounces:
+                result.iloc[i] = True
+        else:
+            # High touches near the line + close below + next bar closes lower
+            touches = abs(high[i] - line[i]) <= tolerance
+            closes_below = close[i] < line[i]
+            bounces = close[i + 1] < close[i] * (1 - bounce_pct)
+            if touches and closes_below and bounces:
+                result.iloc[i] = True
+
+    return result
+
+
+def detect_role_reversal(
+    df: pd.DataFrame,
+    indicator_col: str,
+    role: str = "resistance",
+    lookback: int = 10,
+) -> pd.Series:
+    """Detect support/resistance role reversal pattern.
+
+    Args:
+        df: OHLCV DataFrame with indicator column.
+        indicator_col: Column name of the indicator line.
+        role: "resistance" (support became resistance) or "support" (resistance became support).
+        lookback: Number of bars to check for prior relationship.
+
+    Returns:
+        Boolean Series indicating role reversal events.
+    """
+    if indicator_col not in df.columns:
+        return pd.Series(False, index=df.index)
+
+    result = pd.Series(False, index=df.index)
+    line = df[indicator_col].values
+    close = df["close"].values
+    n = len(df)
+
+    for i in range(lookback, n):
+        if np.isnan(line[i]):
+            continue
+
+        if role == "resistance":
+            # Line was support (price was above) -> now price is below
+            was_above = close[i - lookback] > line[i - lookback]
+            now_below = close[i] < line[i]
+            if was_above and now_below:
+                result.iloc[i] = True
+        else:
+            # Line was resistance (price was below) -> now price is above
+            was_below = close[i - lookback] < line[i - lookback]
+            now_above = close[i] > line[i]
+            if was_below and now_above:
+                result.iloc[i] = True
+
+    return result

@@ -25,6 +25,8 @@ export interface RiskGenes {
   stop_loss: number;
   take_profit: number | null;
   position_size: number;
+  leverage: number;
+  direction: "long" | "short" | "mixed";
 }
 
 export interface TimeframeLayerModel {
@@ -81,6 +83,8 @@ export interface BacktestResult {
   dimension_scores?: Record<string, number>;
   equity_curve?: Array<{ timestamp: string; value: number }>;
   signals?: TradeSignal[];
+  total_funding_cost: number;
+  liquidated: boolean;
 }
 
 export interface TradeSignal {
@@ -112,6 +116,23 @@ export interface EvolutionTask {
   indicator_pool?: string[];
   timeframe_pool?: string[];
   mode?: "auto" | "seed";
+  leverage: number;
+  direction: "long" | "short" | "mixed";
+  data_start?: string;
+  data_end?: string;
+  data_time_start?: string;
+  data_time_end?: string;
+  data_row_count?: number;
+  champion_metrics?: {
+    annual_return: number;
+    sharpe_ratio: number;
+    max_drawdown: number;
+    win_rate: number;
+    calmar_ratio: number;
+    total_trades: number;
+  };
+  champion_dimension_scores?: Record<string, number>;
+  walk_forward_enabled?: boolean;
 }
 
 export interface EvolutionHistoryRecord {

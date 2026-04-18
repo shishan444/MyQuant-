@@ -498,9 +498,13 @@ def get_chart_indicators(
     boll_std: float = 2.0,
     rsi_enabled: bool = True,
     rsi_period: int = 14,
+    rvol_enabled: bool = False,
+    rvol_period: int = 20,
+    vwma_enabled: bool = False,
+    vwma_period: int = 20,
     data_dir: Path = Depends(get_data_dir),
 ) -> Dict[str, Any]:
-    """Compute chart indicators (EMA, BOLL, RSI) for chart rendering."""
+    """Compute chart indicators (EMA, BOLL, RSI, RVOL, VWMA) for chart rendering."""
     import re
 
     from core.features.indicators import _compute_indicator
@@ -519,7 +523,7 @@ def get_chart_indicators(
 
     df = df.sort_index()
 
-    result: Dict[str, Any] = {"ema": {}, "boll": None, "rsi": None}
+    result: Dict[str, Any] = {"ema": {}, "boll": None, "rsi": None, "rvol": None, "vwma": None}
 
     # Compute EMA for requested periods
     if ema_periods:
@@ -570,6 +574,34 @@ def get_chart_indicators(
             if col_name in rsi_df.columns:
                 series = rsi_df[col_name].dropna()
                 result["rsi"] = [
+                    {"time": str(idx), "value": float(val)}
+                    for idx, val in series.items()
+                ]
+        except Exception:
+            pass
+
+    # Compute RVOL (Relative Volume)
+    if rvol_enabled:
+        try:
+            rvol_df = _compute_indicator(df, "RVOL", {"period": rvol_period})
+            col_name = f"rvol_{rvol_period}"
+            if col_name in rvol_df.columns:
+                series = rvol_df[col_name].dropna()
+                result["rvol"] = [
+                    {"time": str(idx), "value": float(val)}
+                    for idx, val in series.items()
+                ]
+        except Exception:
+            pass
+
+    # Compute VWMA (Volume Weighted Moving Average)
+    if vwma_enabled:
+        try:
+            vwma_df = _compute_indicator(df, "VWMA", {"period": vwma_period})
+            col_name = f"vwma_{vwma_period}"
+            if col_name in vwma_df.columns:
+                series = vwma_df[col_name].dropna()
+                result["vwma"] = [
                     {"time": str(idx), "value": float(val)}
                     for idx, val in series.items()
                 ]

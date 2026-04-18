@@ -5,9 +5,25 @@ import type { DNA, TimeframeLayerModel } from "@/types/api";
 interface StrategyDetailProps {
   dna: DNA;
   className?: string;
+  champion_metrics?: {
+    annual_return: number;
+    sharpe_ratio: number;
+    max_drawdown: number;
+    win_rate: number;
+    calmar_ratio: number;
+    total_trades: number;
+  };
+  champion_dimension_scores?: Record<string, number>;
+  walkForwardEnabled?: boolean;
 }
 
-export function StrategyDetail({ dna, className }: StrategyDetailProps) {
+export function StrategyDetail({
+  dna,
+  className,
+  champion_metrics,
+  champion_dimension_scores,
+  walkForwardEnabled,
+}: StrategyDetailProps) {
   const hasLayers = dna.layers && dna.layers.length > 0;
 
   const renderCondition = (
@@ -38,6 +54,9 @@ export function StrategyDetail({ dna, className }: StrategyDetailProps) {
     }
     return `${gene.indicator}${periodStr} ${cond}${val}`;
   };
+
+  const metrics = champion_metrics;
+  const dimScores = champion_dimension_scores;
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>
@@ -155,11 +174,101 @@ export function StrategyDetail({ dna, className }: StrategyDetailProps) {
         <span>
           仓位 {(dna.risk_genes.position_size * 100).toFixed(0)}%
         </span>
+        {(dna.risk_genes.leverage ?? 1) > 1 && (
+          <span className="text-amber-500">
+            {(dna.risk_genes.leverage ?? 1)}x
+          </span>
+        )}
+        <span>
+          {(dna.risk_genes.direction ?? "long") === "long" ? "做多" : "做空"}
+        </span>
       </div>
 
       {/* Execution */}
       <div className="text-xs text-slate-500">
         执行: {dna.execution_genes.symbol} / {dna.execution_genes.timeframe.toUpperCase()}
+      </div>
+
+      {/* Real backtest metrics */}
+      {metrics && (
+        <div className="mt-1 rounded-lg border border-slate-700/30 p-3">
+          <div className="mb-2 text-xs font-medium text-slate-300">
+            回测指标
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+            <MetricItem
+              label="年化收益率"
+              value={`${(metrics.annual_return * 100).toFixed(1)}%`}
+              score={dimScores?.annual_return}
+              positive={metrics.annual_return > 0}
+            />
+            <MetricItem
+              label="夏普比率"
+              value={metrics.sharpe_ratio.toFixed(2)}
+              score={dimScores?.sharpe_ratio}
+              positive={metrics.sharpe_ratio > 0}
+            />
+            <MetricItem
+              label="最大回撤"
+              value={`${(metrics.max_drawdown * 100).toFixed(1)}%`}
+              score={dimScores?.max_drawdown}
+              positive={false}
+            />
+            <MetricItem
+              label="胜率"
+              value={`${(metrics.win_rate * 100).toFixed(1)}%`}
+              score={dimScores?.win_rate}
+              positive={metrics.win_rate > 0.5}
+            />
+            <MetricItem
+              label="Calmar比率"
+              value={metrics.calmar_ratio.toFixed(2)}
+              score={dimScores?.calmar_ratio}
+              positive={metrics.calmar_ratio > 0}
+            />
+            <MetricItem
+              label="交易次数"
+              value={`${metrics.total_trades}`}
+              score={dimScores?.total_trades}
+              positive={metrics.total_trades > 0}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Walk-Forward indicator */}
+      {walkForwardEnabled && (
+        <div className="text-xs text-emerald-500">
+          Walk-Forward 验证已启用
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MetricItem({
+  label,
+  value,
+  score,
+  positive,
+}: {
+  label: string;
+  value: string;
+  score?: number;
+  positive: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between text-xs">
+      <span className="text-slate-500">{label}</span>
+      <div className="flex items-center gap-2">
+        <span className={positive ? "text-emerald-400" : "text-red-400"}>
+          {value}
+        </span>
+        {score != null && (
+          <span className="text-[10px] text-slate-600">
+            ({score.toFixed(1)})
+          </span>
+        )}
       </div>
     </div>
   );

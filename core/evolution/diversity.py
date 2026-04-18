@@ -1,17 +1,29 @@
 """Diversity protection: detect homogeneity and inject fresh blood."""
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from core.strategy.dna import StrategyDNA
 from core.evolution.population import create_random_dna
 
 
 def _gene_signature(dna: StrategyDNA) -> str:
-    """Create a simple signature string for similarity comparison."""
+    """Create a signature string for similarity comparison.
+
+    Includes indicator name, key parameters, condition type, and role
+    so that different parameter values produce different signatures.
+    """
     parts = []
     for gene in sorted(dna.signal_genes, key=lambda g: g.role.value):
-        parts.append(f"{gene.indicator}:{gene.role.value}")
+        # Include first param value for finer granularity
+        param_summary = ""
+        if gene.params:
+            first_key = next(iter(gene.params))
+            param_summary = f",p={gene.params[first_key]}"
+        cond_type = gene.condition.get("type", "?") if gene.condition else "?"
+        parts.append(f"{gene.indicator}{param_summary}:{cond_type}:{gene.role.value}")
+    parts.append(f"lev:{dna.risk_genes.leverage}")
+    parts.append(f"dir:{dna.risk_genes.direction}")
     return "|".join(parts)
 
 
@@ -32,12 +44,18 @@ def compute_diversity(population: List[StrategyDNA]) -> float:
 def inject_fresh_blood(
     population: List[StrategyDNA],
     n: int = 2,
+    leverage: int = 1,
+    direction: str = "long",
+    timeframe_pool: Optional[List[str]] = None,
 ) -> List[StrategyDNA]:
     """Add n random individuals to the population for diversity.
 
     Args:
         population: Current population.
         n: Number of fresh individuals to add.
+        leverage: Task-level leverage constraint.
+        direction: Task-level direction constraint.
+        timeframe_pool: Available timeframes for MTF layer generation.
 
     Returns:
         Population with fresh individuals appended.
@@ -46,6 +64,9 @@ def inject_fresh_blood(
         fresh = create_random_dna(
             timeframe=population[0].execution_genes.timeframe if population else "4h",
             symbol=population[0].execution_genes.symbol if population else "BTCUSDT",
+            leverage=leverage,
+            direction=direction,
+            timeframe_pool=timeframe_pool,
         )
         population.append(fresh)
     return population
@@ -54,12 +75,18 @@ def inject_fresh_blood(
 def check_and_maintain_diversity(
     population: List[StrategyDNA],
     threshold: float = 0.30,
+    leverage: int = 1,
+    direction: str = "long",
+    timeframe_pool: Optional[List[str]] = None,
 ) -> List[StrategyDNA]:
     """If diversity is below threshold, replace similar individuals.
 
     Args:
         population: Current population.
         threshold: Minimum acceptable diversity ratio.
+        leverage: Task-level leverage constraint.
+        direction: Task-level direction constraint.
+        timeframe_pool: Available timeframes for MTF layer generation.
 
     Returns:
         Population with diversity maintained.
@@ -82,6 +109,9 @@ def check_and_maintain_diversity(
                     fresh = create_random_dna(
                         timeframe=ind.execution_genes.timeframe,
                         symbol=ind.execution_genes.symbol,
+                        leverage=leverage,
+                        direction=direction,
+                        timeframe_pool=timeframe_pool,
                     )
                     new_pop.append(fresh)
                 else:

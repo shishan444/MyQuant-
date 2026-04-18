@@ -7,6 +7,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 from core.strategy.dna import StrategyDNA
 from core.evolution.operators import (
     mutate_params, mutate_indicator, mutate_logic, mutate_risk, crossover,
+    mutate_cross_logic,
+    mutate_add_signal, mutate_remove_signal,
 )
 from core.evolution.population import init_population, create_random_dna
 from core.evolution.diversity import (
@@ -31,12 +33,14 @@ class EarlyStopChecker:
         patience: int = 15,
         min_improvement: float = 0.5,
         decline_limit: int = 10,
+        min_generations: int = 20,
     ):
         self.target_score = target_score
         self.max_generations = max_generations
         self.patience = patience
         self.min_improvement = min_improvement
         self.decline_limit = decline_limit
+        self.min_generations = min_generations
         self.best_score = -float("inf")
         self.no_improve_count = 0
         self.decline_count = 0
@@ -47,7 +51,8 @@ class EarlyStopChecker:
         Returns:
             (action, reason) where action is "continue" or "stop".
         """
-        if current_best >= self.target_score:
+        # Target reached: only stop after min_generations to avoid premature exit
+        if current_best >= self.target_score and generation >= self.min_generations:
             return ("stop", "target_reached")
 
         # Check improvement
@@ -95,7 +100,10 @@ class EvolutionEngine:
         max_generations: int = 200,
         patience: int = 15,
         decline_limit: int = 10,
-        elite_ratio: float = 0.5,
+        elite_ratio: float = 0.4,
+        leverage: int = 1,
+        direction: str = "long",
+        timeframe_pool: Optional[list] = None,
     ):
         self.target_score = target_score
         self.template_name = template_name
@@ -104,6 +112,9 @@ class EvolutionEngine:
         self.patience = patience
         self.decline_limit = decline_limit
         self.elite_ratio = elite_ratio
+        self.leverage = leverage
+        self.direction = direction
+        self.timeframe_pool = timeframe_pool or []
 
     def evolve(
         self,
@@ -122,7 +133,12 @@ class EvolutionEngine:
             Dict with champion, history, stop_reason, total_generations.
         """
         # Initialize population
-        population = init_population(self.population_size, ancestor)
+        population = init_population(
+            self.population_size, ancestor,
+            leverage=self.leverage, direction=self.direction,
+            timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
+        )
+        self._population = population
         stop_checker = EarlyStopChecker(
             target_score=self.target_score,
             max_generations=self.max_generations,
@@ -133,8 +149,16 @@ class EvolutionEngine:
         history = []
         champion = None
         champion_score = -1.0
+        stagnation_count = 0  # Track consecutive generations without improvement
 
         for gen in range(1, self.max_generations + 1):
+            # Enforce task-level constraints on all individuals before evaluation
+            for ind in population:
+                ind.risk_genes.leverage = self.leverage
+                # mixed mode: allow evolution to explore both directions
+                if self.direction != "mixed":
+                    ind.risk_genes.direction = self.direction
+
             # Evaluate all individuals
             scored = [(ind, evaluate_fn(ind)) for ind in population]
             scored.sort(key=lambda x: x[1], reverse=True)
@@ -148,10 +172,13 @@ class EvolutionEngine:
                 "avg_score": avg_score,
             })
 
-            # Track champion
+            # Track champion and stagnation
             if best_score > champion_score:
                 champion = scored[0][0]
                 champion_score = best_score
+                stagnation_count = 0
+            else:
+                stagnation_count += 1
 
             # Callback
             if on_generation:
@@ -174,24 +201,59 @@ class EvolutionEngine:
 
             # Crossover: breed new individuals from elites
             children = []
+            # Base mutation pool with structural operators
+            mutation_pool = [
+                mutate_params, mutate_indicator, mutate_logic, mutate_risk,
+                mutate_add_signal, mutate_remove_signal,
+            ]
+            # Add cross_logic mutation for MTF strategies
+            if len(self.timeframe_pool) > 1:
+                mutation_pool.append(mutate_cross_logic)
+
             while len(children) < self.population_size - elite_count - 2:
                 if len(elites) >= 2:
                     p1, p2 = random.sample(elites, 2)
                     try:
                         child = crossover(p1, p2)
-                        # Apply random mutation
-                        mut = random.choice([mutate_params, mutate_risk])
-                        child = mut(child)
+                        # Adaptive mutation intensity: increase when stagnating
+                        if stagnation_count > 8:
+                            n_mutations = random.choices([2, 3, 4], weights=[30, 45, 25])[0]
+                        elif stagnation_count > 4:
+                            n_mutations = random.choices([1, 2, 3], weights=[25, 45, 30])[0]
+                        else:
+                            n_mutations = random.choices([1, 2, 3], weights=[50, 35, 15])[0]
+                        for _ in range(n_mutations):
+                            mut = random.choice(mutation_pool)
+                            child = mut(child)
                         children.append(child)
                     except Exception:
-                        children.append(create_random_dna())
+                        children.append(create_random_dna(
+                            leverage=self.leverage, direction=self.direction,
+                            timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
+                        ))
                 else:
-                    children.append(create_random_dna())
+                    children.append(create_random_dna(
+                        leverage=self.leverage, direction=self.direction,
+                        timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
+                    ))
 
             # Fresh blood: 1-2 random individuals
             fresh_count = random.randint(1, 2)
             population = elites + children
-            population = inject_fresh_blood(population, n=max(0, self.population_size - len(population)))
+            population = inject_fresh_blood(
+                population, n=max(0, self.population_size - len(population)),
+                leverage=self.leverage, direction=self.direction,
+                timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
+            )
+
+            # Diversity maintenance: replace clones with fresh individuals
+            population = check_and_maintain_diversity(
+                population,
+                leverage=self.leverage, direction=self.direction,
+                timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
+            )
+
+            self._population = population
 
             # Trim to exact size
             population = population[:self.population_size]

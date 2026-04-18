@@ -18,14 +18,23 @@ from typing import Any, Dict, List, Optional, Union
 class ConditionType(Enum):
     """Comparison / relationship types used in signal conditions."""
 
-    LT = "lt"                      # indicator < threshold
-    GT = "gt"                      # indicator > threshold
-    LE = "le"                      # indicator <= threshold
-    GE = "ge"                      # indicator >= threshold
-    CROSS_ABOVE = "cross_above"    # indicator crosses above threshold
-    CROSS_BELOW = "cross_below"    # indicator crosses below threshold
-    PRICE_ABOVE = "price_above"    # close price above indicator value
-    PRICE_BELOW = "price_below"    # close price below indicator value
+    LT = "lt"                          # indicator < threshold
+    GT = "gt"                          # indicator > threshold
+    LE = "le"                          # indicator <= threshold
+    GE = "ge"                          # indicator >= threshold
+    CROSS_ABOVE = "cross_above"        # indicator crosses above threshold
+    CROSS_BELOW = "cross_below"        # indicator crosses below threshold
+    PRICE_ABOVE = "price_above"        # close price above indicator value
+    PRICE_BELOW = "price_below"        # close price below indicator value
+    # Phase 2: dynamic context conditions
+    CROSS_ABOVE_SERIES = "cross_above_series"  # indicator A crosses above indicator B
+    CROSS_BELOW_SERIES = "cross_below_series"  # indicator A crosses below indicator B
+    LOOKBACK_ANY = "lookback_any"              # any bar in lookback window satisfies inner
+    LOOKBACK_ALL = "lookback_all"              # all bars in lookback window satisfy inner
+    # Phase 4: support/resistance conditions
+    TOUCH_BOUNCE = "touch_bounce"      # price touches indicator line then bounces
+    ROLE_REVERSAL = "role_reversal"    # indicator line switches support/resistance role
+    WICK_TOUCH = "wick_touch"          # wick touches indicator line but close is other side
 
 
 class SignalRole(Enum):
@@ -118,6 +127,8 @@ class RiskGenes:
     stop_loss: float = 0.05               # e.g. 0.05 (5%)
     take_profit: Optional[float] = None   # e.g. 0.10 (10%) or None
     position_size: float = 0.3            # e.g. 0.3 (30%)
+    leverage: int = 1                     # 1-10x
+    direction: str = "long"               # "long" | "short"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -181,11 +192,17 @@ class StrategyDNA:
     mutation_ops: List[str] = field(default_factory=list)
     layers: Optional[List[TimeframeLayer]] = None
     cross_layer_logic: str = "AND"
+    _layers_explicit: bool = field(default=False, repr=False, init=False)
+
+    def __post_init__(self):
+        # Auto-detect explicit layers (passed via constructor, not auto-wrap)
+        if self.layers is not None:
+            object.__setattr__(self, "_layers_explicit", True)
 
     @property
     def is_mtf(self) -> bool:
         """Whether this DNA uses multi-timeframe layers."""
-        return self.layers is not None and len(self.layers) > 1
+        return self.layers is not None and len(self.layers) >= 1 and self._layers_explicit
 
     @property
     def timeframes(self) -> List[str]:
@@ -253,6 +270,8 @@ class StrategyDNA:
         instance = cls(**data)
         instance.layers = layers
         instance.cross_layer_logic = cross_layer_logic
+        # Mark layers as explicit only if they came from the data (not auto-wrap)
+        instance._layers_explicit = layers is not None
 
         # Auto-wrap: if no layers but has signal_genes, create a single layer
         if instance.layers is None and instance.signal_genes:

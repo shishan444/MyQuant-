@@ -17,13 +17,17 @@ export const SYMBOL_OPTIONS = [
 // Timeframes
 // ---------------------------------------------------------------------------
 
-export const TIMEFRAME_POOL_OPTIONS = ["1d", "4h", "1h", "15m"] as const;
+export const TIMEFRAME_POOL_OPTIONS = ["1d", "4h", "1h", "30m", "15m", "5m", "1m", "3d"] as const;
 
 export const TIMEFRAME_LABELS: Record<string, string> = {
   "1d": "1D",
   "4h": "4H",
   "1h": "1H",
+  "30m": "30M",
   "15m": "15M",
+  "5m": "5M",
+  "1m": "1M",
+  "3d": "3D",
 };
 
 // Full options for selects (Chinese labels, broader set)
@@ -38,10 +42,29 @@ export const TIMEFRAME_SELECT_OPTIONS = [
 // Short labels for evolution forms
 export const TIMEFRAME_FORM_OPTIONS = [
   { value: "1d", label: "1D" },
+  { value: "3d", label: "3D" },
   { value: "4h", label: "4H" },
   { value: "1h", label: "1H" },
+  { value: "30m", label: "30M" },
   { value: "15m", label: "15M" },
+  { value: "5m", label: "5M" },
+  { value: "1m", label: "1M" },
 ] as const;
+
+// Timeframe duration in minutes (for sorting)
+export const TF_DURATION: Record<string, number> = {
+  "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+  "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480,
+  "12h": 720, "1d": 1440, "3d": 4320, "1w": 10080,
+};
+
+/** Sort timeframes by duration, longest first */
+export function sortTimeframesLongestFirst(tfs: string[]): string[] {
+  return [...tfs].sort((a, b) => (TF_DURATION[b] ?? 0) - (TF_DURATION[a] ?? 0));
+}
+
+/** Role labels for ordered timeframe slots */
+export const TF_LAYER_ROLES = ["趋势", "判断", "确认", "执行"];
 
 // ---------------------------------------------------------------------------
 // Indicators
@@ -54,7 +77,7 @@ export const INDICATOR_GROUPS = [
   },
   {
     label: "动量",
-    items: ["RSI", "MACD", "Stochastic", "CCI", "ROC", "Williams %R"],
+    items: ["RSI", "MACD", "Stochastic", "CCI", "ROC", "Williams %R", "Aroon", "CMO", "TRIX"],
   },
   {
     label: "波动",
@@ -62,7 +85,7 @@ export const INDICATOR_GROUPS = [
   },
   {
     label: "成交量",
-    items: ["OBV", "CMF", "MFI"],
+    items: ["OBV", "CMF", "MFI", "RVOL", "VROC", "AD", "CVD", "VWMA", "VolumeProfile"],
   },
   {
     label: "趋势强度",
@@ -84,6 +107,43 @@ export const INDICATOR_FLAT_LIST = [
 ];
 
 // ---------------------------------------------------------------------------
+// Indicator display labels (abbreviation + Chinese name)
+// ---------------------------------------------------------------------------
+
+export const INDICATOR_LABELS: Record<string, string> = {
+  EMA: "EMA(指数均线)",
+  SMA: "SMA(简单均线)",
+  WMA: "WMA(加权均线)",
+  DEMA: "DEMA(双指数均线)",
+  TEMA: "TEMA(三指数均线)",
+  VWAP: "VWAP(成交量加权)",
+  RSI: "RSI(相对强弱)",
+  MACD: "MACD(指数平滑异同)",
+  Stochastic: "Stochastic(随机指标)",
+  CCI: "CCI(商品通道)",
+  ROC: "ROC(变动率)",
+  "Williams %R": "WR(威廉指标)",
+  Aroon: "Aroon(阿隆)",
+  CMO: "CMO(钱德动量)",
+  TRIX: "TRIX(三重指数)",
+  BB: "BB(布林带)",
+  ATR: "ATR(真实波幅)",
+  Keltner: "Keltner(肯特纳)",
+  Donchian: "Donchian(唐奇安)",
+  OBV: "OBV(能量潮)",
+  CMF: "CMF(蔡金资金流)",
+  MFI: "MFI(资金流量)",
+  RVOL: "RVOL(相对成交量)",
+  VROC: "VROC(量变动率)",
+  AD: "AD(累积分布)",
+  CVD: "CVD(累积成交量差)",
+  VWMA: "VWMA(量加权均线)",
+  VolumeProfile: "VP(成交量分布)",
+  ADX: "ADX(平均趋向)",
+  PSAR: "PSAR(抛物线指标)",
+};
+
+// ---------------------------------------------------------------------------
 // Condition types
 // ---------------------------------------------------------------------------
 
@@ -96,6 +156,13 @@ export const CONDITION_TYPE_LABELS: Record<string, string> = {
   cross_below: "死叉",
   price_above: "价格在上方",
   price_below: "价格在下方",
+  cross_above_series: "上穿指标线",
+  cross_below_series: "下穿指标线",
+  lookback_any: "回溯N根满足",
+  lookback_all: "回溯N根全满足",
+  touch_bounce: "触碰反弹",
+  role_reversal: "角色转换",
+  wick_touch: "影线触及",
 };
 
 export const CONDITION_TYPE_SYMBOLS: Record<string, string> = {
@@ -107,6 +174,13 @@ export const CONDITION_TYPE_SYMBOLS: Record<string, string> = {
   cross_below: "cross_below",
   price_above: "price_above",
   price_below: "price_below",
+  cross_above_series: "cross_above_series",
+  cross_below_series: "cross_below_series",
+  lookback_any: "lookback_any",
+  lookback_all: "lookback_all",
+  touch_bounce: "touch_bounce",
+  role_reversal: "role_reversal",
+  wick_touch: "wick_touch",
 };
 
 export const CONDITION_OPTIONS = [
@@ -118,6 +192,13 @@ export const CONDITION_OPTIONS = [
   { value: "cross_below", label: "死叉" },
   { value: "price_above", label: "价格在上方" },
   { value: "price_below", label: "价格在下方" },
+  { value: "cross_above_series", label: "上穿指标线" },
+  { value: "cross_below_series", label: "下穿指标线" },
+  { value: "lookback_any", label: "回溯N根满足" },
+  { value: "lookback_all", label: "回溯N根全满足" },
+  { value: "touch_bounce", label: "触碰反弹" },
+  { value: "role_reversal", label: "角色转换" },
+  { value: "wick_touch", label: "影线触及" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -131,9 +212,21 @@ export const SCORE_TEMPLATE_LABELS: Record<string, string> = {
 };
 
 export const OPTIMIZE_TARGETS = [
-  { value: "profit_first", label: "最大化收益" },
-  { value: "steady", label: "稳健优先" },
-  { value: "risk_first", label: "风控优先" },
+  {
+    value: "profit_first",
+    label: "收益优先",
+    description: "年化收益 35% | 夏普 25% | 最大回撤 25% | 胜率 15%",
+  },
+  {
+    value: "steady",
+    label: "稳健优先",
+    description: "年化收益 20% | 夏普 35% | 最大回撤 35% | 卡玛 10%",
+  },
+  {
+    value: "risk_first",
+    label: "风控优先",
+    description: "年化收益 10% | 夏普 30% | 最大回撤 40% | 卡玛 20%",
+  },
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -180,6 +273,8 @@ export const PATTERN_ACTIONS = [
   { value: "divergence_bottom", label: "底背离" },
   { value: "consecutive_up", label: "连涨N根" },
   { value: "consecutive_down", label: "连跌N根" },
+  { value: "touch_bounce", label: "触碰反弹" },
+  { value: "role_reversal", label: "角色转换" },
 ] as const;
 
 export const CHART_INDICATOR_DEFAULTS: import("@/types/api").ChartIndicatorConfig = {
@@ -188,4 +283,36 @@ export const CHART_INDICATOR_DEFAULTS: import("@/types/api").ChartIndicatorConfi
   boll: { enabled: true, period: 20, std: 2.0, color: "#F59E0B" },
   rsi: { enabled: true, period: 14, overbought: 70, oversold: 30 },
   vol: { enabled: true, position: "overlay" },
+};
+
+// ---------------------------------------------------------------------------
+// Leverage & Direction
+// ---------------------------------------------------------------------------
+
+export const LEVERAGE_OPTIONS = [
+  { value: 1, label: "1x" },
+  { value: 2, label: "2x" },
+  { value: 3, label: "3x" },
+  { value: 5, label: "5x" },
+  { value: 10, label: "10x" },
+] as const;
+
+export const DIRECTION_OPTIONS = [
+  { value: "long", label: "做多" },
+  { value: "short", label: "做空" },
+  { value: "mixed", label: "混合探索" },
+] as const;
+
+// ---------------------------------------------------------------------------
+// Stop reason labels
+// ---------------------------------------------------------------------------
+
+export const STOP_REASON_LABELS: Record<string, string> = {
+  target_reached: "达到目标分数",
+  stagnation: "长期无改善(停滞)",
+  decline: "分数持续下降",
+  max_generations: "达到最大代数",
+  user_stop: "用户手动停止",
+  error: "运行异常",
+  invalid_dna: "无效种子DNA",
 };

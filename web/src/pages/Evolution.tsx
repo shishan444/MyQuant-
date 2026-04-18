@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate, useLocation } from "react-router";
 import { Dna } from "lucide-react";
 import { toast } from "sonner";
 
@@ -19,6 +20,7 @@ import { StrategyList } from "@/components/evolution/StrategyList";
 import { AlgorithmLog } from "@/components/evolution/AlgorithmLog";
 import { HistoryTable } from "@/components/evolution/HistoryTable";
 import { QuickPresets } from "@/components/evolution/QuickPresets";
+import { TaskDetailDrawer } from "@/components/evolution/TaskDetailDrawer";
 import type { Preset } from "@/components/evolution/QuickPresets";
 
 import {
@@ -47,9 +49,22 @@ function formatTimeframeDisplay(task: EvolutionTask): string {
 }
 
 export function Evolution() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
   // --- Mode selection state ---
   const [selectedMode, setSelectedMode] = useState<ExploreMode>("auto");
   const [seedDna, setSeedDna] = useState<DNA | null>(null);
+
+  // Read seed DNA from route state (e.g. from Lab hypothesis validation)
+  useEffect(() => {
+    const state = location.state as { seedDna?: DNA } | null;
+    if (state?.seedDna) {
+      setSeedDna(state.seedDna);
+      setSelectedMode("seed");
+      window.history.replaceState({}, "");
+    }
+  }, []);
 
   // --- Expanded strategy ---
   const [expandedStrategyId, setExpandedStrategyId] = useState<string | null>(null);
@@ -69,6 +84,9 @@ export function Evolution() {
       details: string;
     }>
   >([]);
+
+  // --- Task detail drawer ---
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
 
   // --- Refs ---
   const configRef = useRef<HTMLDivElement>(null);
@@ -168,6 +186,11 @@ export function Evolution() {
       populationSize: number;
       maxGenerations: number;
       targetScore: number;
+      leverage: number;
+      direction: "long" | "short" | "mixed";
+      dataStart?: string;
+      dataEnd?: string;
+      walkForwardEnabled?: boolean;
     }) => {
       if (activeTask) {
         toast.error("已有正在进行的探索任务，请先停止后再创建新任务");
@@ -184,6 +207,11 @@ export function Evolution() {
           indicator_pool: config.indicatorPool,
           timeframe_pool: config.timeframePool,
           mode: "auto",
+          leverage: config.leverage,
+          direction: config.direction,
+          data_start: config.dataStart,
+          data_end: config.dataEnd,
+          walk_forward_enabled: config.walkForwardEnabled ?? false,
         });
         setConfigCollapsed(true);
         setMutationLog([]);
@@ -202,6 +230,8 @@ export function Evolution() {
       populationSize: number;
       maxGenerations: number;
       targetScore: number;
+      leverage: number;
+      direction: "long" | "short" | "mixed";
     }) => {
       if (activeTask) {
         toast.error("已有正在进行的探索任务，请先停止后再创建新任务");
@@ -217,6 +247,8 @@ export function Evolution() {
           target_score: config.targetScore,
           initial_dna: config.initialDna,
           mode: "seed",
+          leverage: config.leverage,
+          direction: config.direction,
         });
         setConfigCollapsed(true);
         setSeedDna(null);
@@ -286,10 +318,25 @@ export function Evolution() {
   }, []);
 
   const handleViewTask = useCallback(
-    (_taskId: string) => {
-      resultsRef.current?.scrollIntoView({ behavior: "smooth" });
+    (taskId: string) => {
+      setDetailTaskId(taskId);
     },
     []
+  );
+
+  const handleVisualVerify = useCallback(
+    (dna: DNA, task: EvolutionTask) => {
+      navigate("/lab", {
+        state: {
+          dna,
+          symbol: task.symbol,
+          timeframe: task.timeframe,
+          dataStart: task.data_start || task.data_time_start?.slice(0, 10) || undefined,
+          dataEnd: task.data_end || task.data_time_end?.slice(0, 10) || undefined,
+        },
+      });
+    },
+    [navigate]
   );
 
   const handleNewExploration = useCallback(() => {
@@ -372,6 +419,7 @@ export function Evolution() {
                     isPending={createTask.isPending}
                     onSubmit={handleStartAuto}
                     symbolOptions={dynamicSymbolOptions}
+                    availableSources={sourcesData?.sources}
                   />
                 ) : (
                   <SeedConfigForm
@@ -533,6 +581,22 @@ export function Evolution() {
           onConfirm={handleStopConfirm}
           loading={stopTask.isPending}
         />
+
+        {/* Task detail drawer */}
+        {detailTaskId && (
+          <TaskDetailDrawer
+            taskId={detailTaskId}
+            open={!!detailTaskId}
+            onClose={() => setDetailTaskId(null)}
+            onSeedEvolve={(dna) => {
+              setDetailTaskId(null);
+              handleSeedEvolve(dna);
+            }}
+            onVisualVerify={(dna, task) => {
+              handleVisualVerify(dna, task);
+            }}
+          />
+        )}
       </div>
     </PageTransition>
   );

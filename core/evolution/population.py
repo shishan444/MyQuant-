@@ -11,13 +11,15 @@ from core.strategy.dna import (
 )
 from core.strategy.validator import validate_dna
 from core.features.indicators import INDICATOR_REGISTRY
-from core.evolution.operators import mutate_params, mutate_indicator, mutate_logic, mutate_risk
+from core.evolution.operators import mutate_params, mutate_indicator, mutate_logic, mutate_risk, generate_random_condition
 
 
 def create_random_dna(
     timeframe: str = "4h",
     symbol: str = "BTCUSDT",
     timeframe_pool: Optional[List[str]] = None,
+    leverage: int = 1,
+    direction: str = "long",
 ) -> StrategyDNA:
     """Generate a completely random but valid StrategyDNA.
 
@@ -26,6 +28,8 @@ def create_random_dna(
         symbol: Trading pair.
         timeframe_pool: If provided, may generate multi-timeframe DNA
                        by adding layers from this pool.
+        leverage: Task-level leverage constraint.
+        direction: Task-level direction constraint.
     """
     # Pick random indicators for entry and exit
     trigger_indicators = [
@@ -45,12 +49,7 @@ def create_random_dna(
                 else round(round(val / pdef.step) * pdef.step, 2)
 
         cond_type = random.choice(reg.supported_conditions)
-        condition = {"type": cond_type}
-        if cond_type in ("lt", "gt", "le", "ge"):
-            if indicator_name == "RSI":
-                condition["threshold"] = random.choice([25, 30, 35, 40, 60, 65, 70, 75])
-            else:
-                condition["threshold"] = round(random.uniform(-1, 1), 2)
+        condition = generate_random_condition(indicator_name, reg)
 
         field_name = None
         if len(reg.output_fields) > 1:
@@ -88,7 +87,8 @@ def create_random_dna(
         logic_genes=LogicGenes(entry_logic=entry_logic, exit_logic=exit_logic),
         execution_genes=ExecutionGenes(timeframe=timeframe, symbol=symbol),
         risk_genes=RiskGenes(stop_loss=stop_loss, take_profit=take_profit,
-                             position_size=position_size),
+                             position_size=position_size, leverage=leverage,
+                             direction=direction),
     )
 
     # Validate and retry if needed
@@ -102,9 +102,19 @@ def create_random_dna(
                            {"type": "gt", "threshold": 70}),
             ],
             logic_genes=LogicGenes(entry_logic="AND", exit_logic="OR"),
-            risk_genes=RiskGenes(stop_loss=0.05, position_size=0.3),
+            risk_genes=RiskGenes(stop_loss=0.05, position_size=0.3,
+                                 leverage=leverage, direction=direction),
             execution_genes=ExecutionGenes(timeframe=timeframe, symbol=symbol),
         )
+
+    # Generate MTF layers for ALL non-execution timeframes in the pool
+    if timeframe_pool and len(timeframe_pool) > 1:
+        other_tfs = [tf for tf in timeframe_pool if tf != timeframe]
+        if other_tfs:
+            layers = [create_random_mtf_layer(tf, symbol) for tf in other_tfs]
+            dna.layers = layers
+            dna._layers_explicit = True
+            dna.cross_layer_logic = random.choice(["AND", "OR"])
 
     return dna
 
@@ -169,17 +179,7 @@ def _random_params(indicator_name: str) -> dict:
 
 def _random_condition(indicator_name: str) -> dict:
     """Generate a random condition for a given indicator."""
-    reg = INDICATOR_REGISTRY.get(indicator_name)
-    if not reg or not reg.supported_conditions:
-        return {"type": "gt"}
-    cond_type = random.choice(reg.supported_conditions)
-    condition = {"type": cond_type}
-    if cond_type in ("lt", "gt", "le", "ge"):
-        if indicator_name == "RSI":
-            condition["threshold"] = random.choice([25, 30, 35, 40, 60, 65, 70, 75])
-        else:
-            condition["threshold"] = round(random.uniform(-1, 1), 2)
-    return condition
+    return generate_random_condition(indicator_name)
 
 
 def init_population(
@@ -187,6 +187,10 @@ def init_population(
     ancestor: Optional[StrategyDNA] = None,
     timeframe: str = "4h",
     symbol: str = "BTCUSDT",
+    leverage: int = 1,
+    direction: str = "long",
+    timeframe_pool: Optional[List[str]] = None,
+    indicator_pool: Optional[List[str]] = None,
 ) -> List[StrategyDNA]:
     """Initialize population by mutating an ancestor.
 
@@ -195,6 +199,10 @@ def init_population(
         ancestor: Initial strategy (first individual).
         timeframe: K-line timeframe.
         symbol: Trading pair.
+        leverage: Task-level leverage constraint.
+        direction: Task-level direction constraint.
+        timeframe_pool: Available timeframes for MTF layer generation.
+        indicator_pool: Available indicators to restrict mutations.
 
     Returns:
         List of StrategyDNA individuals.
@@ -205,7 +213,9 @@ def init_population(
     if ancestor is not None:
         population.append(ancestor)
     else:
-        population.append(create_random_dna(timeframe, symbol))
+        population.append(create_random_dna(timeframe, symbol,
+                                            leverage=leverage, direction=direction,
+                                            timeframe_pool=timeframe_pool))
 
     # Generate rest by mutating the ancestor
     mutation_funcs = [mutate_params, mutate_indicator, mutate_logic, mutate_risk]
@@ -219,8 +229,12 @@ def init_population(
             if result.is_valid:
                 population.append(child)
             else:
-                population.append(create_random_dna(timeframe, symbol))
+                population.append(create_random_dna(timeframe, symbol,
+                                                    leverage=leverage, direction=direction,
+                                                    timeframe_pool=timeframe_pool))
         except Exception:
-            population.append(create_random_dna(timeframe, symbol))
+            population.append(create_random_dna(timeframe, symbol,
+                                                leverage=leverage, direction=direction,
+                                                timeframe_pool=timeframe_pool))
 
     return population

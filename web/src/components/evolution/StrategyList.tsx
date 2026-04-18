@@ -118,8 +118,8 @@ const StrategyRow = memo(function StrategyRow({
   onSeedEvolve,
 }: StrategyRowProps) {
   const bestScore = task.best_score ?? 0;
-  const returnRate = task.champion_dna ? bestScore * 0.5 : bestScore;
-  const sharpe = task.champion_dna ? bestScore * 0.02 : bestScore * 0.025;
+  const returnRate = task.champion_metrics?.annual_return ?? 0;
+  const sharpe = task.champion_metrics?.sharpe_ratio ?? 0;
   const mtfBadge = useMemo(() => getMtfBadge(task.champion_dna), [task.champion_dna]);
   const indicators = useMemo(
     () => getDnaIndicators(task.champion_dna),
@@ -410,14 +410,51 @@ function StrategyDetail({ dna, task, onClose }: StrategyDetailProps) {
       </div>
 
       {/* Backtest score summary */}
-      <div className="flex items-center gap-4 text-xs text-slate-500">
-        <span>
-          最优分数:{" "}
-          <span className="font-mono font-semibold text-emerald-400">
-            {(task.best_score ?? 0).toFixed(1)}
+      {task.champion_metrics ? (
+        <div className="rounded-lg border border-slate-700/30 p-2">
+          <div className="mb-1.5 text-xs font-medium text-slate-300">
+            回测指标
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+            <MetricLine
+              label="年化收益率"
+              value={`${(task.champion_metrics.annual_return * 100).toFixed(1)}%`}
+              score={task.champion_dimension_scores?.annual_return}
+              positive={task.champion_metrics.annual_return > 0}
+            />
+            <MetricLine
+              label="夏普比率"
+              value={task.champion_metrics.sharpe_ratio.toFixed(2)}
+              score={task.champion_dimension_scores?.sharpe_ratio}
+              positive={task.champion_metrics.sharpe_ratio > 0}
+            />
+            <MetricLine
+              label="最大回撤"
+              value={`${(task.champion_metrics.max_drawdown * 100).toFixed(1)}%`}
+              score={task.champion_dimension_scores?.max_drawdown}
+              positive={false}
+            />
+            <MetricLine
+              label="胜率"
+              value={`${(task.champion_metrics.win_rate * 100).toFixed(1)}%`}
+              score={task.champion_dimension_scores?.win_rate}
+              positive={task.champion_metrics.win_rate > 0.5}
+            />
+          </div>
+          <div className="mt-1.5 text-[10px] text-slate-600">
+            综合评分: <span className="font-mono text-emerald-400">{(task.best_score ?? 0).toFixed(1)}</span>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-4 text-xs text-slate-500">
+          <span>
+            最优分数:{" "}
+            <span className="font-mono font-semibold text-emerald-400">
+              {(task.best_score ?? 0).toFixed(1)}
+            </span>
           </span>
-        </span>
-      </div>
+        </div>
+      )}
 
       {/* Actions */}
       <div className="mt-3 flex items-center gap-2">
@@ -429,6 +466,34 @@ function StrategyDetail({ dna, task, onClose }: StrategyDetailProps) {
         >
           收起
         </Button>
+      </div>
+    </div>
+  );
+}
+
+function MetricLine({
+  label,
+  value,
+  score,
+  positive,
+}: {
+  label: string;
+  value: string;
+  score?: number;
+  positive: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between text-xs">
+      <span className="text-slate-500">{label}</span>
+      <div className="flex items-center gap-1.5">
+        <span className={positive ? "text-emerald-400" : "text-red-400"}>
+          {value}
+        </span>
+        {score != null && (
+          <span className="text-[10px] text-slate-600">
+            ({score.toFixed(1)})
+          </span>
+        )}
       </div>
     </div>
   );

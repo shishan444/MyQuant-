@@ -8,6 +8,8 @@ from core.validation.patterns import (
     detect_divergence_bottom,
     detect_consecutive_up,
     detect_consecutive_down,
+    detect_touch_bounce,
+    detect_role_reversal,
 )
 
 
@@ -187,3 +189,85 @@ class TestEdgeCases:
         df = _make_df([100], [50])
         assert detect_consecutive_up(df, "close", count=1).sum() == 0
         assert detect_consecutive_down(df, "close", count=1).sum() == 0
+
+
+# ---------------------------------------------------------------------------
+# detect_touch_bounce
+# ---------------------------------------------------------------------------
+
+class TestDetectTouchBounce:
+    def _make_ohlcv(self, n: int = 30) -> pd.DataFrame:
+        """Build OHLCV DataFrame with a line column."""
+        np.random.seed(42)
+        close = np.full(n, 100.0)
+        return pd.DataFrame({
+            "open": close - 1,
+            "high": close + 5,
+            "low": close - 5,
+            "close": close,
+            "volume": np.random.randint(100, 1000, n).astype(float),
+            "line": np.full(n, 100.0),
+        })
+
+    def test_support_bounce_detected(self):
+        df = self._make_ohlcv(30)
+        # Bar 10: low touches line, close above, bar 11 closes higher
+        df.loc[df.index[10], "low"] = 100.5
+        df.loc[df.index[10], "close"] = 101.0
+        df.loc[df.index[10], "high"] = 102.0
+        df.loc[df.index[11], "close"] = 102.0  # Bounce above 101 * 1.005 = 101.505
+
+        result = detect_touch_bounce(df, "line", direction="support", proximity_pct=0.01)
+        assert result.iloc[10] == True
+
+    def test_resistance_bounce_detected(self):
+        df = self._make_ohlcv(30)
+        df.loc[df.index[10], "high"] = 99.5
+        df.loc[df.index[10], "close"] = 99.0
+        df.loc[df.index[10], "low"] = 98.0
+        df.loc[df.index[11], "close"] = 98.5
+
+        result = detect_touch_bounce(df, "line", direction="resistance", proximity_pct=0.01)
+        assert result.iloc[10] == True
+
+    def test_missing_column_returns_false(self):
+        df = pd.DataFrame({"close": [1, 2, 3]})
+        result = detect_touch_bounce(df, "nonexistent", direction="support")
+        assert result.sum() == 0
+
+
+# ---------------------------------------------------------------------------
+# detect_role_reversal
+# ---------------------------------------------------------------------------
+
+class TestDetectRoleReversal:
+    def test_resistance_reversal(self):
+        n = 30
+        df = pd.DataFrame({
+            "close": np.full(n, 100.0),
+            "line": np.full(n, 100.0),
+        })
+        # 10 bars ago: price above line (line was support)
+        df.loc[df.index[5], "close"] = 105.0
+        # Now: price below line (line became resistance)
+        df.loc[df.index[15], "close"] = 95.0
+
+        result = detect_role_reversal(df, "line", role="resistance", lookback=10)
+        assert result.iloc[15] == True
+
+    def test_support_reversal(self):
+        n = 30
+        df = pd.DataFrame({
+            "close": np.full(n, 100.0),
+            "line": np.full(n, 100.0),
+        })
+        df.loc[df.index[5], "close"] = 95.0
+        df.loc[df.index[15], "close"] = 105.0
+
+        result = detect_role_reversal(df, "line", role="support", lookback=10)
+        assert result.iloc[15] == True
+
+    def test_missing_column_returns_false(self):
+        df = pd.DataFrame({"close": [1, 2, 3]})
+        result = detect_role_reversal(df, "nonexistent", role="resistance")
+        assert result.sum() == 0

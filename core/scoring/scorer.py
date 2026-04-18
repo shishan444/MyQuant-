@@ -48,6 +48,12 @@ def score_strategy(
         for dim, weight in template.weights.items()
     )
 
+    # Trade count penalty: strategies with very few trades are unreliable
+    MIN_TRADES_THRESHOLD = 10
+    trade_count = metrics.get("total_trades", 0)
+    trade_factor = min(1.0, trade_count / MIN_TRADES_THRESHOLD)
+    total *= trade_factor
+
     return {
         "total_score": round(total, 2),
         "dimension_scores": dimension_scores,

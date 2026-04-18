@@ -11,3 +11,6 @@ export { TriggerDetailDrawer } from "./TriggerDetailDrawer";
 export { TimeframeLabel } from "./TimeframeLabel";
 export { TimeframeSelector } from "./TimeframeSelector";
 export { SaveStrategyDialog } from "./SaveStrategyDialog";
+export { BacktestModePanel } from "./BacktestModePanel";
+export { BacktestMetricsPanel } from "./BacktestMetricsPanel";
+export { EquityCurveChart } from "./EquityCurveChart";

@@ -17,7 +17,7 @@ class TestConditionType:
     """ConditionType enum tests."""
 
     def test_all_condition_types_defined(self):
-        assert len(ConditionType) == 8
+        assert len(ConditionType) == 15
 
     def test_condition_values(self):
         assert ConditionType.LT.value == "lt"
@@ -28,6 +28,15 @@ class TestConditionType:
         assert ConditionType.CROSS_BELOW.value == "cross_below"
         assert ConditionType.PRICE_ABOVE.value == "price_above"
         assert ConditionType.PRICE_BELOW.value == "price_below"
+        # Phase 2: dynamic conditions
+        assert ConditionType.CROSS_ABOVE_SERIES.value == "cross_above_series"
+        assert ConditionType.CROSS_BELOW_SERIES.value == "cross_below_series"
+        assert ConditionType.LOOKBACK_ANY.value == "lookback_any"
+        assert ConditionType.LOOKBACK_ALL.value == "lookback_all"
+        # Phase 4: support/resistance conditions
+        assert ConditionType.TOUCH_BOUNCE.value == "touch_bounce"
+        assert ConditionType.ROLE_REVERSAL.value == "role_reversal"
+        assert ConditionType.WICK_TOUCH.value == "wick_touch"
 
 
 class TestSignalRole:
@@ -193,6 +202,8 @@ class TestStrategyDNA:
         assert dna.parent_ids == []
         assert dna.mutation_ops == []
         assert dna.strategy_id
+        assert dna.risk_genes.leverage == 1
+        assert dna.risk_genes.direction == "long"
 
     def test_auto_wrap_creates_single_layer(self, sample_dna):
         """Legacy DNA deserialized via from_dict should auto-create a single layer."""

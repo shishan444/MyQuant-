@@ -223,7 +223,7 @@ def backtest_strategy(
             detail=f"Dataset {payload.dataset_id} not found",
         )
 
-    from core.data.storage import load_parquet
+    from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
 
     engine = _bt_engine_mod.BacktestEngine(
         init_cash=payload.init_cash,
@@ -231,25 +231,54 @@ def backtest_strategy(
         slippage=payload.slippage,
     )
 
-    df = load_parquet(parquet_path)
+    # Use mtf_loader for enhanced data loading (full indicators + date slicing)
+    enhanced_df = load_and_prepare_df(
+        data_dir, symbol, timeframe,
+        data_start=payload.data_start,
+        data_end=payload.data_end,
+    )
 
-    # Compute indicators needed by DNA signal genes
-    from core.features.indicators import _compute_indicator
-    for gene in dna.signal_genes:
-        try:
-            indicator_name = gene.indicator
-            params = {k: v for k, v in gene.params.items()}
-            indicator_df = _compute_indicator(df, indicator_name, params)
-            for col in indicator_df.columns:
-                if col not in df.columns:
-                    df[col] = indicator_df[col]
-        except Exception:
-            continue
+    # Fallback: load raw data and compute indicators per-gene (legacy path)
+    if enhanced_df is None:
+        from core.data.storage import load_parquet
 
-    result = engine.run(dna, df)
+        df = load_parquet(parquet_path)
+        from core.features.indicators import _compute_indicator
+        for gene in dna.signal_genes:
+            try:
+                indicator_name = gene.indicator
+                params = {k: v for k, v in gene.params.items()}
+                indicator_df = _compute_indicator(df, indicator_name, params)
+                for col in indicator_df.columns:
+                    if col not in df.columns:
+                        df[col] = indicator_df[col]
+            except Exception:
+                continue
+        enhanced_df = df
+
+    # Load multi-timeframe data if DNA has layers or timeframe_pool provided
+    dfs_by_timeframe = None
+    needed_tfs: set[str] = set()
+    if dna.is_mtf and dna.layers:
+        needed_tfs = {layer.timeframe for layer in dna.layers}
+    elif payload.timeframe_pool and len(payload.timeframe_pool) > 1:
+        needed_tfs = set(payload.timeframe_pool)
+
+    if needed_tfs and len(needed_tfs) > 1:
+        dfs_by_timeframe = load_mtf_data(
+            data_dir, symbol, timeframe, enhanced_df,
+            needed_tfs, payload.data_start, payload.data_end,
+        )
+
+    result = engine.run(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
 
     # Compute score
-    metrics = compute_metrics(result.equity_curve, total_trades=result.total_trades)
+    metrics = compute_metrics(
+        result.equity_curve, total_trades=result.total_trades,
+        bars_per_year=result.bars_per_year,
+        trade_win_rate=result.trade_win_rate,
+        trade_returns=result.trade_returns,
+    )
     score_result = score_strategy(metrics, template_name=payload.score_template)
 
     # Save result
@@ -261,8 +290,8 @@ def backtest_strategy(
             strategy_id=strategy_id,
             symbol=symbol,
             timeframe=timeframe,
-            data_start=str(df.index.min()) if len(df) > 0 else "",
-            data_end=str(df.index.max()) if len(df) > 0 else "",
+            data_start=str(enhanced_df.index.min()) if len(enhanced_df) > 0 else "",
+            data_end=str(enhanced_df.index.max()) if len(enhanced_df) > 0 else "",
             init_cash=payload.init_cash,
             fee=payload.fee,
             slippage=payload.slippage,
@@ -312,8 +341,8 @@ def backtest_strategy(
         strategy_id=strategy_id,
         symbol=symbol,
         timeframe=timeframe,
-        data_start=str(df.index.min()) if len(df) > 0 else None,
-        data_end=str(df.index.max()) if len(df) > 0 else None,
+        data_start=str(enhanced_df.index.min()) if len(enhanced_df) > 0 else None,
+        data_end=str(enhanced_df.index.max()) if len(enhanced_df) > 0 else None,
         init_cash=payload.init_cash,
         fee=payload.fee,
         slippage=payload.slippage,

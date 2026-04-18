@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { Play, ChevronDown } from "lucide-react";
+import { useState, useCallback, useMemo, useEffect } from "react";
+import { Play, ChevronDown, AlertTriangle, X, Plus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -15,14 +15,22 @@ import {
   SYMBOL_OPTIONS,
   TIMEFRAME_POOL_OPTIONS,
   TIMEFRAME_LABELS,
+  TF_LAYER_ROLES,
   INDICATOR_GROUPS,
+  INDICATOR_LABELS,
   OPTIMIZE_TARGETS,
+  LEVERAGE_OPTIONS,
+  DIRECTION_OPTIONS,
+  sortTimeframesLongestFirst,
 } from "@/lib/constants";
+import type { AvailableSource } from "@/types/api";
+import { getEvolutionTasks } from "@/services/evolution";
 
 interface AutoConfigFormProps {
   disabled: boolean;
   isPending: boolean;
   symbolOptions?: { value: string; label: string }[];
+  availableSources?: AvailableSource[];
   onSubmit: (config: {
     symbol: string;
     timeframePool: string[];
@@ -31,6 +39,11 @@ interface AutoConfigFormProps {
     populationSize: number;
     maxGenerations: number;
     targetScore: number;
+    leverage: number;
+    direction: "long" | "short" | "mixed";
+    dataStart?: string;
+    dataEnd?: string;
+    walkForwardEnabled?: boolean;
   }) => void;
 }
 
@@ -39,6 +52,7 @@ export function AutoConfigForm({
   isPending,
   onSubmit,
   symbolOptions,
+  availableSources,
 }: AutoConfigFormProps) {
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframePool, setTimeframePool] = useState<string[]>(["4h"]);
@@ -51,14 +65,59 @@ export function AutoConfigForm({
   const [populationSize, setPopulationSize] = useState(15);
   const [maxGenerations, setMaxGenerations] = useState(200);
   const [targetScore, setTargetScore] = useState(80);
+  const [leverage, setLeverage] = useState(1);
+  const [direction, setDirection] = useState<"long" | "short" | "mixed">("long");
+  const [dataStart, setDataStart] = useState("");
+  const [dataEnd, setDataEnd] = useState("");
+  const [walkForwardEnabled, setWalkForwardEnabled] = useState(false);
 
-  const toggleTimeframe = useCallback((tf: string) => {
+  // Pre-fill date range from the most recent completed task
+  useEffect(() => {
+    getEvolutionTasks({ limit: 5 })
+      .then((res) => {
+        const last = res.items?.find(
+          (t) => t.status === "completed" && t.data_start && t.data_end
+        );
+        if (last) {
+          setDataStart(last.data_start);
+          setDataEnd(last.data_end);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Filter timeframes that have data for the current symbol
+  const availableTimeframes = useMemo(() => {
+    if (!availableSources) return TIMEFRAME_POOL_OPTIONS;
+    const tfs = availableSources
+      .filter((s) => s.symbol === symbol)
+      .map((s) => s.timeframe);
+    return tfs.length > 0 ? tfs : TIMEFRAME_POOL_OPTIONS;
+  }, [availableSources, symbol]);
+
+  // Get primary timeframe data info
+  const primarySourceInfo = useMemo(() => {
+    if (!availableSources) return null;
+    const primary = timeframePool[0] ?? "4h";
+    return availableSources.find(
+      (s) => s.symbol === symbol && s.timeframe === primary
+    );
+  }, [availableSources, symbol, timeframePool]);
+
+  // Sorted pool (longest first) for display
+  const sortedPool = useMemo(() => sortTimeframesLongestFirst(timeframePool), [timeframePool]);
+
+  const addTimeframe = useCallback((tf: string) => {
     setTimeframePool((prev) => {
-      if (prev.includes(tf)) {
-        return prev.length > 1 ? prev.filter((t) => t !== tf) : prev;
-      }
-      return prev.length >= 4 ? prev : [...prev, tf];
+      if (prev.includes(tf)) return prev;
+      if (prev.length >= 4) return prev;
+      // Keep sorted: longest first
+      return sortTimeframesLongestFirst([...prev, tf]);
     });
+  }, []);
+
+  const removeTimeframe = useCallback((tf: string) => {
+    setTimeframePool((prev) => prev.length > 1 ? prev.filter((t) => t !== tf) : prev);
   }, []);
 
   const toggleIndicator = useCallback((ind: string) => {
@@ -79,6 +138,11 @@ export function AutoConfigForm({
       populationSize,
       maxGenerations,
       targetScore,
+      leverage,
+      direction,
+      dataStart: dataStart || undefined,
+      dataEnd: dataEnd || undefined,
+      walkForwardEnabled,
     });
   }, [
     canSubmit,
@@ -90,6 +154,10 @@ export function AutoConfigForm({
     populationSize,
     maxGenerations,
     targetScore,
+    leverage,
+    direction,
+    dataStart,
+    dataEnd,
   ]);
 
   return (
@@ -111,38 +179,78 @@ export function AutoConfigForm({
         </Select>
       </div>
 
-      {/* Timeframe pool */}
+      {/* Data range info */}
+      {primarySourceInfo && (
+        <div className="flex items-center gap-2 rounded-lg border border-slate-700/20 bg-white/[0.01] px-3 py-2">
+          <span className="text-[11px] text-slate-500">
+            数据范围: {primarySourceInfo.time_start?.slice(0, 10) ?? "?"} ~ {primarySourceInfo.time_end?.slice(0, 10) ?? "?"}
+          </span>
+          {availableTimeframes.length === 0 && (
+            <div className="flex items-center gap-1 text-[11px] text-amber-500">
+              <AlertTriangle className="h-3 w-3" />
+              无可用数据
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Timeframe combination (ordered list) */}
       <div className="flex items-start gap-3">
         <span className="mt-1 w-14 shrink-0 text-xs text-slate-400">
-          周期池
+          周期组合
         </span>
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
+          {/* Selected timeframes as ordered list with role labels */}
           <div className="flex flex-wrap gap-1.5">
-            {TIMEFRAME_POOL_OPTIONS.map((tf) => {
-              const selected = timeframePool.includes(tf);
+            {sortedPool.map((tf, idx) => {
+              const isLast = idx === sortedPool.length - 1;
+              const role = TF_LAYER_ROLES[Math.min(idx, TF_LAYER_ROLES.length - 1)];
               return (
-                <Badge
+                <div
                   key={tf}
-                  variant="outline"
                   className={cn(
-                    "cursor-pointer text-[11px] transition-colors",
-                    selected
-                      ? "border-amber-400/30 bg-amber-400/20 text-amber-400 hover:bg-amber-400/30"
-                      : "border-slate-700/50 text-slate-400 hover:text-slate-300"
+                    "flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px]",
+                    isLast
+                      ? "border-amber-400/40 bg-amber-400/15 text-amber-400"
+                      : "border-slate-600/40 bg-slate-800/30 text-slate-300"
                   )}
-                  onClick={() => toggleTimeframe(tf)}
                 >
-                  {TIMEFRAME_LABELS[tf]}
-                </Badge>
+                  <span className="text-[9px] text-slate-500">{role}</span>
+                  <span>{TIMEFRAME_LABELS[tf]}</span>
+                  {sortedPool.length > 1 && (
+                    <button
+                      type="button"
+                      className="ml-0.5 text-slate-600 hover:text-slate-400"
+                      onClick={() => removeTimeframe(tf)}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
               );
             })}
+            {/* Add button */}
+            {sortedPool.length < 4 && (
+              <Select onValueChange={addTimeframe}>
+                <SelectTrigger className="h-6 w-6 border-dashed border-slate-700/50 bg-transparent p-0 text-[10px] hover:border-slate-600">
+                  <Plus className="h-3 w-3 text-slate-500" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIMEFRAME_POOL_OPTIONS.filter(
+                    (tf) => !timeframePool.includes(tf) && availableTimeframes.includes(tf)
+                  ).map((tf) => (
+                    <SelectItem key={tf} value={tf}>
+                      {TIMEFRAME_LABELS[tf]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
           <span className="text-[11px] text-slate-500">
-            {timeframePool.length >= 2
-              ? `已选${timeframePool.length}个: ${timeframePool.map((t) => TIMEFRAME_LABELS[t]).join("+")} ${
-                  timeframePool.length >= 2 ? "跨周期探索" : ""
-                }`
-              : "选多个周期开启跨周期策略探索"}
+            {sortedPool.length >= 2
+              ? `执行周期: ${TIMEFRAME_LABELS[sortedPool[sortedPool.length - 1]]} (最短) | ${sortedPool.length}层跨周期探索`
+              : "添加多个周期开启跨周期策略探索"}
           </span>
         </div>
       </div>
@@ -175,7 +283,7 @@ export function AutoConfigForm({
                     )}
                     onClick={() => toggleIndicator(ind)}
                   >
-                    {ind}
+                    {INDICATOR_LABELS[ind] ?? ind}
                   </Badge>
                 );
               })}
@@ -185,22 +293,97 @@ export function AutoConfigForm({
       </div>
 
       {/* Optimize target */}
-      <div className="flex items-center gap-3">
-        <span className="w-14 shrink-0 text-xs text-slate-400">
+      <div className="flex items-start gap-3">
+        <span className="mt-1 w-14 shrink-0 text-xs text-slate-400">
           优化目标
         </span>
-        <Select value={scoreTemplate} onValueChange={setScoreTemplate}>
-          <SelectTrigger className="h-7 w-36 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {OPTIMIZE_TARGETS.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex flex-col gap-1.5">
+          <Select value={scoreTemplate} onValueChange={setScoreTemplate}>
+            <SelectTrigger className="h-7 w-36 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {OPTIMIZE_TARGETS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="text-[10px] text-slate-600">
+            {OPTIMIZE_TARGETS.find((t) => t.value === scoreTemplate)?.description}
+          </span>
+        </div>
+      </div>
+
+      {/* Leverage & Direction (task-level constraints) */}
+      <div className="flex items-center gap-4">
+        <span className="w-14 shrink-0 text-xs text-slate-400">约束</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-500">杠杆</span>
+          <Select value={String(leverage)} onValueChange={(v) => setLeverage(Number(v))}>
+            <SelectTrigger className="h-7 w-16 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {LEVERAGE_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={String(opt.value)}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-500">方向</span>
+          <Select value={direction} onValueChange={(v) => setDirection(v as "long" | "short" | "mixed")}>
+            <SelectTrigger className="h-7 w-16 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DIRECTION_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      {leverage > 1 && (
+        <p className="text-[11px] text-amber-500/80">
+          {leverage}x 杠杆: 每 8 小时收取 0.1% 资金费用, 保证金亏损超过 90% 触发爆仓
+        </p>
+      )}
+      {direction === "mixed" && (
+        <p className="text-[11px] text-purple-500/80">
+          混合模式: 进化过程将自由探索做多和做空方向
+        </p>
+      )}
+
+      {/* Data range (optional) */}
+      <div className="flex items-center gap-3">
+        <span className="w-14 shrink-0 text-xs text-slate-400">时间范围</span>
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={dataStart}
+            onChange={(e) => setDataStart(e.target.value)}
+            className="h-7 rounded border border-slate-700/50 bg-transparent px-2 text-xs text-slate-300"
+            placeholder="起始日期"
+          />
+          <span className="text-[11px] text-slate-600">~</span>
+          <input
+            type="date"
+            value={dataEnd}
+            onChange={(e) => setDataEnd(e.target.value)}
+            className="h-7 rounded border border-slate-700/50 bg-transparent px-2 text-xs text-slate-300"
+            placeholder="结束日期"
+          />
+        </div>
+        {(dataStart || dataEnd) && (
+          <span className="text-[10px] text-slate-600">留空则使用全部数据</span>
+        )}
       </div>
 
       {/* Advanced params (collapsible) */}
@@ -258,6 +441,26 @@ export function AutoConfigForm({
                 }
                 className="h-7 w-24 text-xs"
               />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] text-slate-500">Walk-Forward 验证</label>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={walkForwardEnabled}
+                onClick={() => setWalkForwardEnabled(!walkForwardEnabled)}
+                className={cn(
+                  "mt-1 h-7 w-12 rounded-full transition-colors relative",
+                  walkForwardEnabled ? "bg-emerald-500" : "bg-slate-700"
+                )}
+              >
+                <span
+                  className={cn(
+                    "absolute top-0.5 h-6 w-6 rounded-full bg-white transition-transform",
+                    walkForwardEnabled ? "left-[22px]" : "left-0.5"
+                  )}
+                />
+              </button>
             </div>
           </div>
         )}

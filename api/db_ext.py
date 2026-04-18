@@ -86,6 +86,37 @@ _MTF_COLUMNS = [
     ("mode", "TEXT"),
 ]
 
+_CONSTRAINT_COLUMNS = [
+    ("leverage", "INTEGER DEFAULT 1"),
+    ("direction", "TEXT DEFAULT 'long'"),
+    ("data_start", "TEXT"),
+    ("data_end", "TEXT"),
+    ("data_time_start", "TEXT"),
+    ("data_time_end", "TEXT"),
+    ("data_row_count", "INTEGER DEFAULT 0"),
+    ("best_score", "REAL"),
+    ("indicator_pool", "TEXT"),
+    ("timeframe_pool", "TEXT"),
+    ("mode", "TEXT"),
+    ("champion_metrics", "TEXT"),  # JSON: {annual_return, sharpe_ratio, max_drawdown, win_rate, calmar_ratio, total_trades}
+    ("champion_dimension_scores", "TEXT"),  # JSON: {annual_return: 78.5, sharpe_ratio: 65.2, ...}
+    ("walk_forward_enabled", "INTEGER DEFAULT 0"),
+]
+
+
+def _apply_constraint_columns(conn: sqlite3.Connection) -> None:
+    """Add leverage/direction and data range columns to evolution_task (idempotent)."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(evolution_task)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+
+    for col_name, col_def in _CONSTRAINT_COLUMNS:
+        if col_name not in existing:
+            conn.execute(
+                f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
+            )
+
 
 def _apply_mtf_columns(conn: sqlite3.Connection) -> None:
     """Add MTF-related columns to evolution_task (idempotent)."""
@@ -164,6 +195,11 @@ def init_db_ext(db_path: Path) -> None:
         _apply_mtf_columns(conn)
         if 6 not in applied:
             _record_version(conn, 6)
+
+        # 6. ALTER TABLE for task-level constraints (migration 007)
+        _apply_constraint_columns(conn)
+        if 7 not in applied:
+            _record_version(conn, 7)
 
         conn.commit()
     finally:

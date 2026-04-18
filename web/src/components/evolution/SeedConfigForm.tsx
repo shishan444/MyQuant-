@@ -15,8 +15,11 @@ import {
   SYMBOL_OPTIONS,
   TIMEFRAME_FORM_OPTIONS as TIMEFRAME_OPTIONS,
   INDICATOR_FLAT_LIST as INDICATOR_OPTIONS,
+  INDICATOR_LABELS,
   CONDITION_OPTIONS,
   OPTIMIZE_TARGETS,
+  LEVERAGE_OPTIONS,
+  DIRECTION_OPTIONS,
 } from "@/lib/constants";
 import type { SignalGene, TimeframeLayerModel, DNA } from "@/types/api";
 
@@ -40,6 +43,8 @@ interface SeedConfigFormProps {
     populationSize: number;
     maxGenerations: number;
     targetScore: number;
+    leverage: number;
+    direction: "long" | "short" | "mixed";
   }) => void;
   seedDna?: DNA | null;
 }
@@ -87,6 +92,8 @@ export function SeedConfigForm({
   const [stopLoss, setStopLoss] = useState(5);
   const [takeProfit, setTakeProfit] = useState(10);
   const [positionSize, setPositionSize] = useState(30);
+  const [leverage, setLeverage] = useState(1);
+  const [direction, setDirection] = useState<"long" | "short" | "mixed">("long");
 
   const initialLayers = useMemo((): LayerData[] => {
     if (seedDna?.layers && seedDna.layers.length > 0) {
@@ -133,6 +140,8 @@ export function SeedConfigForm({
             : 10
         );
         setPositionSize(Math.round(seedDna.risk_genes.position_size * 100));
+        setLeverage(seedDna.risk_genes.leverage ?? 1);
+        setDirection(seedDna.risk_genes.direction ?? "long");
       }
       if (seedDna.cross_layer_logic) {
         setCrossLayerLogic(seedDna.cross_layer_logic);
@@ -254,6 +263,8 @@ export function SeedConfigForm({
         stop_loss: stopLoss / 100,
         take_profit: takeProfit / 100,
         position_size: positionSize / 100,
+        leverage,
+        direction,
       },
       signal_genes: [],
       logic_genes: { entry_logic: "AND", exit_logic: "AND" },
@@ -269,6 +280,8 @@ export function SeedConfigForm({
       populationSize,
       maxGenerations,
       targetScore,
+      leverage,
+      direction,
     });
   }, [
     canSubmit,
@@ -279,6 +292,8 @@ export function SeedConfigForm({
     stopLoss,
     takeProfit,
     positionSize,
+    leverage,
+    direction,
     scoreTemplate,
     populationSize,
     maxGenerations,
@@ -381,7 +396,7 @@ export function SeedConfigForm({
                     <SelectContent>
                       {INDICATOR_OPTIONS.map((ind) => (
                         <SelectItem key={ind} value={ind}>
-                          {ind}
+                          {INDICATOR_LABELS[ind] ?? ind}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -535,25 +550,65 @@ export function SeedConfigForm({
           />
           <span className="text-[11px] text-slate-600">%</span>
         </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-500">杠杆</span>
+          <Select value={String(leverage)} onValueChange={(v) => setLeverage(Number(v))}>
+            <SelectTrigger className="h-6 w-16 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {LEVERAGE_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={String(opt.value)}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-500">方向</span>
+          <Select value={direction} onValueChange={(v) => setDirection(v as "long" | "short" | "mixed")}>
+            <SelectTrigger className="h-6 w-16 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DIRECTION_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
+      {leverage > 1 && (
+        <p className="text-[11px] text-amber-500/80">
+          {leverage}x 杠杆: 每 8 小时收取 0.1% 资金费用, 保证金亏损超过 90% 触发爆仓
+        </p>
+      )}
 
       {/* Optimize target */}
-      <div className="flex items-center gap-3">
-        <span className="w-14 shrink-0 text-xs text-slate-400">
+      <div className="flex items-start gap-3">
+        <span className="mt-1 w-14 shrink-0 text-xs text-slate-400">
           优化目标
         </span>
-        <Select value={scoreTemplate} onValueChange={setScoreTemplate}>
-          <SelectTrigger className="h-7 w-36 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {OPTIMIZE_TARGETS.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex flex-col gap-1.5">
+          <Select value={scoreTemplate} onValueChange={setScoreTemplate}>
+            <SelectTrigger className="h-7 w-36 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {OPTIMIZE_TARGETS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="text-[10px] text-slate-600">
+            {OPTIMIZE_TARGETS.find((t) => t.value === scoreTemplate)?.description}
+          </span>
+        </div>
       </div>
 
       {/* Note */}

@@ -1,232 +1,32 @@
-"""Indicator registry and computation engine.
+"""Indicator computation engine.
 
-Defines the 18 supported indicators across 5 categories, with typed parameter
-ranges for use in strategy validation and mutation operators. Provides batch
-computation via pandas-ta.
+Provides _compute_indicator() and compute_all_indicators() for batch
+pre-computation via pandas-ta.  Registry structures and indicator
+definitions live in registry.py and are re-exported here for backward
+compatibility.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
+import numpy as np
 import pandas as pd
 import pandas_ta as ta
 
-
-# ---------------------------------------------------------------------------
-# Registry data structures
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ParamDef:
-    """Parameter definition with range constraints for mutation."""
-    type: str          # "int" | "float"
-    min: float
-    max: float
-    default: float
-    step: float
-
-    def clamp(self, value: float) -> float:
-        """Clamp value to valid range, rounded to step boundary."""
-        import math
-        value = max(self.min, min(self.max, value))
-        return round(value / self.step) * self.step
-
-
-@dataclass
-class IndicatorDef:
-    """Definition of a single indicator in the registry."""
-    category: str
-    params: Dict[str, ParamDef]
-    output_fields: List[str]
-    supported_conditions: List[str]
-    guard_only: bool = False
+# Re-export registry structures for backward compatibility
+from core.features.registry import (
+    ParamDef,
+    IndicatorDef,
+    INDICATOR_REGISTRY,
+    get_interchangeable,
+)
 
 
 # ---------------------------------------------------------------------------
-# Indicator Registry (18 indicators, 5 categories)
-# ---------------------------------------------------------------------------
-
-INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
-    # ══════ trend (6) ══════
-    "EMA": IndicatorDef(
-        category="trend",
-        params={"period": ParamDef("int", 5, 200, 50, 5)},
-        output_fields=["ema"],
-        supported_conditions=["price_above", "price_below", "cross_above", "cross_below"],
-    ),
-    "SMA": IndicatorDef(
-        category="trend",
-        params={"period": ParamDef("int", 5, 200, 50, 5)},
-        output_fields=["sma"],
-        supported_conditions=["price_above", "price_below", "cross_above", "cross_below"],
-    ),
-    "WMA": IndicatorDef(
-        category="trend",
-        params={"period": ParamDef("int", 5, 200, 50, 5)},
-        output_fields=["wma"],
-        supported_conditions=["price_above", "price_below", "cross_above", "cross_below"],
-    ),
-    "DEMA": IndicatorDef(
-        category="trend",
-        params={"period": ParamDef("int", 5, 200, 50, 5)},
-        output_fields=["dema"],
-        supported_conditions=["price_above", "price_below", "cross_above", "cross_below"],
-    ),
-    "TEMA": IndicatorDef(
-        category="trend",
-        params={"period": ParamDef("int", 5, 200, 50, 5)},
-        output_fields=["tema"],
-        supported_conditions=["price_above", "price_below", "cross_above", "cross_below"],
-    ),
-    "VWAP": IndicatorDef(
-        category="trend",
-        params={},
-        output_fields=["vwap"],
-        supported_conditions=["price_above", "price_below"],
-    ),
-
-    # ══════ momentum (6) ══════
-    "RSI": IndicatorDef(
-        category="momentum",
-        params={"period": ParamDef("int", 2, 50, 14, 2)},
-        output_fields=["rsi"],
-        supported_conditions=["lt", "gt", "le", "ge"],
-    ),
-    "MACD": IndicatorDef(
-        category="momentum",
-        params={
-            "fast": ParamDef("int", 5, 30, 12, 2),
-            "slow": ParamDef("int", 20, 60, 26, 2),
-            "signal": ParamDef("int", 5, 20, 9, 1),
-        },
-        output_fields=["macd", "signal", "histogram"],
-        supported_conditions=["cross_above", "cross_below", "gt", "lt"],
-    ),
-    "Stochastic": IndicatorDef(
-        category="momentum",
-        params={
-            "k_period": ParamDef("int", 5, 50, 14, 2),
-            "d_period": ParamDef("int", 3, 20, 3, 1),
-        },
-        output_fields=["k", "d"],
-        supported_conditions=["lt", "gt", "cross_above", "cross_below"],
-    ),
-    "CCI": IndicatorDef(
-        category="momentum",
-        params={"period": ParamDef("int", 5, 50, 20, 2)},
-        output_fields=["cci"],
-        supported_conditions=["lt", "gt"],
-    ),
-    "ROC": IndicatorDef(
-        category="momentum",
-        params={"period": ParamDef("int", 2, 50, 12, 2)},
-        output_fields=["roc"],
-        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
-    ),
-    "Williams %R": IndicatorDef(
-        category="momentum",
-        params={"period": ParamDef("int", 2, 50, 14, 2)},
-        output_fields=["willr"],
-        supported_conditions=["lt", "gt"],
-    ),
-
-    # ══════ volatility (4) ══════
-    "BB": IndicatorDef(
-        category="volatility",
-        params={
-            "period": ParamDef("int", 5, 50, 20, 2),
-            "std": ParamDef("float", 1.0, 3.0, 2.0, 0.5),
-        },
-        output_fields=["upper", "middle", "lower", "bandwidth", "percent"],
-        supported_conditions=["price_above", "price_below"],
-    ),
-    "ATR": IndicatorDef(
-        category="volatility",
-        params={"period": ParamDef("int", 5, 50, 14, 2)},
-        output_fields=["atr"],
-        supported_conditions=["gt", "lt"],
-        guard_only=True,
-    ),
-    "Keltner": IndicatorDef(
-        category="volatility",
-        params={
-            "ema_period": ParamDef("int", 5, 50, 20, 2),
-            "atr_period": ParamDef("int", 5, 50, 10, 2),
-            "multiplier": ParamDef("float", 1.0, 3.0, 2.0, 0.5),
-        },
-        output_fields=["upper", "middle", "lower"],
-        supported_conditions=["price_above", "price_below"],
-    ),
-    "Donchian": IndicatorDef(
-        category="volatility",
-        params={"period": ParamDef("int", 5, 50, 20, 2)},
-        output_fields=["upper", "middle", "lower"],
-        supported_conditions=["price_above", "price_below"],
-    ),
-
-    # ══════ volume (3) ══════
-    "OBV": IndicatorDef(
-        category="volume",
-        params={},
-        output_fields=["obv"],
-        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
-    ),
-    "CMF": IndicatorDef(
-        category="volume",
-        params={"period": ParamDef("int", 5, 30, 20, 2)},
-        output_fields=["cmf"],
-        supported_conditions=["gt", "lt"],
-    ),
-    "MFI": IndicatorDef(
-        category="volume",
-        params={"period": ParamDef("int", 5, 30, 14, 2)},
-        output_fields=["mfi"],
-        supported_conditions=["lt", "gt"],
-    ),
-
-    # ══════ trend_strength (2) ══════
-    "ADX": IndicatorDef(
-        category="trend_strength",
-        params={"period": ParamDef("int", 7, 50, 14, 2)},
-        output_fields=["adx"],
-        supported_conditions=["gt", "lt"],
-        guard_only=True,
-    ),
-    "PSAR": IndicatorDef(
-        category="trend_strength",
-        params={
-            "step": ParamDef("float", 0.01, 0.05, 0.02, 0.01),
-            "max_step": ParamDef("float", 0.1, 0.3, 0.2, 0.05),
-        },
-        output_fields=["psar"],
-        supported_conditions=["price_above", "price_below"],
-        guard_only=True,
-    ),
-}
-
-
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
-
-def get_interchangeable(indicator_name: str) -> List[str]:
-    """Return indicators in the same category (excludes self)."""
-    if indicator_name not in INDICATOR_REGISTRY:
-        return []
-    category = INDICATOR_REGISTRY[indicator_name].category
-    return [
-        name for name, defn in INDICATOR_REGISTRY.items()
-        if defn.category == category and name != indicator_name
-    ]
-
-
-# ---------------------------------------------------------------------------
-# Computation engine
-# ---------------------------------------------------------------------------
-
 # Default parameter sets for pre-computation
+# ---------------------------------------------------------------------------
+
 _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
     "EMA": [{"period": p} for p in [10, 20, 50, 100, 200]],
     "SMA": [{"period": p} for p in [10, 20, 50, 100, 200]],
@@ -248,8 +48,22 @@ _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
     "MFI": [{"period": 14}],
     "ADX": [{"period": 14}],
     "PSAR": [{"step": 0.02, "max_step": 0.2}],
+    # New indicators
+    "RVOL": [{"period": 20}, {"period": 50}],
+    "VROC": [{"period": 14}],
+    "AD": [{}],
+    "CVD": [{}],
+    "VWMA": [{"period": 20}, {"period": 50}],
+    "Aroon": [{"period": 25}],
+    "CMO": [{"period": 14}],
+    "TRIX": [{"period": 12}],
+    # VolumeProfile is guard_only and expensive; compute on demand only
 }
 
+
+# ---------------------------------------------------------------------------
+# Computation engine
+# ---------------------------------------------------------------------------
 
 def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> pd.DataFrame:
     """Compute a single indicator and return DataFrame with named columns."""
@@ -343,8 +157,131 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> p
                            af=step, max_af=max_step)
         if psar_val is not None:
             result["psar"] = psar_val.iloc[:, 0]
+    # ── New indicators ──
+    elif name == "RVOL":
+        period = int(params["period"])
+        vol_sma = ta.sma(df["volume"], length=period)
+        result[f"rvol_{period}"] = df["volume"] / vol_sma
+    elif name == "VROC":
+        period = int(params["period"])
+        result[f"vroc_{period}"] = ta.roc(df["volume"], length=period)
+    elif name == "AD":
+        result["ad"] = ta.ad(df["high"], df["low"], df["close"], df["volume"])
+    elif name == "CVD":
+        hl_range = df["high"] - df["low"]
+        # Guard against division by zero
+        safe_range = hl_range.replace(0, np.nan)
+        cvd_raw = df["volume"] * (df["close"] - df["open"]) / safe_range
+        result["cvd"] = cvd_raw.fillna(0).cumsum()
+    elif name == "VWMA":
+        period = int(params["period"])
+        result[f"vwma_{period}"] = ta.vwma(df["close"], df["volume"], length=period)
+    elif name == "Aroon":
+        period = int(params["period"])
+        aroon_df = ta.aroon(df["high"], df["low"], length=period)
+        if aroon_df is not None:
+            result[f"aroon_up_{period}"] = aroon_df.iloc[:, 0]
+            result[f"aroon_down_{period}"] = aroon_df.iloc[:, 1]
+            result[f"aroon_osc_{period}"] = aroon_df.iloc[:, 2]
+    elif name == "CMO":
+        period = int(params["period"])
+        result[f"cmo_{period}"] = ta.cmo(df["close"], length=period)
+    elif name == "TRIX":
+        period = int(params["period"])
+        trix_df = ta.trix(df["close"], length=period)
+        if trix_df is not None:
+            result[f"trix_{period}"] = trix_df.iloc[:, 0]
+    elif name == "VolumeProfile":
+        bins = int(params.get("bins", 50))
+        lookback = int(params.get("lookback", 60))
+        poc_col = f"vp_poc_{bins}_{lookback}"
+        vah_col = f"vp_vah_{bins}_{lookback}"
+        val_col = f"vp_val_{bins}_{lookback}"
+        result[poc_col] = _rolling_volume_profile(
+            df["close"], df["volume"], bins=bins, lookback=lookback, which="poc",
+        )
+        result[vah_col] = _rolling_volume_profile(
+            df["close"], df["volume"], bins=bins, lookback=lookback, which="vah",
+        )
+        result[val_col] = _rolling_volume_profile(
+            df["close"], df["volume"], bins=bins, lookback=lookback, which="val",
+        )
 
     return result
+
+
+def _rolling_volume_profile(
+    close: pd.Series,
+    volume: pd.Series,
+    bins: int = 50,
+    lookback: int = 60,
+    which: str = "poc",
+) -> pd.Series:
+    """Compute rolling volume profile and return POC/VAH/VAL series.
+
+    Args:
+        close: Close price series.
+        volume: Volume series.
+        bins: Number of price bins for histogram.
+        lookback: Rolling window size.
+        which: "poc" (point of control), "vah" (value area high), "val" (value area low).
+
+    Returns:
+        Series of the requested level values, same index as input.
+    """
+    close_vals = close.values
+    volume_vals = volume.values
+    n = len(close_vals)
+
+    result = np.full(n, np.nan)
+
+    for i in range(lookback - 1, n):
+        window_close = close_vals[i - lookback + 1 : i + 1]
+        window_vol = volume_vals[i - lookback + 1 : i + 1]
+
+        if len(window_close) < 5:
+            continue
+
+        c_min = np.nanmin(window_close)
+        c_max = np.nanmax(window_close)
+        if c_max == c_min:
+            result[i] = c_min
+            continue
+
+        # Build histogram
+        edges = np.linspace(c_min, c_max, bins + 1)
+        indices = np.digitize(window_close, edges) - 1
+        indices = np.clip(indices, 0, bins - 1)
+        vol_by_bin = np.zeros(bins)
+        for j in range(len(indices)):
+            vol_by_bin[indices[j]] += window_vol[j]
+
+        total_vol = vol_by_bin.sum()
+        if total_vol == 0:
+            continue
+
+        poc_idx = int(np.argmax(vol_by_bin))
+        poc_price = (edges[poc_idx] + edges[poc_idx + 1]) / 2
+
+        if which == "poc":
+            result[i] = poc_price
+        else:
+            # Value area: bins containing 70% of volume around POC
+            sorted_indices = np.argsort(vol_by_bin)[::-1]
+            cumulative = 0.0
+            va_bins = set()
+            for idx in sorted_indices:
+                va_bins.add(idx)
+                cumulative += vol_by_bin[idx]
+                if cumulative >= total_vol * 0.7:
+                    break
+            va_prices = [(edges[b], edges[b + 1]) for b in va_bins]
+            if which == "vah":
+                result[i] = max(h[1] for h in va_prices)
+            elif which == "val":
+                result[i] = min(h[0] for h in va_prices)
+
+    return pd.Series(result, index=close.index)
 
 
 def compute_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
