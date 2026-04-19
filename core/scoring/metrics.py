@@ -40,6 +40,7 @@ def compute_metrics(
             "profit_factor": 0.0,
             "max_consecutive_losses": 0,
             "monthly_consistency": 0.0,
+            "r_squared": 0.0,
         }
 
     # Annual return (from equity curve - standard)
@@ -130,6 +131,19 @@ def compute_metrics(
         except Exception:
             pass
 
+    # R-squared: equity curve linearity (1.0 = perfect linear growth)
+    r_squared = 0.0
+    if len(equity_curve) > 10:
+        x = np.arange(len(equity_curve))
+        y = equity_curve.values
+        slope = np.cov(x, y)[0, 1] / max(np.var(x), 1e-10)
+        intercept = np.mean(y) - slope * np.mean(x)
+        y_pred = slope * x + intercept
+        ss_res = np.sum((y - y_pred) ** 2)
+        ss_tot = np.sum((y - np.mean(y)) ** 2)
+        if ss_tot > 0:
+            r_squared = float(max(0.0, 1.0 - ss_res / ss_tot))
+
     return {
         "annual_return": float(annual_return),
         "sharpe_ratio": float(sharpe_ratio),
@@ -141,4 +155,5 @@ def compute_metrics(
         "profit_factor": float(profit_factor),
         "max_consecutive_losses": int(max_consecutive_losses),
         "monthly_consistency": float(monthly_consistency),
+        "r_squared": float(r_squared),
     }

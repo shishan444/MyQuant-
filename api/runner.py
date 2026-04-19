@@ -458,8 +458,8 @@ class EvolutionRunner(threading.Thread):
             diagnostics["raw_metrics"] = score_result["raw_metrics"]
             diagnostics["dimension_scores"] = score_result["dimension_scores"]
 
-            # Walk-Forward validation (only for high-score individuals)
-            if task_row.get("walk_forward_enabled") and score_result["total_score"] > 40:
+            # Walk-Forward validation: enabled by default for strategies scoring > 20
+            if score_result["total_score"] > 20:
                 try:
                     from core.backtest.walk_forward import WalkForwardValidator
                     wf = WalkForwardValidator(template_name=template_name)

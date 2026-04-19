@@ -54,6 +54,9 @@ def normalize(metric_name: str, value: float) -> float:
     elif metric_name == "monthly_consistency":
         # Already 0-1, scale to 0-100
         score = value * 100
+    elif metric_name == "r_squared":
+        # Already 0-1, scale to 0-100
+        score = max(0.0, value) * 100
     else:
         score = 50.0
 

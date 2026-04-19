@@ -406,26 +406,49 @@ def init_population(
             if a not in population:
                 population.append(a)
 
-    # Generate rest by mutating the ancestor
+    # Generate remaining individuals by 40/40/20 ratio
+    remaining = size - len(population)
+    n_template = max(1, int(remaining * 0.4))   # 40% from template mutations
+    n_profiled = max(1, int(remaining * 0.4))   # 40% profile-aware random
+    n_random = remaining - n_template - n_profiled  # 20% free exploration
+
     mutation_funcs = [mutate_params, mutate_indicator, mutate_logic, mutate_risk]
 
-    while len(population) < size:
-        parent = random.choice(population[:min(len(population), 5)])
-        mut_func = random.choice(mutation_funcs)
-        try:
-            child = mut_func(parent)
-            result = validate_dna(child)
-            if result.is_valid:
-                population.append(child)
-            else:
-                population.append(create_random_dna(timeframe, symbol,
-                                                    leverage=leverage, direction=direction,
-                                                    timeframe_pool=timeframe_pool,
-                                                    indicator_pool=indicator_pool))
-        except Exception:
-            population.append(create_random_dna(timeframe, symbol,
-                                                leverage=leverage, direction=direction,
-                                                timeframe_pool=timeframe_pool,
-                                                indicator_pool=indicator_pool))
+    # Template mutations: pick a strategy template, mutate from a parent
+    for _ in range(n_template):
+        if len(population) < size:
+            template = random.choice(STRATEGY_TEMPLATES)
+            seed = _dna_from_template(template, timeframe, symbol, leverage, direction)
+            parent = random.choice(population[:min(len(population), 3)])
+            mut_func = random.choice(mutation_funcs)
+            try:
+                child = mut_func(seed)
+                result = validate_dna(child)
+                if result.is_valid:
+                    population.append(child)
+                else:
+                    population.append(seed)
+            except Exception:
+                population.append(seed)
+
+    # Profile-aware random DNA
+    for _ in range(n_profiled):
+        if len(population) < size:
+            population.append(create_random_dna(
+                timeframe, symbol,
+                leverage=leverage, direction=direction,
+                timeframe_pool=timeframe_pool,
+                indicator_pool=indicator_pool,
+            ))
+
+    # Free exploration: random DNA without profile guidance
+    for _ in range(n_random):
+        if len(population) < size:
+            population.append(create_random_dna(
+                timeframe, symbol,
+                leverage=leverage, direction=direction,
+                timeframe_pool=timeframe_pool,
+                indicator_pool=indicator_pool,
+            ))
 
     return population

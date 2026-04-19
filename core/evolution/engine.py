@@ -220,6 +220,26 @@ class EvolutionEngine:
                 n_mutations_choices = [1, 2, 3]
                 n_mut_weights = [50, 35, 15]
 
+            # Template-aware mutation bias (overlaid on stagnation weights)
+            TEMPLATE_MUTATION_BIAS = {
+                "profit_first": {"params": 1.5, "indicator": 1.2, "risk": 0.5},
+                "aggressive":   {"params": 1.5, "indicator": 1.2, "risk": 0.5},
+                "steady":       {"params": 1.0, "indicator": 1.0, "risk": 1.0},
+                "balanced":     {"params": 1.0, "indicator": 1.0, "risk": 1.0},
+                "risk_first":   {"params": 0.7, "indicator": 0.8, "risk": 1.8},
+                "conservative": {"params": 0.7, "indicator": 0.8, "risk": 1.8},
+                "custom":       {"params": 1.0, "indicator": 1.0, "risk": 1.0},
+            }
+            bias = TEMPLATE_MUTATION_BIAS.get(self.template_name, {})
+            # mut_weights indices: [0]params [1]indicator [2]logic [3]risk [4]add_signal [5]remove_signal
+            if bias:
+                mut_weights[0] *= bias.get("params", 1.0)
+                mut_weights[1] *= bias.get("indicator", 1.0)
+                mut_weights[3] *= bias.get("risk", 1.0)
+                # Re-normalize to keep total weight meaningful
+                total_w = sum(mut_weights)
+                mut_weights = [w / total_w * 100 for w in mut_weights]
+
             mutation_pool = [
                 mutate_params, mutate_indicator, mutate_logic, mutate_risk,
                 mutate_add_signal, mutate_remove_signal,
@@ -253,11 +273,12 @@ class EvolutionEngine:
                         timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
                     ))
 
-            # Fresh blood: 1-2 random individuals
-            fresh_count = random.randint(1, 2)
+            # Fresh blood: 3-5 random individuals for diversity
             population = elites + children
+            target_fresh = random.randint(3, 5)
+            shortfall = max(target_fresh, self.population_size - len(population))
             population = inject_fresh_blood(
-                population, n=max(0, self.population_size - len(population)),
+                population, n=shortfall,
                 leverage=self.leverage, direction=self.direction,
                 timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
             )

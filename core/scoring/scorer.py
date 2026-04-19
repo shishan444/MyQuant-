@@ -50,13 +50,13 @@ def score_strategy(
 
     # Trade count penalty: Sigmoid-based penalty for low trade count
     # Smooth transition instead of harsh linear cutoff
-    MIN_TRADES_THRESHOLD = 10
+    MIN_TRADES_THRESHOLD = 35
     trade_count = metrics.get("total_trades", 0)
     if trade_count < MIN_TRADES_THRESHOLD:
-        # Sigmoid: k=0.5 controls steepness, x0=5 is midpoint
-        # At 0 trades: ~0.07, at 5 trades: ~0.50, at 10 trades: ~0.93
+        # Sigmoid: k=0.2 controls steepness, x0=30 is midpoint
+        # At 10 trades: ~0.02, at 20 trades: ~0.12, at 30 trades: ~0.50, at 40 trades: ~0.88
         import math
-        trade_factor = 1.0 / (1.0 + math.exp(-0.5 * (trade_count - 5)))
+        trade_factor = 1.0 / (1.0 + math.exp(-0.2 * (trade_count - 30)))
     else:
         trade_factor = 1.0
     total *= trade_factor

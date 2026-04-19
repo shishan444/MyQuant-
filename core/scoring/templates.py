@@ -1,8 +1,8 @@
 """Scoring template definitions.
 
-Templates use 10 dimensions for comprehensive strategy evaluation:
+Templates use 11 dimensions for comprehensive strategy evaluation:
 - Core: annual_return, sharpe_ratio, max_drawdown, win_rate, calmar_ratio
-- Extended: sortino_ratio, profit_factor, max_consecutive_losses, monthly_consistency
+- Extended: sortino_ratio, profit_factor, max_consecutive_losses, monthly_consistency, r_squared
 """
 from __future__ import annotations
 
@@ -30,7 +30,8 @@ SCORING_TEMPLATES: Dict[str, ScoringTemplate] = {
             "sortino_ratio": 0.10,
             "profit_factor": 0.10,
             "max_consecutive_losses": 0.05,
-            "monthly_consistency": 0.10,
+            "monthly_consistency": 0.05,
+            "r_squared": 0.05,
         },
         threshold=65.0,
     ),
@@ -45,6 +46,7 @@ SCORING_TEMPLATES: Dict[str, ScoringTemplate] = {
             "sortino_ratio": 0.05,
             "profit_factor": 0.10,
             "max_consecutive_losses": 0.05,
+            "r_squared": 0.00,
         },
         threshold=55.0,
     ),
@@ -59,7 +61,8 @@ SCORING_TEMPLATES: Dict[str, ScoringTemplate] = {
             "sortino_ratio": 0.10,
             "profit_factor": 0.05,
             "max_consecutive_losses": 0.10,
-            "monthly_consistency": 0.05,
+            "monthly_consistency": 0.03,
+            "r_squared": 0.02,
         },
         threshold=75.0,
     ),
@@ -75,6 +78,7 @@ SCORING_TEMPLATES: Dict[str, ScoringTemplate] = {
             "sortino_ratio": 0.05,
             "profit_factor": 0.10,
             "max_consecutive_losses": 0.05,
+            "r_squared": 0.00,
         },
         threshold=55.0,
     ),
@@ -89,7 +93,8 @@ SCORING_TEMPLATES: Dict[str, ScoringTemplate] = {
             "sortino_ratio": 0.10,
             "profit_factor": 0.10,
             "max_consecutive_losses": 0.05,
-            "monthly_consistency": 0.10,
+            "monthly_consistency": 0.05,
+            "r_squared": 0.05,
         },
         threshold=65.0,
     ),
@@ -104,7 +109,8 @@ SCORING_TEMPLATES: Dict[str, ScoringTemplate] = {
             "sortino_ratio": 0.10,
             "profit_factor": 0.05,
             "max_consecutive_losses": 0.10,
-            "monthly_consistency": 0.05,
+            "monthly_consistency": 0.03,
+            "r_squared": 0.02,
         },
         threshold=75.0,
     ),
@@ -119,7 +125,8 @@ SCORING_TEMPLATES: Dict[str, ScoringTemplate] = {
             "sortino_ratio": 0.10,
             "profit_factor": 0.10,
             "max_consecutive_losses": 0.10,
-            "monthly_consistency": 0.10,
+            "monthly_consistency": 0.05,
+            "r_squared": 0.05,
         },
         threshold=70.0,
     ),

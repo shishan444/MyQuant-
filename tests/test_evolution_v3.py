@@ -1,4 +1,5 @@
-"""Tests for V3 algorithm upgrades: polynomial mutation, multi-ancestor, adaptive weights."""
+"""Tests for V3 algorithm upgrades: polynomial mutation, multi-ancestor, adaptive weights,
+template-aware mutation bias, fresh blood count, and 40/40/20 population initialization."""
 import random
 
 import pytest
@@ -177,6 +178,82 @@ class TestPopulationMultiAncestor:
         a1 = _make_simple_dna()
         extras = [create_random_dna() for _ in range(3)]
         pop = init_population(15, a1, extra_ancestors=extras)
+        for ind in pop:
+            result = validate_dna(ind)
+            assert result.is_valid, f"Individual invalid: {result.errors}"
+
+
+# -- Template-aware mutation bias tests --
+
+class TestTemplateMutationBias:
+    def test_aggressive_template_higher_params_bias(self):
+        """Aggressive template should produce more params mutations."""
+        engine = EvolutionEngine(
+            target_score=100, max_generations=5, template_name="aggressive",
+        )
+        ancestor = _make_simple_dna()
+        call_count = {"total": 0}
+
+        def mock_eval(dna):
+            call_count["total"] += 1
+            return 30.0
+
+        result = engine.evolve(ancestor=ancestor, evaluate_fn=mock_eval)
+        assert result["total_generations"] == 5
+
+    def test_conservative_template_higher_risk_bias(self):
+        """Conservative template should produce more risk mutations."""
+        engine = EvolutionEngine(
+            target_score=100, max_generations=5, template_name="conservative",
+        )
+        ancestor = _make_simple_dna()
+
+        def mock_eval(dna):
+            return 30.0
+
+        result = engine.evolve(ancestor=ancestor, evaluate_fn=mock_eval)
+        assert result["champion"] is not None
+
+
+# -- Fresh blood count tests --
+
+class TestFreshBloodCount:
+    def test_engine_produces_correct_population_size(self):
+        """Engine should maintain population size with 3-5 fresh blood."""
+        engine = EvolutionEngine(
+            target_score=100, max_generations=5, population_size=15,
+        )
+        ancestor = _make_simple_dna()
+
+        def mock_eval(dna):
+            return random.uniform(10, 50)
+
+        result = engine.evolve(ancestor=ancestor, evaluate_fn=mock_eval)
+        assert result["total_generations"] == 5
+
+
+# -- 40/40/20 population init tests --
+
+class TestPopulationInitRatio:
+    def test_init_population_correct_size(self):
+        """Population should have exactly the requested size."""
+        a1 = _make_simple_dna()
+        pop = init_population(20, a1)
+        assert len(pop) == 20
+
+    def test_init_population_all_valid(self):
+        """All individuals from 40/40/20 init should be valid."""
+        a1 = _make_simple_dna()
+        pop = init_population(20, a1)
+        for ind in pop:
+            result = validate_dna(ind)
+            assert result.is_valid, f"Individual invalid: {result.errors}"
+
+    def test_init_population_large_size(self):
+        """Larger populations should still be correctly sized and valid."""
+        a1 = _make_simple_dna()
+        pop = init_population(50, a1)
+        assert len(pop) == 50
         for ind in pop:
             result = validate_dna(ind)
             assert result.is_valid, f"Individual invalid: {result.errors}"

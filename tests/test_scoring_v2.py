@@ -75,6 +75,21 @@ class TestNewMetrics:
         assert metrics["profit_factor"] == 0.0
         assert metrics["max_consecutive_losses"] == 0
         assert metrics["monthly_consistency"] == 0.0
+        assert metrics["r_squared"] == 0.0
+
+    def test_r_squared_computed(self):
+        eq = _make_equity_curve(200)
+        returns = _make_trade_returns(50)
+        metrics = compute_metrics(eq, total_trades=50, trade_returns=returns)
+        assert "r_squared" in metrics
+        assert 0 <= metrics["r_squared"] <= 1.0
+
+    def test_r_squared_linear_equity(self):
+        """Perfectly linear equity curve should have R-squared close to 1.0."""
+        dates = pd.date_range("2024-01-01", periods=100, freq="4h")
+        eq = pd.Series(range(100, 200), index=dates, dtype=float)
+        metrics = compute_metrics(eq, total_trades=50, trade_returns=np.array([0.01] * 50))
+        assert metrics["r_squared"] > 0.99
 
 
 # -- Normalizer tests --
@@ -101,6 +116,11 @@ class TestNewNormalizers:
         assert normalize("monthly_consistency", 0.0) == 0.0
         assert normalize("monthly_consistency", 0.5) == pytest.approx(50.0)
         assert normalize("monthly_consistency", 1.0) == pytest.approx(100.0)
+
+    def test_r_squared_normalization(self):
+        assert normalize("r_squared", 0.0) == 0.0
+        assert normalize("r_squared", 0.5) == pytest.approx(50.0)
+        assert normalize("r_squared", 1.0) == pytest.approx(100.0)
 
     def test_unknown_metric_defaults(self):
         assert normalize("unknown_metric", 0.0) == 50.0
@@ -152,9 +172,9 @@ class TestSigmoidPenalty:
     def test_few_trades_reduced_score(self):
         eq = _make_equity_curve(100)
         returns = _make_trade_returns(5)
-        metrics = compute_metrics(eq, total_trades=3, trade_returns=returns[:3])
+        metrics = compute_metrics(eq, total_trades=10, trade_returns=returns[:5])
         result = score_strategy(metrics, "balanced")
-        # Score should be significantly reduced but not zero
+        # Score should be significantly reduced (10 trades with midpoint=30)
         assert 0 < result["total_score"] < 100
 
     def test_enough_trades_no_penalty(self):
@@ -162,14 +182,13 @@ class TestSigmoidPenalty:
         returns = _make_trade_returns(50)
         metrics = compute_metrics(eq, total_trades=50, trade_returns=returns)
         result = score_strategy(metrics, "balanced")
-        # No penalty for >= 10 trades
+        # No penalty for >= 35 trades
         assert result["total_score"] > 0
 
     def test_sigmoid_curve_properties(self):
-        """Sigmoid should give smooth penalty: 0->~0.07, 5->~0.50, 10->~0.93."""
-        # At 0 trades, handled separately (returns 0)
-        for count, expected_range in [(3, (0.1, 0.5)), (5, (0.3, 0.7)), (8, (0.6, 0.95))]:
-            factor = 1.0 / (1.0 + math.exp(-0.5 * (count - 5)))
+        """Sigmoid: k=0.2, midpoint=30. 10->~0.02, 20->~0.12, 30->~0.50, 40->~0.88."""
+        for count, expected_range in [(10, (0.005, 0.05)), (20, (0.05, 0.20)), (30, (0.40, 0.60))]:
+            factor = 1.0 / (1.0 + math.exp(-0.2 * (count - 30)))
             assert expected_range[0] <= factor <= expected_range[1], (
                 f"Trade count {count}: factor {factor} not in {expected_range}"
             )
