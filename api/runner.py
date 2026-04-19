@@ -62,6 +62,7 @@ class EvolutionRunner(threading.Thread):
         self.poll_interval = poll_interval
         self._stop_event = threading.Event()
         self._active_task_id: Optional[str] = None
+        self._population_count: int = 0  # Track continuous population count
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -275,6 +276,36 @@ class EvolutionRunner(threading.Thread):
 
             champion = result["champion"]
             stop_reason = result["stop_reason"]
+
+            # Continuous evolution loop: keep starting new populations
+            # until user manually stops or an error occurs
+            continuous = bool(task_row.get("continuous", 1))
+
+            while continuous and stop_reason not in ("error",):
+                from core.persistence.db import get_task
+                t = get_task(self.db_path, task_id)
+                if not t or t["status"] not in ("running", "pending"):
+                    break
+
+                self._population_count += 1
+                logger.info(
+                    "Task %s: starting population #%d (stop_reason=%s)",
+                    task_id, self._population_count + 1, stop_reason,
+                )
+
+                # Reset for new population with champion as ancestor
+                if champion is not None:
+                    dna = champion
+                    dna.mutation_ops = []
+                engine._population = None
+
+                result = engine.evolve(
+                    ancestor=dna,
+                    evaluate_fn=evaluate_fn,
+                    on_generation=on_generation,
+                )
+                champion = result["champion"]
+                stop_reason = result["stop_reason"]
 
             # Save champion
             if champion is not None:

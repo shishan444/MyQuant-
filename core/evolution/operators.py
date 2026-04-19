@@ -19,6 +19,7 @@ from core.strategy.dna import (
 from core.strategy.validator import validate_dna
 from core.features.indicators import INDICATOR_REGISTRY, get_interchangeable
 from core.features.registry import IndicatorDef
+from core.features.indicator_profile import PROFILES
 
 
 def _new_id() -> str:
@@ -51,26 +52,45 @@ def generate_random_condition(
     indicator_name: str,
     reg: IndicatorDef | None = None,
     df_columns: list | None = None,
+    use_profile: bool = True,
 ) -> dict:
     """Generate a random condition dict for a given indicator.
 
-    Handles both legacy (8 types) and new condition types (cross_above_series,
-    lookback_any, lookback_all, touch_bounce, role_reversal, wick_touch).
+    When use_profile is True and a profile exists, follows recommended
+    conditions with the profile's follow_probability. Otherwise falls back
+    to free exploration from supported_conditions.
 
     Args:
         indicator_name: Name of the indicator.
         reg: IndicatorDef from registry (fetched if None).
         df_columns: Optional list of available DataFrame columns (unused for now).
+        use_profile: Whether to use indicator profile recommendations.
     """
     if reg is None:
         reg = INDICATOR_REGISTRY.get(indicator_name)
     if reg is None or not reg.supported_conditions:
         return {"type": "gt", "threshold": 0.0}
 
-    cond_type = random.choice(reg.supported_conditions)
-    condition: dict = {"type": cond_type}
+    # Profile-aware condition generation
+    if use_profile:
+        profile = PROFILES.get(indicator_name)
+        if profile and profile.recommended_conditions and random.random() < profile.follow_probability:
+            cond_preset = random.choice(profile.recommended_conditions)
+            condition: dict = {"type": cond_preset.type}
+            if cond_preset.thresholds:
+                condition["threshold"] = random.choice(cond_preset.thresholds)
+            if cond_preset.target_field:
+                condition["target_field"] = cond_preset.target_field
+            return condition
 
-    if cond_type in ("lt", "gt", "le", "ge"):
+    # Free exploration: random condition from supported list
+    cond_type = random.choice(reg.supported_conditions)
+    condition = {"type": cond_type}
+
+    if cond_type == "eq":
+        # Pattern indicators: check if value equals 1 (pattern present)
+        condition["threshold"] = 1
+    elif cond_type in ("lt", "gt", "le", "ge"):
         if indicator_name == "RSI":
             condition["threshold"] = random.choice([25, 30, 35, 40, 60, 65, 70, 75])
         else:
@@ -294,6 +314,28 @@ def mutate_params(dna: StrategyDNA) -> StrategyDNA:
         reg = INDICATOR_REGISTRY[indicator]
         param_name = random.choice(list(reg.params.keys()))
         pdef = reg.params[param_name]
+
+        # 1. Profile recommended params (highest priority)
+        profile = PROFILES.get(indicator)
+        if profile and param_name in profile.recommended_params:
+            rec_vals = profile.recommended_params[param_name]
+            if rec_vals and random.random() < profile.follow_probability:
+                new_val = random.choice(rec_vals)
+                params[param_name] = int(new_val) if pdef.type == "int" else round(float(new_val), 4)
+                gene["params"] = params
+                return StrategyDNA.from_dict(data)
+
+        # 2. Registry candidates (fallback)
+        if pdef.candidates and random.random() < 0.5:
+            candidates_filtered = [c for c in pdef.candidates
+                                   if pdef.min <= c <= pdef.max]
+            if candidates_filtered:
+                new_val = random.choice(candidates_filtered)
+                params[param_name] = int(new_val) if pdef.type == "int" else round(float(new_val), 4)
+                gene["params"] = params
+                return StrategyDNA.from_dict(data)
+
+        # 3. Free exploration: random delta mutation
         current = params.get(param_name, pdef.default)
         range_size = pdef.max - pdef.min
         delta = random.choice([-1, 1]) * range_size * random.uniform(0.05, 0.30)
@@ -338,8 +380,19 @@ def mutate_indicator(dna: StrategyDNA) -> StrategyDNA:
     new_indicator = random.choice(alternatives)
     reg = INDICATOR_REGISTRY[new_indicator]
 
-    new_params = {k: int(v.default) if v.type == "int" else float(v.default)
-                  for k, v in reg.params.items()}
+    # Use profile for params when available
+    profile = PROFILES.get(new_indicator)
+    if profile and profile.recommended_params and random.random() < profile.follow_probability:
+        new_params = {}
+        for pname, pdef in reg.params.items():
+            if pname in profile.recommended_params and profile.recommended_params[pname]:
+                raw = random.choice(profile.recommended_params[pname])
+                new_params[pname] = int(raw) if pdef.type == "int" else float(raw)
+            else:
+                new_params[pname] = int(pdef.default) if pdef.type == "int" else float(pdef.default)
+    else:
+        new_params = {k: int(v.default) if v.type == "int" else float(v.default)
+                      for k, v in reg.params.items()}
 
     condition = generate_random_condition(new_indicator, reg)
 
@@ -412,11 +465,22 @@ def mutate_add_signal(dna: StrategyDNA) -> StrategyDNA:
     indicator_name = random.choice(all_indicators)
     reg = INDICATOR_REGISTRY[indicator_name]
 
-    new_params = {}
-    for pname, pdef in reg.params.items():
-        val = random.uniform(pdef.min, pdef.max)
-        new_params[pname] = int(round(val / pdef.step) * pdef.step) if pdef.type == "int" \
-            else round(round(val / pdef.step) * pdef.step, 2)
+    # Use profile for params when available
+    profile = PROFILES.get(indicator_name)
+    if profile and profile.recommended_params and random.random() < profile.follow_probability:
+        new_params = {}
+        for pname, pdef in reg.params.items():
+            if pname in profile.recommended_params and profile.recommended_params[pname]:
+                raw = random.choice(profile.recommended_params[pname])
+                new_params[pname] = int(raw) if pdef.type == "int" else float(raw)
+            else:
+                new_params[pname] = int(pdef.default) if pdef.type == "int" else float(pdef.default)
+    else:
+        new_params = {}
+        for pname, pdef in reg.params.items():
+            val = random.uniform(pdef.min, pdef.max)
+            new_params[pname] = int(round(val / pdef.step) * pdef.step) if pdef.type == "int" \
+                else round(round(val / pdef.step) * pdef.step, 2)
 
     condition = generate_random_condition(indicator_name, reg)
     field_name = None if len(reg.output_fields) <= 1 else random.choice(reg.output_fields)
@@ -566,6 +630,5 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
         generation=max(parent_a.generation, parent_b.generation) + 1,
         layers=child_layers,
         cross_layer_logic=child_cross_logic,
-        _layers_explicit=child_layers is not None,
     )
     return child
