@@ -100,7 +100,7 @@ class EvolutionEngine:
         max_generations: int = 200,
         patience: int = 15,
         decline_limit: int = 10,
-        elite_ratio: float = 0.4,
+        elite_ratio: float = 0.25,
         leverage: int = 1,
         direction: str = "long",
         timeframe_pool: Optional[list] = None,
@@ -121,6 +121,7 @@ class EvolutionEngine:
         ancestor: StrategyDNA,
         evaluate_fn: Callable[[StrategyDNA], float],
         on_generation: Optional[Callable[[int, float, float], None]] = None,
+        extra_ancestors: Optional[List[StrategyDNA]] = None,
     ) -> Dict:
         """Run the full evolution loop.
 
@@ -135,6 +136,7 @@ class EvolutionEngine:
         # Initialize population
         population = init_population(
             self.population_size, ancestor,
+            extra_ancestors=extra_ancestors,
             leverage=self.leverage, direction=self.direction,
             timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
         )
@@ -193,6 +195,7 @@ class EvolutionEngine:
                     "history": history,
                     "stop_reason": reason,
                     "total_generations": gen,
+                    "target_reached": reason == "target_reached",
                 }
 
             # Selection: keep top elite_ratio
@@ -201,7 +204,22 @@ class EvolutionEngine:
 
             # Crossover: breed new individuals from elites
             children = []
-            # Base mutation pool with structural operators
+
+            # Adaptive mutation pool weights based on stagnation
+            # More structural changes when stuck, more refinement when improving
+            if stagnation_count > 8:
+                mut_weights = [15, 30, 10, 15, 20, 10]  # Heavy on indicator replacement
+                n_mutations_choices = [2, 3, 4]
+                n_mut_weights = [30, 45, 25]
+            elif stagnation_count > 4:
+                mut_weights = [25, 20, 15, 20, 10, 10]  # Balanced
+                n_mutations_choices = [1, 2, 3]
+                n_mut_weights = [25, 45, 30]
+            else:
+                mut_weights = [35, 10, 10, 25, 10, 10]  # Heavy on params + risk (fine-tuning)
+                n_mutations_choices = [1, 2, 3]
+                n_mut_weights = [50, 35, 15]
+
             mutation_pool = [
                 mutate_params, mutate_indicator, mutate_logic, mutate_risk,
                 mutate_add_signal, mutate_remove_signal,
@@ -209,21 +227,19 @@ class EvolutionEngine:
             # Add cross_logic mutation for MTF strategies
             if len(self.timeframe_pool) > 1:
                 mutation_pool.append(mutate_cross_logic)
+                mut_weights.append(10)
 
             while len(children) < self.population_size - elite_count - 2:
                 if len(elites) >= 2:
                     p1, p2 = random.sample(elites, 2)
                     try:
                         child = crossover(p1, p2)
-                        # Adaptive mutation intensity: increase when stagnating
-                        if stagnation_count > 8:
-                            n_mutations = random.choices([2, 3, 4], weights=[30, 45, 25])[0]
-                        elif stagnation_count > 4:
-                            n_mutations = random.choices([1, 2, 3], weights=[25, 45, 30])[0]
-                        else:
-                            n_mutations = random.choices([1, 2, 3], weights=[50, 35, 15])[0]
+                        # Adaptive mutation intensity
+                        n_mutations = random.choices(
+                            n_mutations_choices, weights=n_mut_weights,
+                        )[0]
                         for _ in range(n_mutations):
-                            mut = random.choice(mutation_pool)
+                            mut = random.choices(mutation_pool, weights=mut_weights)[0]
                             child = mut(child)
                         children.append(child)
                     except Exception:
@@ -264,4 +280,5 @@ class EvolutionEngine:
             "history": history,
             "stop_reason": "max_generations",
             "total_generations": self.max_generations,
+            "target_reached": champion_score >= self.target_score,
         }

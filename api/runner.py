@@ -294,15 +294,28 @@ class EvolutionRunner(threading.Thread):
                 )
 
                 # Reset for new population with champion as ancestor
+                # Pass top-3 individuals as extra ancestors for multi-start
+                extra_ancestors = []
                 if champion is not None:
                     dna = champion
                     dna.mutation_ops = []
+                    # Collect top-3 from previous population
+                    if hasattr(engine, '_population') and engine._population:
+                        seen_ids = {dna.strategy_id}
+                        for ind in engine._population[:5]:
+                            if ind.strategy_id not in seen_ids:
+                                ind.mutation_ops = []
+                                extra_ancestors.append(ind)
+                                seen_ids.add(ind.strategy_id)
+                                if len(extra_ancestors) >= 2:
+                                    break
                 engine._population = None
 
                 result = engine.evolve(
                     ancestor=dna,
                     evaluate_fn=evaluate_fn,
                     on_generation=on_generation,
+                    extra_ancestors=extra_ancestors if extra_ancestors else None,
                 )
                 champion = result["champion"]
                 stop_reason = result["stop_reason"]

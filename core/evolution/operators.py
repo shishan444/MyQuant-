@@ -285,6 +285,37 @@ def mutate_cross_logic(dna: StrategyDNA) -> StrategyDNA:
     return StrategyDNA.from_dict(data)
 
 
+def _polynomial_mutation(
+    value: float, lower: float, upper: float, eta: float = 20.0,
+) -> float:
+    """Polynomial bounded mutation (Deb & Goyal, 1996).
+
+    Produces small perturbations near current value with high probability,
+    and large jumps with low probability. eta controls the distribution shape:
+    - High eta (e.g. 20): small mutations (exploitation)
+    - Low eta (e.g. 5): large mutations (exploration)
+
+    Args:
+        value: Current parameter value.
+        lower: Lower bound.
+        upper: Upper bound.
+        eta: Distribution index (higher = more concentrated).
+
+    Returns:
+        Mutated value within [lower, upper].
+    """
+    delta = random.random()
+    if delta < 0.5:
+        xy = 1.0 - (value - lower) / max(upper - lower, 1e-10)
+        val = 2.0 * delta + (1.0 - 2.0 * delta) * (xy ** (eta + 1.0))
+        deltaq = val ** (1.0 / (eta + 1.0)) - 1.0
+    else:
+        xy = 1.0 - (upper - value) / max(upper - lower, 1e-10)
+        val = 2.0 * (1.0 - delta) + 2.0 * (delta - 0.5) * (xy ** (eta + 1.0))
+        deltaq = 1.0 - val ** (1.0 / (eta + 1.0))
+    return max(lower, min(upper, value + deltaq * (upper - lower)))
+
+
 def mutate_params(dna: StrategyDNA) -> StrategyDNA:
     """Mutate a random parameter in a random signal gene (base or MTF layer)."""
     data = dna.to_dict()
@@ -335,11 +366,12 @@ def mutate_params(dna: StrategyDNA) -> StrategyDNA:
                 gene["params"] = params
                 return StrategyDNA.from_dict(data)
 
-        # 3. Free exploration: random delta mutation
+        # 3. Polynomial bounded mutation (DE-style)
+        # Better exploration/exploitation balance than uniform random delta
         current = params.get(param_name, pdef.default)
-        range_size = pdef.max - pdef.min
-        delta = random.choice([-1, 1]) * range_size * random.uniform(0.05, 0.30)
-        new_val = current + delta
+        new_val = _polynomial_mutation(
+            current, pdef.min, pdef.max, eta=20.0,
+        )
         new_val = pdef.clamp(round(new_val / pdef.step) * pdef.step)
         params[param_name] = int(new_val) if pdef.type == "int" else round(float(new_val), 4)
         gene["params"] = params
