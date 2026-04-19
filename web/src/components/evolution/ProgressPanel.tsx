@@ -38,6 +38,8 @@ export function ProgressPanel({
   const isActive = isActiveStatus(task.status);
   const isPaused = task.status === "paused";
   const reachedTarget = bestScore >= targetScore;
+  const isContinuous = task.continuous === true;
+  const populationCount = task.population_count ?? 1;
   const [showChampion, setShowChampion] = useState(false);
 
   return (
@@ -68,12 +70,17 @@ export function ProgressPanel({
         </span>
         <span className="text-xs text-slate-500">
           第 <span className="font-mono text-slate-400">{currentGeneration}</span>{" "}
-          代 / {maxGenerations} 代
+          代{isContinuous ? "" : ` / ${maxGenerations} 代`}
         </span>
+        {isContinuous && populationCount > 1 && (
+          <span className="text-xs text-amber-400">
+            第 <span className="font-mono">{populationCount}</span> 轮探索
+          </span>
+        )}
       </div>
 
-      {/* Progress bar */}
-      <div className="flex flex-col gap-1.5">
+      {/* Progress bar - hidden for continuous mode (no upper bound) */}
+      {!isContinuous && (
         <div className="flex items-center justify-between text-xs">
           <span className="text-slate-500">
             进度
@@ -92,6 +99,7 @@ export function ProgressPanel({
           )}
         />
       </div>
+      )}
 
       {/* Score comparison */}
       <div className="grid grid-cols-2 gap-3">

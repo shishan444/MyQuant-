@@ -143,7 +143,19 @@ export function useEvolutionWebSocket(taskId: string | null) {
         try {
           const update: GenerationUpdate = JSON.parse(event.data);
 
-          if (
+          if (update.type === "population_started") {
+            qc.setQueryData(
+              evolutionKeys.task(currentTaskId),
+              (old: unknown) => {
+                if (!old) return old;
+                const prev = old as Record<string, unknown>;
+                return {
+                  ...prev,
+                  population_count: update.population_count,
+                };
+              }
+            );
+          } else if (
             update.type === "generation_complete" ||
             update.type === "evolution_complete"
           ) {

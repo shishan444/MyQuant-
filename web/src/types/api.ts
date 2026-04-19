@@ -1,7 +1,7 @@
 export interface SignalGene {
   indicator: string;
   params: Record<string, unknown>;
-  role: "entry_trigger" | "entry_guard" | "exit_trigger" | "exit_guard";
+  role: "entry_trigger" | "entry_guard" | "exit_trigger" | "exit_guard" | "add_trigger" | "add_guard" | "reduce_trigger" | "reduce_guard";
   field?: string;
   condition: {
     type: "lt" | "gt" | "le" | "ge" | "cross_above" | "cross_below" | "price_above" | "price_below";
@@ -14,6 +14,8 @@ export interface SignalGene {
 export interface LogicGenes {
   entry_logic: "AND" | "OR";
   exit_logic: "AND" | "OR";
+  add_logic?: "AND" | "OR";
+  reduce_logic?: "AND" | "OR";
 }
 
 export interface ExecutionGenes {
@@ -133,6 +135,8 @@ export interface EvolutionTask {
   };
   champion_dimension_scores?: Record<string, number>;
   walk_forward_enabled?: boolean;
+  continuous?: boolean;
+  population_count?: number;
 }
 
 export interface EvolutionHistoryRecord {
@@ -195,7 +199,7 @@ export interface EvolutionHistoryResponse {
 }
 
 export interface GenerationUpdate {
-  type: "generation_complete" | "evolution_complete";
+  type: "generation_complete" | "evolution_complete" | "population_started";
   task_id: string;
   generation: number;
   best_score: number;
@@ -205,6 +209,9 @@ export interface GenerationUpdate {
   champion_dna?: DNA;
   population_diversity?: number;
   last_mutations?: string[];
+  population_count?: number;
+  best_score_ever?: number;
+  total_generations_so_far?: number;
 }
 
 export interface MutationRecord {
@@ -310,4 +317,14 @@ export interface ChartIndicatorsResponse {
     lower: Array<{ time: string; value: number }>;
   } | null;
   rsi: Array<{ time: string; value: number }> | null;
+  macd: {
+    macd: Array<{ time: string; value: number }>;
+    signal: Array<{ time: string; value: number }>;
+    histogram: Array<{ time: string; value: number }>;
+  } | null;
+  kdj: {
+    k: Array<{ time: string; value: number }>;
+    d: Array<{ time: string; value: number }>;
+    j: Array<{ time: string; value: number }>;
+  } | null;
 }

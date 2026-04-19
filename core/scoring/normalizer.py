@@ -9,7 +9,7 @@ def normalize(metric_name: str, value: float) -> float:
     - annual_return: linear map [-100%, +100%] -> [0, 100]
     - sharpe_ratio: linear map [0, 3.0] -> [0, 100], >= 3.0 = 100
     - max_drawdown: 0% drawdown = 100, >= 50% drawdown = 0
-    - win_rate: linear map [40%, 70%] -> [0, 100]
+    - win_rate: linear map [30%, 70%] -> [0, 100]
     - calmar_ratio: linear map [0, 5.0] -> [0, 100], >= 5.0 = 100
     """
     if metric_name == "annual_return":
@@ -30,8 +30,8 @@ def normalize(metric_name: str, value: float) -> float:
         if value < -0.20:
             score = score * (1.0 + value)  # Extra penalty for large dd
     elif metric_name == "win_rate":
-        # Map [0.4, 0.7] to [0, 100]
-        score = (value - 0.4) / 0.3 * 100
+        # Map [0.3, 0.7] to [0, 100]
+        score = (value - 0.3) / 0.4 * 100
     elif metric_name == "calmar_ratio":
         # Map [0, 5.0] to [0, 100]
         score = min(value / 5.0, 1.0) * 100

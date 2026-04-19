@@ -168,9 +168,10 @@ class EvolutionRunner(threading.Thread):
         # Track mutations for logging
         last_mutations: List[str] = []
         gen_diagnostics: List[dict] = []
+        global_gen_offset = 0  # Offset for continuous mode: avoids history overwrite
 
         def on_generation(gen: int, best_score: float, avg_score: float) -> None:
-            nonlocal last_mutations
+            nonlocal last_mutations, global_gen_offset
 
             # Check stop/pause
             from core.persistence.db import get_task
@@ -178,13 +179,14 @@ class EvolutionRunner(threading.Thread):
             if t is None or t["status"] not in ("running", "pending"):
                 raise _StopEvolution(t["status"] if t else "unknown")
 
-            # Update current_generation in DB
+            # Update current_generation in DB (use global offset for continuous mode)
+            global_gen = gen + global_gen_offset
             import sqlite3
             conn = sqlite3.connect(str(self.db_path))
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 "UPDATE evolution_task SET current_generation = ?, updated_at = ? WHERE task_id = ?",
-                (gen, datetime.now(timezone.utc).isoformat(), task_id),
+                (global_gen, datetime.now(timezone.utc).isoformat(), task_id),
             )
             conn.commit()
             conn.close()
@@ -206,7 +208,7 @@ class EvolutionRunner(threading.Thread):
             top3_summary = f"best={best_score:.1f}"
             if gen_diag:
                 top3_summary += f"|diag={json.dumps(gen_diag)}"
-            save_history(self.db_path, task_id, gen, best_score, avg_score, top3_summary)
+            save_history(self.db_path, task_id, global_gen, best_score, avg_score, top3_summary)
 
             # Save snapshot for each generation
             if hasattr(engine, '_population') and engine._population:
@@ -214,7 +216,7 @@ class EvolutionRunner(threading.Thread):
                     # Find best individual from current population
                     best_ind = engine._population[0]
                     save_snapshot(
-                        self.db_path, task_id, gen,
+                        self.db_path, task_id, global_gen,
                         best_score=best_score,
                         avg_score=avg_score,
                         best_dna=best_ind,
@@ -255,7 +257,7 @@ class EvolutionRunner(threading.Thread):
             ws_payload = {
                 "type": "generation_complete",
                 "task_id": task_id,
-                "generation": gen,
+                "generation": global_gen,
                 "best_score": best_score,
                 "avg_score": avg_score,
                 "target_score": target_score,
@@ -293,22 +295,33 @@ class EvolutionRunner(threading.Thread):
                     task_id, self._population_count + 1, stop_reason,
                 )
 
-                # Reset for new population with champion as ancestor
-                # Pass top-3 individuals as extra ancestors for multi-start
+                # Notify frontend that a new population has started
+                _push_ws(task_id, {
+                    "type": "population_started",
+                    "task_id": task_id,
+                    "population_count": self._population_count + 1,
+                    "best_score_ever": champion_score if champion is not None else 0,
+                    "total_generations_so_far": global_gen_offset,
+                })
+
+                # Reset for new population with expanded search space
+                # Inject diverse strategy templates to avoid searching the same region
                 extra_ancestors = []
                 if champion is not None:
                     dna = champion
                     dna.mutation_ops = []
-                    # Collect top-3 from previous population
-                    if hasattr(engine, '_population') and engine._population:
-                        seen_ids = {dna.strategy_id}
-                        for ind in engine._population[:5]:
-                            if ind.strategy_id not in seen_ids:
-                                ind.mutation_ops = []
-                                extra_ancestors.append(ind)
-                                seen_ids.add(ind.strategy_id)
-                                if len(extra_ancestors) >= 2:
-                                    break
+
+                # Inject 2 random strategy templates as seeds (trend/momentum/mean-reversion etc.)
+                # This expands the search space beyond the champion's strategy region
+                from core.evolution.population import STRATEGY_TEMPLATES, _dna_from_template
+                template_seeds = random.sample(
+                    STRATEGY_TEMPLATES, min(2, len(STRATEGY_TEMPLATES))
+                )
+                for tpl in template_seeds:
+                    seed = _dna_from_template(
+                        tpl, timeframe, symbol, leverage, direction,
+                    )
+                    extra_ancestors.append(seed)
                 engine._population = None
 
                 result = engine.evolve(
@@ -319,6 +332,8 @@ class EvolutionRunner(threading.Thread):
                 )
                 champion = result["champion"]
                 stop_reason = result["stop_reason"]
+                # Accumulate global generation offset to prevent history overwrite
+                global_gen_offset += result["total_generations"]
 
             # Save champion
             if champion is not None:
