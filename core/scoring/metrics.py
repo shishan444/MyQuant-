@@ -36,6 +36,10 @@ def compute_metrics(
             "win_rate": 0.0,
             "calmar_ratio": 0.0,
             "total_trades": 0,
+            "sortino_ratio": 0.0,
+            "profit_factor": 0.0,
+            "max_consecutive_losses": 0,
+            "monthly_consistency": 0.0,
         }
 
     # Annual return (from equity curve - standard)
@@ -85,6 +89,47 @@ def compute_metrics(
     else:
         calmar_ratio = 0.0
 
+    # Sortino ratio: like Sharpe but only penalizes downside deviation
+    sortino_ratio = 0.0
+    if trade_returns is not None and len(trade_returns) > 1:
+        downside = trade_returns[trade_returns < 0]
+        if len(downside) > 0:
+            downside_std = np.std(downside, ddof=1)
+            if downside_std > 0 and not np.isnan(downside_std):
+                trades_per_year = total_trades / max(years, 0.01)
+                sortino_ratio = (np.mean(trade_returns) / downside_std) * np.sqrt(trades_per_year)
+
+    # Profit factor: gross profit / gross loss
+    profit_factor = 0.0
+    if trade_returns is not None and len(trade_returns) > 0:
+        gross_profit = float(np.sum(trade_returns[trade_returns > 0]))
+        gross_loss = float(abs(np.sum(trade_returns[trade_returns < 0])))
+        if gross_loss > 0:
+            profit_factor = gross_profit / gross_loss
+        elif gross_profit > 0:
+            profit_factor = 10.0  # All wins, no losses
+
+    # Max consecutive losses
+    max_consecutive_losses = 0
+    if trade_returns is not None and len(trade_returns) > 0:
+        current_streak = 0
+        for r in trade_returns:
+            if r < 0:
+                current_streak += 1
+                max_consecutive_losses = max(max_consecutive_losses, current_streak)
+            else:
+                current_streak = 0
+
+    # Monthly consistency: fraction of profitable months (0-1)
+    monthly_consistency = 0.0
+    if len(equity_curve) > 30:
+        try:
+            monthly_returns = equity_curve.resample('ME').last().pct_change().dropna()
+            if len(monthly_returns) > 0:
+                monthly_consistency = float((monthly_returns > 0).sum() / len(monthly_returns))
+        except Exception:
+            pass
+
     return {
         "annual_return": float(annual_return),
         "sharpe_ratio": float(sharpe_ratio),
@@ -92,4 +137,8 @@ def compute_metrics(
         "win_rate": float(win_rate),
         "calmar_ratio": float(calmar_ratio),
         "total_trades": total_trades,
+        "sortino_ratio": float(sortino_ratio),
+        "profit_factor": float(profit_factor),
+        "max_consecutive_losses": int(max_consecutive_losses),
+        "monthly_consistency": float(monthly_consistency),
     }

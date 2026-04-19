@@ -48,10 +48,17 @@ def score_strategy(
         for dim, weight in template.weights.items()
     )
 
-    # Trade count penalty: strategies with very few trades are unreliable
+    # Trade count penalty: Sigmoid-based penalty for low trade count
+    # Smooth transition instead of harsh linear cutoff
     MIN_TRADES_THRESHOLD = 10
     trade_count = metrics.get("total_trades", 0)
-    trade_factor = min(1.0, trade_count / MIN_TRADES_THRESHOLD)
+    if trade_count < MIN_TRADES_THRESHOLD:
+        # Sigmoid: k=0.5 controls steepness, x0=5 is midpoint
+        # At 0 trades: ~0.07, at 5 trades: ~0.50, at 10 trades: ~0.93
+        import math
+        trade_factor = 1.0 / (1.0 + math.exp(-0.5 * (trade_count - 5)))
+    else:
+        trade_factor = 1.0
     total *= trade_factor
 
     return {

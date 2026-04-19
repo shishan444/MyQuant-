@@ -35,6 +35,25 @@ def normalize(metric_name: str, value: float) -> float:
     elif metric_name == "calmar_ratio":
         # Map [0, 5.0] to [0, 100]
         score = min(value / 5.0, 1.0) * 100
+    elif metric_name == "sortino_ratio":
+        # Map [0, 4.0] to [0, 100]
+        score = min(value / 4.0, 1.0) * 100
+        if value < 0:
+            score = max(0, 50 + value * 10)
+    elif metric_name == "profit_factor":
+        # Map [0, 3.0] to [0, 100]
+        if value <= 0:
+            score = 0.0
+        elif value < 1.0:
+            score = value * 30  # PF < 1 is poor
+        else:
+            score = min(30 + (value - 1.0) / 2.0 * 70, 100.0)
+    elif metric_name == "max_consecutive_losses":
+        # 0 losses = 100, >= 10 losses = 0
+        score = max(0, 100 - value * 10)
+    elif metric_name == "monthly_consistency":
+        # Already 0-1, scale to 0-100
+        score = value * 100
     else:
         score = 50.0
 
