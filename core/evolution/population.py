@@ -493,4 +493,30 @@ def init_population(
                 profiled=False,
             ))
 
+    # Dedup: filter out individuals whose signatures are in exclude_signatures
+    if exclude_signatures:
+        from core.evolution.diversity import _gene_signature as _sig
+        deduped = []
+        seen = set()
+        for ind in population:
+            sig = _sig(ind)
+            if sig not in exclude_signatures and sig not in seen:
+                deduped.append(ind)
+                seen.add(sig)
+        # Backfill with random individuals if dedup removed too many
+        attempts = 0
+        while len(deduped) < size and attempts < size * 3:
+            candidate = create_random_dna(
+                timeframe, symbol,
+                leverage=leverage, direction=direction,
+                timeframe_pool=timeframe_pool,
+                indicator_pool=indicator_pool,
+            )
+            sig = _sig(candidate)
+            if sig not in exclude_signatures and sig not in seen:
+                deduped.append(candidate)
+                seen.add(sig)
+            attempts += 1
+        population = deduped
+
     return population

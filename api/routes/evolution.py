@@ -18,6 +18,7 @@ from api.schemas import (
     EvolutionTaskResponse,
 )
 from core.persistence.db import (
+    count_all_tasks,
     get_history,
     get_task,
     list_all_tasks,
@@ -106,6 +107,8 @@ def _task_row_to_response(row: Dict[str, Any]) -> EvolutionTaskResponse:
         champion_metrics=_parse_json_dict(row.get("champion_metrics")),
         champion_dimension_scores=_parse_json_dict(row.get("champion_dimension_scores")),
         walk_forward_enabled=bool(row.get("walk_forward_enabled", 0)),
+        continuous=bool(row.get("continuous", 1)),
+        strategy_threshold=row.get("strategy_threshold", 80.0),
     )
 
 
@@ -209,7 +212,8 @@ def create_task(
                data_start = ?, data_end = ?,
                data_time_start = ?, data_time_end = ?, data_row_count = ?,
                indicator_pool = ?, timeframe_pool = ?, mode = ?,
-               walk_forward_enabled = ?
+               walk_forward_enabled = ?, continuous = ?,
+               strategy_threshold = ?
            WHERE task_id = ?""",
         (payload.population_size, payload.max_generations,
          payload.elite_ratio, payload.n_workers,
@@ -220,6 +224,8 @@ def create_task(
          json.dumps(payload.timeframe_pool) if payload.timeframe_pool else None,
          payload.mode,
          1 if payload.walk_forward_enabled else 0,
+         1 if payload.continuous else 0,
+         payload.strategy_threshold,
          task_id),
     )
     conn.commit()
@@ -234,13 +240,16 @@ def create_task(
 @router.get("/tasks")
 def list_tasks(
     status: Optional[str] = None,
-    limit: int = 50,
+    page: int = 1,
+    page_size: int = 20,
     db_path: Path = Depends(get_db_path),
 ) -> EvolutionTaskListResponse:
-    """List evolution tasks with optional status filter."""
-    rows = list_all_tasks(db_path, status=status, limit=limit)
+    """List evolution tasks with optional status filter and pagination."""
+    offset = (page - 1) * page_size
+    total = count_all_tasks(db_path, status=status)
+    rows = list_all_tasks(db_path, status=status, limit=page_size, offset=offset)
     items = [_task_row_to_response(r) for r in rows]
-    return EvolutionTaskListResponse(items=items, total=len(items))
+    return EvolutionTaskListResponse(items=items, total=total, page=page, page_size=page_size)
 
 
 @router.get("/tasks/{task_id}")
@@ -387,6 +396,41 @@ def get_task_strategies(
             continue
 
     return {"task_id": task_id, "strategies": strategies}
+
+
+@router.get("/tasks/{task_id}/discovered-strategies")
+def get_discovered_strategies(
+    task_id: str,
+    min_score: Optional[float] = None,
+    db_path: Path = Depends(get_db_path),
+) -> List[Dict[str, Any]]:
+    """Get auto-extracted strategies for a task from the strategy table."""
+    from api.db_ext import list_strategies
+    strategies = list_strategies(
+        db_path,
+        source="evolution",
+        limit=100,
+    )
+    # Filter by source_task_id and optional min_score
+    result = []
+    for s in strategies:
+        if s.get("source_task_id") != task_id:
+            continue
+        if min_score is not None and (s.get("best_score") or 0) < min_score:
+            continue
+        result.append({
+            "strategy_id": s["strategy_id"],
+            "name": s.get("name"),
+            "dna": json.loads(s["dna_json"]) if s.get("dna_json") else None,
+            "source": "evolution",
+            "source_task_id": s.get("source_task_id"),
+            "score": s.get("best_score"),
+            "generation": s.get("generation", 0),
+            "created_at": s.get("created_at"),
+        })
+    # Sort by score desc
+    result.sort(key=lambda x: x.get("score", 0) or 0, reverse=True)
+    return result
 
 
 def _get_connection(db_path: Path):

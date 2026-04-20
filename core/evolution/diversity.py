@@ -10,20 +10,19 @@ from core.evolution.population import create_random_dna
 def _gene_signature(dna: StrategyDNA) -> str:
     """Create a signature string for similarity comparison.
 
-    Includes indicator name, key parameters, condition type, and role
+    Includes indicator name, ALL parameters (sorted), condition type, and role
     so that different parameter values produce different signatures.
     """
     parts = []
     for gene in sorted(dna.signal_genes, key=lambda g: g.role.value):
-        # Include first param value for finer granularity
-        param_summary = ""
-        if gene.params:
-            first_key = next(iter(gene.params))
-            param_summary = f",p={gene.params[first_key]}"
+        # Include all param values for full granularity
+        param_parts = sorted(f"{k}={v}" for k, v in gene.params.items())
+        param_summary = ",".join(param_parts)
         cond_type = gene.condition.get("type", "?") if gene.condition else "?"
-        parts.append(f"{gene.indicator}{param_summary}:{cond_type}:{gene.role.value}")
+        parts.append(f"{gene.indicator}({param_summary}):{cond_type}:{gene.role.value}")
     parts.append(f"lev:{dna.risk_genes.leverage}")
     parts.append(f"dir:{dna.risk_genes.direction}")
+    parts.append(f"sl:{dna.risk_genes.stop_loss:.3f}")
     return "|".join(parts)
 
 

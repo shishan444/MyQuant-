@@ -122,6 +122,7 @@ class EvolutionEngine:
         evaluate_fn: Callable[[StrategyDNA], float],
         on_generation: Optional[Callable[[int, float, float], None]] = None,
         extra_ancestors: Optional[List[StrategyDNA]] = None,
+        exclude_signatures: Optional[set] = None,
     ) -> Dict:
         """Run the full evolution loop.
 
@@ -129,6 +130,7 @@ class EvolutionEngine:
             ancestor: Starting strategy.
             evaluate_fn: Function that takes a StrategyDNA and returns a score (0-100).
             on_generation: Optional callback(gen, best_score, avg_score) after each gen.
+            exclude_signatures: Set of gene signatures to avoid in population init.
 
         Returns:
             Dict with champion, history, stop_reason, total_generations.
@@ -139,6 +141,7 @@ class EvolutionEngine:
             extra_ancestors=extra_ancestors,
             leverage=self.leverage, direction=self.direction,
             timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
+            exclude_signatures=exclude_signatures,
         )
         self._population = population
         stop_checker = EarlyStopChecker(

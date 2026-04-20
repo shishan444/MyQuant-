@@ -4,12 +4,13 @@ import type {
   EvolutionTaskListResponse,
   EvolutionHistoryResponse,
   EvolvedStrategy,
+  DiscoveredStrategy,
 } from "@/types/api";
 
 export async function getEvolutionTasks(params?: {
   status?: string;
-  limit?: number;
-  offset?: number;
+  page?: number;
+  page_size?: number;
 }): Promise<EvolutionTaskListResponse> {
   const { data } = await api.get("/api/evolution/tasks", { params });
   return data;
@@ -74,5 +75,13 @@ export async function getTaskStrategies(taskId: string): Promise<{
   strategies: EvolvedStrategy[];
 }> {
   const { data } = await api.get(`/api/evolution/tasks/${taskId}/strategies`);
+  return data;
+}
+
+export async function getDiscoveredStrategies(
+  taskId: string,
+  params?: { min_score?: number }
+): Promise<DiscoveredStrategy[]> {
+  const { data } = await api.get(`/api/evolution/tasks/${taskId}/discovered-strategies`, { params });
   return data;
 }

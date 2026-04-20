@@ -155,6 +155,11 @@ export function useEvolutionWebSocket(taskId: string | null) {
                 };
               }
             );
+          } else if (update.type === "strategy_discovered") {
+            // Invalidate discovered strategies list to trigger refetch
+            qc.invalidateQueries({
+              queryKey: ["evolution", "discovered", currentTaskId],
+            });
           } else if (
             update.type === "generation_complete" ||
             update.type === "evolution_complete"

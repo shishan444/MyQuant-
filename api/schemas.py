@@ -43,6 +43,10 @@ class SignalRole(str, Enum):
     ENTRY_GUARD = "entry_guard"
     EXIT_TRIGGER = "exit_trigger"
     EXIT_GUARD = "exit_guard"
+    ADD_TRIGGER = "add_trigger"
+    ADD_GUARD = "add_guard"
+    REDUCE_TRIGGER = "reduce_trigger"
+    REDUCE_GUARD = "reduce_guard"
 
 
 class ScoreTemplate(str, Enum):
@@ -70,6 +74,8 @@ class LogicGenesModel(BaseModel):
 
     entry_logic: str = "AND"
     exit_logic: str = "AND"
+    add_logic: str = "AND"
+    reduce_logic: str = "AND"
 
 
 class ExecutionGenesModel(BaseModel):
@@ -266,6 +272,8 @@ class EvolutionTaskCreate(BaseModel):
     direction: str = Field(default="long", pattern="^(long|short|mixed)$")
     data_start: Optional[str] = None
     data_end: Optional[str] = None
+    continuous: bool = True
+    strategy_threshold: float = Field(default=80.0, description="Score threshold for auto-extracting strategies")
 
 
 class EvolutionTaskResponse(BaseModel):
@@ -301,11 +309,15 @@ class EvolutionTaskResponse(BaseModel):
     champion_metrics: Optional[Dict[str, Any]] = None
     champion_dimension_scores: Optional[Dict[str, Any]] = None
     walk_forward_enabled: bool = False
+    continuous: bool = True
+    strategy_threshold: float = 80.0
 
 
 class EvolutionTaskListResponse(BaseModel):
     items: List[EvolutionTaskResponse]
     total: int
+    page: int = 1
+    page_size: int = 20
 
 
 class EvolutionHistoryRecord(BaseModel):

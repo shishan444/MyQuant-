@@ -137,6 +137,7 @@ export interface EvolutionTask {
   walk_forward_enabled?: boolean;
   continuous?: boolean;
   population_count?: number;
+  strategy_threshold?: number;
 }
 
 export interface EvolutionHistoryRecord {
@@ -186,6 +187,8 @@ export interface StrategyListResponse {
 export interface EvolutionTaskListResponse {
   items: EvolutionTask[];
   total: number;
+  page?: number;
+  page_size?: number;
 }
 
 export interface DatasetListResponse {
@@ -199,7 +202,7 @@ export interface EvolutionHistoryResponse {
 }
 
 export interface GenerationUpdate {
-  type: "generation_complete" | "evolution_complete" | "population_started";
+  type: "generation_complete" | "evolution_complete" | "population_started" | "strategy_discovered";
   task_id: string;
   generation: number;
   best_score: number;
@@ -212,6 +215,20 @@ export interface GenerationUpdate {
   population_count?: number;
   best_score_ever?: number;
   total_generations_so_far?: number;
+  strategy_id?: string;
+  score?: number;
+  name?: string;
+}
+
+export interface DiscoveredStrategy {
+  strategy_id: string;
+  name: string;
+  dna: DNA;
+  source: "evolution";
+  source_task_id: string;
+  score: number;
+  generation: number;
+  created_at: string;
 }
 
 export interface MutationRecord {

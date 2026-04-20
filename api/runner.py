@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from core.evolution.engine import EvolutionEngine
-from core.evolution.diversity import compute_diversity
+from core.evolution.diversity import compute_diversity, _gene_signature
 from core.strategy.dna import StrategyDNA
 from core.persistence.db import (
     save_history,
@@ -169,6 +169,8 @@ class EvolutionRunner(threading.Thread):
         last_mutations: List[str] = []
         gen_diagnostics: List[dict] = []
         global_gen_offset = 0  # Offset for continuous mode: avoids history overwrite
+        discovered_signatures: set = set()  # Signatures of auto-extracted strategies
+        strategy_threshold = task_row.get("strategy_threshold", 80.0)
 
         def on_generation(gen: int, best_score: float, avg_score: float) -> None:
             nonlocal last_mutations, global_gen_offset
@@ -253,6 +255,42 @@ class EvolutionRunner(threading.Thread):
                 conn2.commit()
                 conn2.close()
 
+            # Auto-extract high-scoring strategies to strategy table
+            if hasattr(engine, '_population') and engine._population:
+                for ind in engine._population:
+                    diag = getattr(ind, '_eval_diagnostics', None)
+                    if not diag or diag.get("score", 0) < strategy_threshold:
+                        continue
+                    sig = _gene_signature(ind)
+                    if sig in discovered_signatures:
+                        continue
+                    discovered_signatures.add(sig)
+                    try:
+                        from api.db_ext import save_strategy
+                        name = f"{task_row.get('symbol', 'BTC')} {task_row.get('timeframe', '4h')} G{global_gen}"
+                        save_strategy(
+                            self.db_path,
+                            strategy_id=ind.strategy_id,
+                            dna_json=ind.to_json(),
+                            symbol=task_row.get("symbol", "BTCUSDT"),
+                            timeframe=task_row.get("timeframe", "4h"),
+                            name=name,
+                            source="evolution",
+                            source_task_id=task_id,
+                            best_score=diag["score"],
+                            generation=global_gen,
+                        )
+                        _push_ws(task_id, {
+                            "type": "strategy_discovered",
+                            "task_id": task_id,
+                            "strategy_id": ind.strategy_id,
+                            "score": diag["score"],
+                            "name": name,
+                            "generation": global_gen,
+                        })
+                    except Exception:
+                        logger.debug("strategy extract failed", exc_info=True)
+
             # Push WS update with champion DNA
             ws_payload = {
                 "type": "generation_complete",
@@ -326,11 +364,19 @@ class EvolutionRunner(threading.Thread):
                     extra_ancestors.append(seed)
                 engine._population = None
 
+                # Collect signatures from previous population for dedup
+                pop_sigs = set()
+                if hasattr(engine, '_population') and engine._population:
+                    for ind in engine._population:
+                        pop_sigs.add(_gene_signature(ind))
+                discovered_signatures.update(pop_sigs)
+
                 result = engine.evolve(
                     ancestor=dna,
                     evaluate_fn=evaluate_fn,
                     on_generation=on_generation,
                     extra_ancestors=extra_ancestors if extra_ancestors else None,
+                    exclude_signatures=discovered_signatures,
                 )
                 champion = result["champion"]
                 stop_reason = result["stop_reason"]

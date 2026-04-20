@@ -68,11 +68,13 @@ def init_db(db_path: Path) -> None:
             PRIMARY KEY (task_id, generation)
         );
     """)
+    # Migration: add strategy_threshold column if missing
+    try:
+        conn.execute("ALTER TABLE evolution_task ADD COLUMN strategy_threshold REAL DEFAULT 80.0")
+    except Exception:
+        pass  # Column already exists
     conn.commit()
     conn.close()
-
-
-# ── Task operations ──
 
 def save_task(
     db_path: Path,
@@ -234,18 +236,36 @@ def list_all_tasks(
     db_path: Path,
     status: Optional[str] = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    """List all tasks, optionally filtered by status, ordered by creation time desc."""
+    """List tasks, optionally filtered by status, ordered by creation time desc."""
     conn = _connect(db_path)
     if status is not None:
         rows = conn.execute(
-            "SELECT * FROM evolution_task WHERE status = ? ORDER BY created_at DESC LIMIT ?",
-            (status, limit),
+            "SELECT * FROM evolution_task WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (status, limit, offset),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM evolution_task ORDER BY created_at DESC LIMIT ?",
-            (limit,),
+            "SELECT * FROM evolution_task ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
         ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def count_all_tasks(
+    db_path: Path,
+    status: Optional[str] = None,
+) -> int:
+    """Count total tasks, optionally filtered by status."""
+    conn = _connect(db_path)
+    if status is not None:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM evolution_task WHERE status = ?",
+            (status,),
+        ).fetchone()
+    else:
+        row = conn.execute("SELECT COUNT(*) FROM evolution_task").fetchone()
+    conn.close()
+    return row[0] if row else 0
