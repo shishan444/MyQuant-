@@ -43,7 +43,7 @@ _LT = ConditionPreset("lt", [])
 _EQ_1 = ConditionPreset("eq", [1])
 
 # ---------------------------------------------------------------------------
-# Indicator profiles (39 indicators)
+# Indicator profiles (40 indicators)
 # ---------------------------------------------------------------------------
 
 PROFILES: Dict[str, IndicatorProfile] = {

@@ -20,7 +20,8 @@ from core.evolution.operators import mutate_params, mutate_indicator, mutate_log
 # ---------------------------------------------------------------------------
 
 STRATEGY_TEMPLATES = [
-    {   # Trend following
+    {   # trend_ema: EMA trend following with MACD confirmation
+        "name": "trend_ema",
         "genes": [
             {"indicator": "MACD", "params": {"fast": 12, "slow": 26, "signal": 9},
              "role": "entry_trigger", "field": "histogram",
@@ -37,7 +38,8 @@ STRATEGY_TEMPLATES = [
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # Momentum trading
+    {   # momentum: RSI + MACD momentum trading
+        "name": "momentum",
         "genes": [
             {"indicator": "RSI", "params": {"period": 14},
              "role": "entry_trigger", "field": None,
@@ -54,7 +56,8 @@ STRATEGY_TEMPLATES = [
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # Mean reversion
+    {   # mean_reversion: BB + RSI mean reversion
+        "name": "mean_reversion",
         "genes": [
             {"indicator": "BB", "params": {"period": 20, "std": 2.0},
              "role": "entry_trigger", "field": "percent",
@@ -68,49 +71,62 @@ STRATEGY_TEMPLATES = [
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # Trend filter
+    {   # trend_breakout: BB squeeze + MACD breakout
+        "name": "trend_breakout",
         "genes": [
-            {"indicator": "ADX", "params": {"period": 14},
-             "role": "entry_guard", "field": None,
-             "condition": {"type": "gt", "threshold": 25}},
-            {"indicator": "EMA", "params": {"period": 20},
-             "role": "entry_trigger", "field": None,
-             "condition": {"type": "cross_above"}},
-            {"indicator": "EMA", "params": {"period": 20},
-             "role": "exit_trigger", "field": None,
-             "condition": {"type": "cross_below"}},
-        ],
-        "logic": {"entry_logic": "AND", "exit_logic": "OR"},
-    },
-    {   # Overbought/oversold
-        "genes": [
-            {"indicator": "Stochastic", "params": {"k_period": 14, "d_period": 3},
-             "role": "entry_trigger", "field": "k",
-             "condition": {"type": "cross_above", "threshold": 20}},
-            {"indicator": "RSI", "params": {"period": 14},
-             "role": "entry_guard", "field": None,
-             "condition": {"type": "lt", "threshold": 40}},
-            {"indicator": "Stochastic", "params": {"k_period": 14, "d_period": 3},
-             "role": "exit_trigger", "field": "k",
-             "condition": {"type": "cross_below", "threshold": 80}},
-        ],
-        "logic": {"entry_logic": "AND", "exit_logic": "OR"},
-    },
-    {   # Volume confirmation
-        "genes": [
+            {"indicator": "BB", "params": {"period": 20, "std": 2.0},
+             "role": "entry_guard", "field": "bandwidth",
+             "condition": {"type": "lt", "threshold": 0.02}},
             {"indicator": "MACD", "params": {"fast": 12, "slow": 26, "signal": 9},
              "role": "entry_trigger", "field": "histogram",
              "condition": {"type": "cross_above", "threshold": 0}},
-            {"indicator": "OBV", "params": {},
-             "role": "entry_guard", "field": None,
-             "condition": {"type": "gt", "threshold": 0}},
             {"indicator": "MACD", "params": {"fast": 12, "slow": 26, "signal": 9},
              "role": "exit_trigger", "field": "histogram",
              "condition": {"type": "cross_below", "threshold": 0}},
+            {"indicator": "ATR", "params": {"period": 14},
+             "role": "exit_guard", "field": None,
+             "condition": {"type": "gt", "threshold": 0}},
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # Volatility breakout
+    {   # dual_ma_cross: classic EMA(9)/EMA(21) golden/death cross
+        "name": "dual_ma_cross",
+        "genes": [
+            {"indicator": "EMA", "params": {"period": 9},
+             "role": "entry_trigger", "field": None,
+             "condition": {"type": "cross_above"}},
+            {"indicator": "EMA", "params": {"period": 21},
+             "role": "entry_guard", "field": None,
+             "condition": {"type": "price_above"}},
+            {"indicator": "EMA", "params": {"period": 9},
+             "role": "exit_trigger", "field": None,
+             "condition": {"type": "cross_below"}},
+            {"indicator": "EMA", "params": {"period": 21},
+             "role": "exit_guard", "field": None,
+             "condition": {"type": "price_below"}},
+        ],
+        "logic": {"entry_logic": "AND", "exit_logic": "OR"},
+    },
+    {   # multi_tf_trend: multi-timeframe trend confirmation with ADX
+        "name": "multi_tf_trend",
+        "genes": [
+            {"indicator": "EMA", "params": {"period": 50},
+             "role": "entry_trigger", "field": None,
+             "condition": {"type": "cross_above"}},
+            {"indicator": "ADX", "params": {"period": 14},
+             "role": "entry_guard", "field": None,
+             "condition": {"type": "gt", "threshold": 25}},
+            {"indicator": "EMA", "params": {"period": 50},
+             "role": "exit_trigger", "field": None,
+             "condition": {"type": "cross_below"}},
+            {"indicator": "ATR", "params": {"period": 14},
+             "role": "exit_guard", "field": None,
+             "condition": {"type": "gt", "threshold": 0}},
+        ],
+        "logic": {"entry_logic": "AND", "exit_logic": "OR"},
+    },
+    {   # volatility: Bollinger Band volatility breakout
+        "name": "volatility",
         "genes": [
             {"indicator": "BB", "params": {"period": 20, "std": 2.0},
              "role": "entry_guard", "field": "bandwidth",
@@ -228,8 +244,14 @@ def create_random_dna(
     leverage: int = 1,
     direction: str = "long",
     indicator_pool: Optional[List[str]] = None,
+    profiled: bool = True,
 ) -> StrategyDNA:
-    """Generate a completely random but valid StrategyDNA."""
+    """Generate a completely random but valid StrategyDNA.
+
+    Args:
+        profiled: If True, use indicator profiles for guided generation.
+                  If False, generate completely random signals (free exploration).
+    """
     available_indicators = list(indicator_pool) if indicator_pool else list(INDICATOR_REGISTRY.keys())
     trigger_indicators = [
         name for name in available_indicators
@@ -238,7 +260,26 @@ def create_random_dna(
     all_indicators = [name for name in available_indicators if name in INDICATOR_REGISTRY]
 
     def _make_signal(role: SignalRole, pool: list) -> SignalGene:
-        return _make_signal_profiled(role, pool)
+        if profiled:
+            return _make_signal_profiled(role, pool)
+        # Free exploration: 100% random, no profile guidance
+        if not pool:
+            pool[:] = [name for name in INDICATOR_REGISTRY.keys()
+                        if not (role.value.endswith("guard") and INDICATOR_REGISTRY.get(name, type('', (), {})()).guard_only)]
+        indicator_name = random.choice(pool)
+        reg = INDICATOR_REGISTRY[indicator_name]
+        params = _random_params(indicator_name)
+        condition = _random_condition(indicator_name)
+        field_name = None
+        if len(reg.output_fields) > 1:
+            field_name = random.choice(reg.output_fields)
+        return SignalGene(
+            indicator=indicator_name,
+            params=params,
+            role=role,
+            field_name=field_name,
+            condition=condition,
+        )
 
     # Build signal genes: at least 1 entry trigger + 1 exit trigger
     signals = []
@@ -449,6 +490,7 @@ def init_population(
                 leverage=leverage, direction=direction,
                 timeframe_pool=timeframe_pool,
                 indicator_pool=indicator_pool,
+                profiled=False,
             ))
 
     return population
