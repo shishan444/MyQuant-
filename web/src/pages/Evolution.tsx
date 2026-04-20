@@ -36,6 +36,7 @@ import {
 import { useCreateStrategy } from "@/hooks/useStrategies";
 import { useAvailableSources } from "@/hooks/useDatasets";
 import { isActiveStatus, SCORE_TEMPLATE_LABELS } from "@/lib/constants";
+import { getStrategyName } from "@/lib/strategy-utils";
 import type { EvolutionTask, DNA } from "@/types/api";
 
 // ---------------------------------------------------------------------------
@@ -282,10 +283,7 @@ export function Evolution() {
   const handleSaveStrategy = useCallback(
     (task: EvolutionTask) => {
       const dna = task.champion_dna;
-      const dirLabel = dna?.risk_genes.direction === "short" ? "做空" : dna?.risk_genes.direction === "mixed" ? "混合" : "做多";
-      const name = dna
-        ? `${task.symbol} ${dna.execution_genes.timeframe.toUpperCase()} ${dirLabel}`
-        : `${task.symbol} ${task.timeframe} 进化策略`;
+      const name = getStrategyName(dna) || `${task.symbol} ${task.timeframe} 进化策略`;
       saveStrategy.mutate({
         name,
         dna: dna ?? {},

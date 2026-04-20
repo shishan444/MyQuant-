@@ -101,6 +101,7 @@ _CONSTRAINT_COLUMNS = [
     ("champion_metrics", "TEXT"),  # JSON: {annual_return, sharpe_ratio, max_drawdown, win_rate, calmar_ratio, total_trades}
     ("champion_dimension_scores", "TEXT"),  # JSON: {annual_return: 78.5, sharpe_ratio: 65.2, ...}
     ("walk_forward_enabled", "INTEGER DEFAULT 0"),
+    ("continuous", "INTEGER DEFAULT 1"),
 ]
 
 
@@ -251,6 +252,35 @@ def get_strategy(db_path: Path, strategy_id: str) -> Optional[Dict[str, Any]]:
     if row is None:
         return None
     return dict(row)
+
+
+def count_strategies_by_tasks(
+    db_path: Path,
+    task_ids: List[str],
+    min_score: float = 0,
+) -> Dict[str, int]:
+    """Batch count strategies per task_id.
+
+    Returns {task_id: count} for strategies with best_score >= min_score.
+    """
+    if not task_ids:
+        return {}
+    conn = _connect(db_path)
+    placeholders = ",".join("?" for _ in task_ids)
+    rows = conn.execute(
+        f"""SELECT source_task_id, COUNT(*) as cnt
+           FROM strategy
+           WHERE source_task_id IN ({placeholders})
+             AND source = 'evolution'
+             AND best_score >= ?
+           GROUP BY source_task_id""",
+        (*task_ids, min_score),
+    ).fetchall()
+    conn.close()
+    result: Dict[str, int] = {tid: 0 for tid in task_ids}
+    for r in rows:
+        result[r["source_task_id"]] = r["cnt"]
+    return result
 
 
 def list_strategies(

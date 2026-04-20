@@ -58,7 +58,10 @@ def _parse_json_dict(raw: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _task_row_to_response(row: Dict[str, Any]) -> EvolutionTaskResponse:
+def _task_row_to_response(
+    row: Dict[str, Any],
+    strategy_count: int = 0,
+) -> EvolutionTaskResponse:
     """Convert a DB row dict to EvolutionTaskResponse."""
     initial_dna = None
     if row.get("initial_dna"):
@@ -109,6 +112,10 @@ def _task_row_to_response(row: Dict[str, Any]) -> EvolutionTaskResponse:
         walk_forward_enabled=bool(row.get("walk_forward_enabled", 0)),
         continuous=bool(row.get("continuous", 1)),
         strategy_threshold=row.get("strategy_threshold", 80.0),
+        strategy_count=strategy_count,
+        exploration_efficiency=round(
+            strategy_count / max(row.get("current_generation", 0), 1), 4
+        ),
     )
 
 
@@ -248,7 +255,16 @@ def list_tasks(
     offset = (page - 1) * page_size
     total = count_all_tasks(db_path, status=status)
     rows = list_all_tasks(db_path, status=status, limit=page_size, offset=offset)
-    items = [_task_row_to_response(r) for r in rows]
+
+    # Batch query strategy counts for all tasks on this page
+    from api.db_ext import count_strategies_by_tasks
+    task_ids = [r["task_id"] for r in rows]
+    strategy_counts = count_strategies_by_tasks(db_path, task_ids) if task_ids else {}
+
+    items = [
+        _task_row_to_response(r, strategy_count=strategy_counts.get(r["task_id"], 0))
+        for r in rows
+    ]
     return EvolutionTaskListResponse(items=items, total=total, page=page, page_size=page_size)
 
 

@@ -267,7 +267,8 @@ class EvolutionRunner(threading.Thread):
                     discovered_signatures.add(sig)
                     try:
                         from api.db_ext import save_strategy
-                        name = f"{task_row.get('symbol', 'BTC')} {task_row.get('timeframe', '4h')} G{global_gen}"
+                        from core.strategy.dna import generate_strategy_name
+                        name = generate_strategy_name(ind)
                         save_strategy(
                             self.db_path,
                             strategy_id=ind.strategy_id,

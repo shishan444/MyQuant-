@@ -44,6 +44,10 @@ class SignalRole(Enum):
     ENTRY_GUARD = "entry_guard"       # filters entry conditions
     EXIT_TRIGGER = "exit_trigger"     # directly triggers sell
     EXIT_GUARD = "exit_guard"         # filters exit conditions
+    ADD_TRIGGER = "add_trigger"       # triggers position add
+    ADD_GUARD = "add_guard"           # filters add conditions
+    REDUCE_TRIGGER = "reduce_trigger" # triggers position reduce
+    REDUCE_GUARD = "reduce_guard"     # filters reduce conditions
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +100,8 @@ class LogicGenes:
 
     entry_logic: str = "AND"  # "AND" or "OR"
     exit_logic: str = "AND"   # "AND" or "OR"
+    add_logic: str = "AND"    # "AND" or "OR"
+    reduce_logic: str = "AND" # "AND" or "OR"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -294,3 +300,34 @@ class StrategyDNA:
     @classmethod
     def from_json(cls, json_str: str) -> "StrategyDNA":
         return cls.from_dict(json.loads(json_str))
+
+
+# ---------------------------------------------------------------------------
+# Strategy naming utility
+# ---------------------------------------------------------------------------
+
+INDICATOR_TYPE_MAP: Dict[str, str] = {
+    "EMA": "趋势", "SMA": "趋势", "WMA": "趋势", "DEMA": "趋势", "TEMA": "趋势",
+    "RSI": "动量", "MACD": "动量", "CCI": "动量", "Stochastic": "动量",
+    "BB": "波动", "ATR": "波动", "KC": "波动",
+    "ADX": "趋势", "Ichimoku": "趋势",
+    "MFI": "量价", "OBV": "量价", "VWAP": "量价",
+    "SAR": "趋势", "TRIX": "动量", "ROC": "动量",
+}
+
+_DIRECTION_LABEL = {"long": "做多", "short": "做空", "mixed": "混合"}
+
+
+def generate_strategy_name(dna: "StrategyDNA") -> str:
+    """Generate a human-readable strategy name from DNA.
+
+    Format: "{indicator}{type} {direction} {timeframe}"
+    Example: "EMA趋势 做多 4H"
+    """
+    genes = dna.layers[0].signal_genes if dna.layers else dna.signal_genes
+    trigger = next((g for g in genes if g.role == SignalRole.ENTRY_TRIGGER), None)
+    indicator = trigger.indicator if trigger else (genes[0].indicator if genes else "MIX")
+    type_label = INDICATOR_TYPE_MAP.get(indicator, "混合")
+    dir_label = _DIRECTION_LABEL.get(dna.risk_genes.direction, "做多")
+    tf = dna.execution_genes.timeframe.upper()
+    return f"{indicator}{type_label} {dir_label} {tf}"

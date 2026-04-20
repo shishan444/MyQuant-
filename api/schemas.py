@@ -311,6 +311,8 @@ class EvolutionTaskResponse(BaseModel):
     walk_forward_enabled: bool = False
     continuous: bool = True
     strategy_threshold: float = 80.0
+    strategy_count: int = 0
+    exploration_efficiency: float = 0.0
 
 
 class EvolutionTaskListResponse(BaseModel):

@@ -3,7 +3,7 @@ import { Eye, Dna } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatNumber, formatDuration } from "@/lib/utils";
-import { TIMEFRAME_LABELS, STOP_REASON_LABELS } from "@/lib/constants";
+import { TIMEFRAME_LABELS } from "@/lib/constants";
 import type { EvolutionTask, DNA } from "@/types/api";
 
 interface HistoryTableProps {
@@ -27,10 +27,10 @@ export function HistoryTable({
             <th className="py-2 text-left font-medium">交易对/周期</th>
             <th className="py-2 text-center font-medium">方向</th>
             <th className="py-2 text-right font-medium">最优分</th>
+            <th className="py-2 text-center font-medium">产出</th>
+            <th className="py-2 text-center font-medium">效率</th>
             <th className="py-2 text-center font-medium">代数</th>
             <th className="py-2 text-center font-medium">状态</th>
-            <th className="py-2 text-left font-medium">数据范围</th>
-            <th className="py-2 text-right font-medium">用时</th>
             <th className="py-2 text-right font-medium">操作</th>
           </tr>
         </thead>
@@ -70,13 +70,10 @@ const HistoryRow = memo(function HistoryRow({ task, onView, onSeedEvolve }: Hist
     return `${sym} ${TIMEFRAME_LABELS[task.timeframe] ?? task.timeframe.toUpperCase()}`;
   }, [task.symbol, task.timeframe, task.timeframe_pool]);
 
-  const duration = useMemo(
-    () => formatDuration(task.created_at, task.updated_at),
-    [task.created_at, task.updated_at]
-  );
-
   const isCompleted = task.status === "completed";
   const isStopped = task.status === "stopped";
+  const strategyCount = task.strategy_count ?? 0;
+  const efficiency = task.exploration_efficiency ?? 0;
 
   const directionLabel = task.direction === "short" ? "做空" : task.direction === "mixed" ? "混合" : "做多";
   const directionColor = task.direction === "short"
@@ -99,6 +96,21 @@ const HistoryRow = memo(function HistoryRow({ task, onView, onSeedEvolve }: Hist
       <td className="py-3 text-right font-mono font-semibold text-slate-200">
         {formatNumber(task.best_score ?? 0)}
       </td>
+      <td className="py-3 text-center">
+        {strategyCount > 0 ? (
+          <Badge
+            variant="outline"
+            className="border-emerald-400/30 text-[10px] text-emerald-400"
+          >
+            {strategyCount}
+          </Badge>
+        ) : (
+          <span className="text-slate-600">0</span>
+        )}
+      </td>
+      <td className="py-3 text-center font-mono text-slate-500">
+        {task.current_generation > 0 ? efficiency.toFixed(2) : "-"}
+      </td>
       <td className="py-3 text-center font-mono text-slate-500">
         {task.current_generation}/{task.max_generations}
       </td>
@@ -117,12 +129,6 @@ const HistoryRow = memo(function HistoryRow({ task, onView, onSeedEvolve }: Hist
           {isCompleted ? "完成" : isStopped ? "停止" : task.status}
         </Badge>
       </td>
-      <td className="py-3 text-slate-500">
-        {task.data_start || task.data_time_start
-          ? `${(task.data_start || task.data_time_start)?.slice(0, 10) ?? ""} ~ ${(task.data_end || task.data_time_end)?.slice(0, 10) ?? ""}`
-          : "-"}
-      </td>
-      <td className="py-3 text-right font-mono text-slate-500">{duration}</td>
       <td className="py-3 text-right">
         <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
           <Button

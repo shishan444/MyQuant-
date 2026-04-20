@@ -138,6 +138,8 @@ export interface EvolutionTask {
   continuous?: boolean;
   population_count?: number;
   strategy_threshold?: number;
+  strategy_count?: number;
+  exploration_efficiency?: number;
 }
 
 export interface EvolutionHistoryRecord {
