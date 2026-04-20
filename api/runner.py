@@ -300,7 +300,7 @@ class EvolutionRunner(threading.Thread):
                     "type": "population_started",
                     "task_id": task_id,
                     "population_count": self._population_count + 1,
-                    "best_score_ever": champion_score if champion is not None else 0,
+                    "best_score_ever": result.get("champion_score", 0) if result else 0,
                     "total_generations_so_far": global_gen_offset,
                 })
 
@@ -314,12 +314,14 @@ class EvolutionRunner(threading.Thread):
                 # Inject 2 random strategy templates as seeds (trend/momentum/mean-reversion etc.)
                 # This expands the search space beyond the champion's strategy region
                 from core.evolution.population import STRATEGY_TEMPLATES, _dna_from_template
+                _tf = task_row.get("execution_timeframe", task_row.get("timeframe", "4h"))
+                _sym = task_row.get("symbol", "BTCUSDT")
                 template_seeds = random.sample(
                     STRATEGY_TEMPLATES, min(2, len(STRATEGY_TEMPLATES))
                 )
                 for tpl in template_seeds:
                     seed = _dna_from_template(
-                        tpl, timeframe, symbol, leverage, direction,
+                        tpl, _tf, _sym, leverage, direction,
                     )
                     extra_ancestors.append(seed)
                 engine._population = None
