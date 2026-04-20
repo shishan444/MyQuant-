@@ -81,6 +81,7 @@ export function ProgressPanel({
 
       {/* Progress bar - hidden for continuous mode (no upper bound) */}
       {!isContinuous && (
+      <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between text-xs">
           <span className="text-slate-500">
             进度
