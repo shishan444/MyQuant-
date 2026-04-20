@@ -137,15 +137,17 @@ export function Evolution() {
 
   const currentTask = activeTaskDetail ?? activeTask;
 
-  // Completed/stopped tasks as "effective strategies"
+  // Completed/stopped tasks as "effective strategies", sorted by best_score desc
   const effectiveStrategies = useMemo(
     () =>
-      allTasks.filter(
-        (t) =>
-          (t.status === "completed" || t.status === "stopped") &&
-          t.best_score != null &&
-          t.best_score > 0
-      ),
+      allTasks
+        .filter(
+          (t) =>
+            (t.status === "completed" || t.status === "stopped") &&
+            t.best_score != null &&
+            t.best_score > 0
+        )
+        .sort((a, b) => (b.best_score ?? 0) - (a.best_score ?? 0)),
     [allTasks]
   );
 
@@ -279,9 +281,14 @@ export function Evolution() {
 
   const handleSaveStrategy = useCallback(
     (task: EvolutionTask) => {
+      const dna = task.champion_dna;
+      const dirLabel = dna?.risk_genes.direction === "short" ? "做空" : dna?.risk_genes.direction === "mixed" ? "混合" : "做多";
+      const name = dna
+        ? `${task.symbol} ${dna.execution_genes.timeframe.toUpperCase()} ${dirLabel}`
+        : `${task.symbol} ${task.timeframe} 进化策略`;
       saveStrategy.mutate({
-        name: `${task.symbol} ${task.timeframe} 进化策略`,
-        dna: task.champion_dna ?? {},
+        name,
+        dna: dna ?? {},
         symbol: task.symbol,
         timeframe: task.timeframe,
         source: "evolution",

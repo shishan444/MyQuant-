@@ -3,7 +3,7 @@ import { Eye, Dna } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatNumber, formatDuration } from "@/lib/utils";
-import { TIMEFRAME_LABELS, SCORE_TEMPLATE_LABELS, STOP_REASON_LABELS } from "@/lib/constants";
+import { TIMEFRAME_LABELS, STOP_REASON_LABELS } from "@/lib/constants";
 import type { EvolutionTask, DNA } from "@/types/api";
 
 interface HistoryTableProps {
@@ -24,17 +24,13 @@ export function HistoryTable({
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-slate-700/30 text-slate-500">
-            <th className="py-2 text-left font-medium">交易对</th>
-            <th className="py-2 text-left font-medium">周期</th>
-            <th className="py-2 text-left font-medium">模式</th>
-            <th className="py-2 text-left font-medium">杠杆</th>
-            <th className="py-2 text-left font-medium">方向</th>
-            <th className="py-2 text-left font-medium">目标</th>
+            <th className="py-2 text-left font-medium">交易对/周期</th>
+            <th className="py-2 text-center font-medium">方向</th>
             <th className="py-2 text-right font-medium">最优分</th>
-            <th className="py-2 text-right font-medium">用时</th>
+            <th className="py-2 text-center font-medium">代数</th>
             <th className="py-2 text-center font-medium">状态</th>
             <th className="py-2 text-left font-medium">数据范围</th>
-            <th className="py-2 text-center font-medium">可信度</th>
+            <th className="py-2 text-right font-medium">用时</th>
             <th className="py-2 text-right font-medium">操作</th>
           </tr>
         </thead>
@@ -63,20 +59,16 @@ interface HistoryRowProps {
 }
 
 const HistoryRow = memo(function HistoryRow({ task, onView, onSeedEvolve }: HistoryRowProps) {
-  const timeframeDisplay = useMemo(() => {
+  const pairDisplay = useMemo(() => {
+    const sym = task.symbol.replace("USDT", "");
     if (task.timeframe_pool && task.timeframe_pool.length > 1) {
-      return task.timeframe_pool
+      const tfs = task.timeframe_pool
         .map((tf) => TIMEFRAME_LABELS[tf] ?? tf)
         .join("+");
+      return `${sym} ${tfs}`;
     }
-    return TIMEFRAME_LABELS[task.timeframe] ?? task.timeframe;
-  }, [task.timeframe, task.timeframe_pool]);
-
-  const modeLabel = task.mode === "seed" ? "种子探索" : "自动探索";
-
-  const targetLabel = useMemo(() => {
-    return SCORE_TEMPLATE_LABELS[task.score_template] ?? task.score_template;
-  }, [task.score_template]);
+    return `${sym} ${TIMEFRAME_LABELS[task.timeframe] ?? task.timeframe.toUpperCase()}`;
+  }, [task.symbol, task.timeframe, task.timeframe_pool]);
 
   const duration = useMemo(
     () => formatDuration(task.created_at, task.updated_at),
@@ -86,39 +78,30 @@ const HistoryRow = memo(function HistoryRow({ task, onView, onSeedEvolve }: Hist
   const isCompleted = task.status === "completed";
   const isStopped = task.status === "stopped";
 
+  const directionLabel = task.direction === "short" ? "做空" : task.direction === "mixed" ? "混合" : "做多";
+  const directionColor = task.direction === "short"
+    ? "border-red-400/30 text-red-400"
+    : task.direction === "mixed"
+      ? "border-purple-400/30 text-purple-400"
+      : "border-emerald-400/30 text-emerald-400";
+
   return (
     <tr className="group border-b border-slate-700/10 transition-colors hover:bg-white/[0.02]">
-      <td className="py-3 text-slate-200">{task.symbol.replace("USDT", "")}</td>
-      <td className="py-3 text-slate-300">{timeframeDisplay}</td>
-      <td className="py-3">
+      <td className="py-3 text-slate-200">{pairDisplay}</td>
+      <td className="py-3 text-center">
         <Badge
           variant="outline"
-          className="border-slate-700/50 text-[10px] text-slate-500"
+          className={cn("text-[10px]", directionColor)}
         >
-          {modeLabel}
+          {directionLabel}
         </Badge>
       </td>
-      <td className="py-3 text-slate-400">{task.leverage}x</td>
-      <td className="py-3">
-        <Badge
-          variant="outline"
-          className={cn(
-            "text-[10px]",
-            task.direction === "short"
-              ? "border-red-400/30 text-red-400"
-              : task.direction === "mixed"
-                ? "border-purple-400/30 text-purple-400"
-                : "border-emerald-400/30 text-emerald-400"
-          )}
-        >
-          {task.direction === "short" ? "做空" : task.direction === "mixed" ? "混合" : "做多"}
-        </Badge>
-      </td>
-      <td className="py-3 text-slate-400">{targetLabel}</td>
       <td className="py-3 text-right font-mono font-semibold text-slate-200">
         {formatNumber(task.best_score ?? 0)}
       </td>
-      <td className="py-3 text-right font-mono text-slate-500">{duration}</td>
+      <td className="py-3 text-center font-mono text-slate-500">
+        {task.current_generation}/{task.max_generations}
+      </td>
       <td className="py-3 text-center">
         <Badge
           variant="outline"
@@ -131,33 +114,15 @@ const HistoryRow = memo(function HistoryRow({ task, onView, onSeedEvolve }: Hist
                 : "border-slate-700/30 text-slate-500"
           )}
         >
-          {isCompleted ? "已完成" : isStopped ? "已停止" : task.status}
+          {isCompleted ? "完成" : isStopped ? "停止" : task.status}
         </Badge>
       </td>
-      <td className="py-3 text-xs text-slate-500">
+      <td className="py-3 text-slate-500">
         {task.data_start || task.data_time_start
           ? `${(task.data_start || task.data_time_start)?.slice(0, 10) ?? ""} ~ ${(task.data_end || task.data_time_end)?.slice(0, 10) ?? ""}`
           : "-"}
       </td>
-      <td className="py-3 text-center">
-        <Badge
-          variant="outline"
-          className={cn(
-            "text-[10px]",
-            task.data_row_count && task.data_row_count > 500
-              ? "border-emerald-400/30 text-emerald-400"
-              : task.data_row_count && task.data_row_count > 0
-                ? "border-amber-400/30 text-amber-400"
-                : "border-red-400/30 text-red-400"
-          )}
-        >
-          {task.data_row_count && task.data_row_count > 500
-            ? "可信"
-            : task.data_row_count && task.data_row_count > 0
-              ? "数据偏少"
-              : "未验证"}
-        </Badge>
-      </td>
+      <td className="py-3 text-right font-mono text-slate-500">{duration}</td>
       <td className="py-3 text-right">
         <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
           <Button

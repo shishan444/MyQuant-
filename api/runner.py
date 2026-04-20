@@ -328,6 +328,17 @@ class EvolutionRunner(threading.Thread):
                     break
 
                 self._population_count += 1
+
+                # Rotate direction for diversity in continuous mode
+                original_direction = task_row.get("direction", "long")
+                if original_direction == "mixed":
+                    directions = ["long", "short", "mixed"]
+                    direction = directions[self._population_count % 3]
+                    logger.info(
+                        "Task %s: rotating direction to '%s' for population #%d",
+                        task_id, direction, self._population_count + 1,
+                    )
+
                 logger.info(
                     "Task %s: starting population #%d (stop_reason=%s)",
                     task_id, self._population_count + 1, stop_reason,

@@ -13,6 +13,21 @@ interface StrategyListProps {
   onSeedEvolve: (dna: DNA) => void;
 }
 
+const INDICATOR_TYPE_MAP: Record<string, string> = {
+  EMA: "趋势", SMA: "趋势", WMA: "趋势", DEMA: "趋势", TEMA: "趋势",
+  RSI: "动量", MACD: "动量", CCI: "动量", STOCH: "动量", WILLR: "动量",
+  BB: "波动", ATR: "波动", KC: "波动",
+  ADX: "趋势", ICHIMOKU: "趋势",
+  MFI: "量价", OBV: "量价", VWAP: "量价",
+  SAR: "趋势", TRIX: "动量", ROC: "动量",
+};
+
+const DIRECTION_LABEL: Record<string, string> = {
+  long: "做多",
+  short: "做空",
+  mixed: "混合",
+};
+
 function formatIndicatorLabel(gene: {
   indicator: string;
   params?: Record<string, unknown>;
@@ -20,6 +35,25 @@ function formatIndicatorLabel(gene: {
   const period = gene.params?.period;
   if (period) return `${gene.indicator}(${period})`;
   return gene.indicator;
+}
+
+function getStrategyType(dna: DNA | null | undefined): string {
+  if (!dna) return "未知";
+  const genes = dna.layers?.[0]?.signal_genes ?? dna.signal_genes;
+  const trigger = genes.find((g) => g.role === "entry_trigger");
+  const indicator = trigger?.indicator ?? genes[0]?.indicator ?? "";
+  return INDICATOR_TYPE_MAP[indicator] ?? "混合";
+}
+
+function getStrategyName(dna: DNA | null | undefined): string {
+  if (!dna) return "未命名策略";
+  const genes = dna.layers?.[0]?.signal_genes ?? dna.signal_genes;
+  const trigger = genes.find((g) => g.role === "entry_trigger");
+  const indicator = trigger?.indicator ?? genes[0]?.indicator ?? "MIX";
+  const typeLabel = INDICATOR_TYPE_MAP[indicator] ?? "混合";
+  const dirLabel = DIRECTION_LABEL[dna.risk_genes.direction] ?? "做多";
+  const tf = dna.execution_genes.timeframe.toUpperCase();
+  return `${indicator}${typeLabel} ${dirLabel} ${tf}`;
 }
 
 function getDnaIndicators(dna: DNA | null | undefined): string {
@@ -121,12 +155,10 @@ const StrategyRow = memo(function StrategyRow({
   const returnRate = task.champion_metrics?.annual_return ?? 0;
   const sharpe = task.champion_metrics?.sharpe_ratio ?? 0;
   const mtfBadge = useMemo(() => getMtfBadge(task.champion_dna), [task.champion_dna]);
+  const strategyName = useMemo(() => getStrategyName(task.champion_dna), [task.champion_dna]);
+  const strategyType = useMemo(() => getStrategyType(task.champion_dna), [task.champion_dna]);
   const indicators = useMemo(
     () => getDnaIndicators(task.champion_dna),
-    [task.champion_dna]
-  );
-  const description = useMemo(
-    () => getDnaDescription(task.champion_dna),
     [task.champion_dna]
   );
 
@@ -155,6 +187,21 @@ const StrategyRow = memo(function StrategyRow({
         {/* Strategy info */}
         <div className="flex flex-1 flex-col gap-0.5">
           <div className="flex items-center gap-1.5">
+            <Badge
+              variant="outline"
+              className={cn(
+                "border-slate-700/50 px-1.5 py-0 text-[10px]",
+                strategyType === "趋势"
+                  ? "text-blue-400"
+                  : strategyType === "动量"
+                    ? "text-amber-400"
+                    : strategyType === "波动"
+                      ? "text-purple-400"
+                      : "text-slate-400"
+              )}
+            >
+              {strategyType}
+            </Badge>
             {mtfBadge && (
               <Badge
                 variant="outline"
@@ -164,11 +211,11 @@ const StrategyRow = memo(function StrategyRow({
               </Badge>
             )}
             <span className="truncate text-sm text-slate-100">
-              {indicators}
+              {strategyName}
             </span>
           </div>
-          <span className="truncate text-xs text-slate-400">
-            {description}
+          <span className="truncate text-xs text-slate-500">
+            {indicators}
           </span>
         </div>
 
