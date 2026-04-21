@@ -120,9 +120,9 @@ class TestMultiAncestorEngine:
         assert result["total_generations"] >= 1
 
     def test_elite_ratio_reduced(self):
-        """Default elite_ratio should be 0.25 (reduced from 0.4)."""
+        """Default elite_ratio should be 0.15 (tournament selection reduces elitism)."""
         engine = EvolutionEngine()
-        assert engine.elite_ratio == 0.25
+        assert engine.elite_ratio == 0.15
 
     def test_engine_full_run(self):
         """Engine should complete a short evolution run."""

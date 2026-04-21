@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from core.evolution.engine import EvolutionEngine
-from core.evolution.diversity import compute_diversity, _gene_signature
+from core.evolution.diversity import compute_diversity, compute_phenotype_diversity, _gene_signature
+from core.evolution.champion import ChampionTracker
 from core.strategy.dna import StrategyDNA
 from core.persistence.db import (
     save_history,
@@ -167,10 +168,10 @@ class EvolutionRunner(threading.Thread):
 
         # Track mutations for logging
         last_mutations: List[str] = []
-        gen_diagnostics: List[dict] = []
         global_gen_offset = 0  # Offset for continuous mode: avoids history overwrite
         discovered_signatures: set = set()  # Signatures of auto-extracted strategies
         strategy_threshold = task_row.get("strategy_threshold", 80.0)
+        champion_tracker = ChampionTracker()
 
         def on_generation(gen: int, best_score: float, avg_score: float) -> None:
             nonlocal last_mutations, global_gen_offset
@@ -193,18 +194,19 @@ class EvolutionRunner(threading.Thread):
             conn.commit()
             conn.close()
 
-            # Compute generation-level diagnostics
+            # Compute generation-level diagnostics from population
             gen_diag = {}
-            if gen_diagnostics:
-                fallback_count = sum(1 for d in gen_diagnostics if d.get("fallback"))
-                zero_trade_count = sum(1 for d in gen_diagnostics if d.get("total_trades", 0) == 0 and not d.get("fallback"))
-                avg_trades = sum(d.get("total_trades", 0) for d in gen_diagnostics) / len(gen_diagnostics)
-                gen_diag = {
-                    "fallback_pct": round(fallback_count / len(gen_diagnostics) * 100, 1),
-                    "zero_trade_pct": round(zero_trade_count / len(gen_diagnostics) * 100, 1),
-                    "avg_trades": round(avg_trades, 1),
-                }
-            gen_diagnostics.clear()
+            if hasattr(engine, '_population') and engine._population:
+                diags = [getattr(ind, '_eval_diagnostics', None) for ind in engine._population]
+                diags = [d for d in diags if d]
+
+                if diags:
+                    avg_trades = sum(d.get("total_trades", 0) for d in diags) / len(diags)
+                    phenotype_div = compute_phenotype_diversity(engine._population)
+                    gen_diag = {
+                        "avg_trades": round(avg_trades, 1),
+                        "diversity": phenotype_div,
+                    }
 
             # Save history record with diagnostics
             top3_summary = f"best={best_score:.1f}"
@@ -228,32 +230,48 @@ class EvolutionRunner(threading.Thread):
                 except Exception:
                     pass
 
-            # Update best_score in DB
-            if best_score > 0:
-                import sqlite3
-                conn2 = sqlite3.connect(str(self.db_path))
-                conn2.execute("PRAGMA journal_mode=WAL")
-                conn2.execute(
-                    "UPDATE evolution_task SET best_score = ? WHERE task_id = ? AND (best_score IS NULL OR best_score < ?)",
-                    (best_score, task_id, best_score),
-                )
-
-                # Persist champion real metrics from best individual
-                best_ind_diagnostics = None
-                if hasattr(engine, '_population') and engine._population:
-                    best_ind = engine._population[0]
-                    best_ind_diagnostics = getattr(best_ind, '_eval_diagnostics', None)
+            # Update champion atomically via ChampionTracker
+            if best_score > 0 and hasattr(engine, '_population') and engine._population:
+                best_ind = engine._population[0]
+                best_ind_diagnostics = getattr(best_ind, '_eval_diagnostics', None)
 
                 if best_ind_diagnostics and "raw_metrics" in best_ind_diagnostics:
-                    metrics_json = json.dumps(best_ind_diagnostics["raw_metrics"])
-                    dim_json = json.dumps(best_ind_diagnostics.get("dimension_scores", {}))
-                    conn2.execute(
-                        "UPDATE evolution_task SET champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
-                        (metrics_json, dim_json, task_id),
+                    updated = champion_tracker.update(
+                        score=best_score,
+                        metrics=best_ind_diagnostics.get("raw_metrics"),
+                        dimension_scores=best_ind_diagnostics.get("dimension_scores", {}),
+                        generation=global_gen,
                     )
 
-                conn2.commit()
-                conn2.close()
+                    if updated:
+                        champion_rec = champion_tracker.get_champion()
+                        import sqlite3
+                        conn2 = sqlite3.connect(str(self.db_path))
+                        conn2.execute("PRAGMA journal_mode=WAL")
+                        conn2.execute(
+                            "UPDATE evolution_task SET best_score = ?, champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
+                            (
+                                champion_rec.score,
+                                json.dumps(champion_rec.metrics),
+                                json.dumps(champion_rec.dimension_scores),
+                                task_id,
+                            ),
+                        )
+                        conn2.commit()
+                        conn2.close()
+                elif best_score > 0:
+                    # No diagnostics but score is positive - update best_score only
+                    updated = champion_tracker.update(score=best_score, generation=global_gen)
+                    if updated:
+                        import sqlite3
+                        conn2 = sqlite3.connect(str(self.db_path))
+                        conn2.execute("PRAGMA journal_mode=WAL")
+                        conn2.execute(
+                            "UPDATE evolution_task SET best_score = ? WHERE task_id = ? AND (best_score IS NULL OR best_score < ?)",
+                            (best_score, task_id, best_score),
+                        )
+                        conn2.commit()
+                        conn2.close()
 
             # Auto-extract high-scoring strategies to strategy table
             if hasattr(engine, '_population') and engine._population:
@@ -280,6 +298,7 @@ class EvolutionRunner(threading.Thread):
                             source_task_id=task_id,
                             best_score=diag["score"],
                             generation=global_gen,
+                            metrics_json=json.dumps(diag.get("raw_metrics")) if diag.get("raw_metrics") else None,
                         )
                         _push_ws(task_id, {
                             "type": "strategy_discovered",
@@ -404,15 +423,15 @@ class EvolutionRunner(threading.Thread):
                     stop_reason=stop_reason,
                 )
 
-                # Save final champion real metrics
-                champion_diag = getattr(champion, '_eval_diagnostics', None)
-                if champion_diag and "raw_metrics" in champion_diag:
+                # Save final champion metrics from tracker (consistent snapshot)
+                champion_rec = champion_tracker.get_champion()
+                if champion_rec and champion_rec.metrics:
                     import sqlite3
                     conn = sqlite3.connect(str(self.db_path))
                     conn.execute(
                         "UPDATE evolution_task SET champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
-                        (json.dumps(champion_diag["raw_metrics"]),
-                         json.dumps(champion_diag.get("dimension_scores", {})),
+                        (json.dumps(champion_rec.metrics),
+                         json.dumps(champion_rec.dimension_scores),
                          task_id),
                     )
                     conn.commit()
@@ -479,7 +498,7 @@ class EvolutionRunner(threading.Thread):
             )
 
             if enhanced_df is None:
-                diagnostics["score"] = random.uniform(10, 50)
+                diagnostics["score"] = 0.0
                 return diagnostics
 
             diagnostics["used_real_data"] = True
@@ -523,7 +542,7 @@ class EvolutionRunner(threading.Thread):
                 trade_returns=bt_result.trade_returns,
             )
             template_name = task_row.get("score_template", "profit_first")
-            score_result = score_strategy(metrics, template_name)
+            score_result = score_strategy(metrics, template_name, liquidated=bt_result.liquidated)
 
             diagnostics["score"] = score_result["total_score"]
             diagnostics["total_trades"] = bt_result.total_trades
@@ -551,8 +570,8 @@ class EvolutionRunner(threading.Thread):
             return diagnostics
 
         except Exception:
-            # Fallback: random score to keep evolution moving
-            diagnostics["score"] = random.uniform(10, 40)
+            # Fallback: zero score (not random noise)
+            diagnostics["score"] = 0.0
             return diagnostics
 
 

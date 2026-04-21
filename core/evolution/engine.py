@@ -85,11 +85,79 @@ class EarlyStopChecker:
         return ("continue", "")
 
 
+class _AdaptiveMutationController:
+    """1/5 success rule (Rechenberg) for adaptive mutation intensity."""
+
+    def __init__(self, window_size: int = 10):
+        self._window_size = window_size
+        self._improvements: list[bool] = []
+        self._prev_best = -float("inf")
+
+    def record(self, current_best: float) -> None:
+        """Record whether this generation improved the best score."""
+        improved = current_best > self._prev_best
+        self._improvements.append(improved)
+        if len(self._improvements) > self._window_size:
+            self._improvements.pop(0)
+        self._prev_best = current_best
+
+    @property
+    def success_rate(self) -> float:
+        if not self._improvements:
+            return 0.0
+        return sum(self._improvements) / len(self._improvements)
+
+    @property
+    def mutation_boost(self) -> float:
+        """Multiplier for mutation intensity: >1 when stuck, <1 when improving."""
+        rate = self.success_rate
+        if rate > 0.3:
+            return 0.85
+        elif rate < 0.15:
+            return 1.3
+        return 1.0
+
+
+def _tournament_select(
+    scored: List[Tuple[StrategyDNA, float]],
+    k: int,
+    tournsize: int = 3,
+) -> List[StrategyDNA]:
+    """Select k individuals via tournament selection.
+
+    Each tournament picks tournsize random individuals and returns the best.
+    This preserves selection pressure while allowing weaker individuals
+    to occasionally reproduce, maintaining genetic diversity.
+    """
+    selected = []
+    pop_size = len(scored)
+    for _ in range(k):
+        aspirant_indices = random.sample(range(pop_size), min(tournsize, pop_size))
+        winner_idx = max(aspirant_indices, key=lambda i: scored[i][1])
+        selected.append(scored[winner_idx][0])
+    return selected
+
+
+# Template-aware mutation bias overlay
+_TEMPLATE_MUTATION_BIAS = {
+    "profit_first": {"params": 1.5, "indicator": 1.2, "risk": 0.5},
+    "aggressive":   {"params": 1.5, "indicator": 1.2, "risk": 0.5},
+    "steady":       {"params": 1.0, "indicator": 1.0, "risk": 1.0},
+    "balanced":     {"params": 1.0, "indicator": 1.0, "risk": 1.0},
+    "risk_first":   {"params": 0.7, "indicator": 0.8, "risk": 1.8},
+    "conservative": {"params": 0.7, "indicator": 0.8, "risk": 1.8},
+    "custom":       {"params": 1.0, "indicator": 1.0, "risk": 1.0},
+}
+
+
 class EvolutionEngine:
     """Main evolution loop.
 
     Coordinates population management, evaluation, selection, crossover,
     mutation, and early stopping. Designed for CLI/programmatic use.
+
+    Selection strategy: tournament selection (tournsize=3) replaces
+    truncation selection for better exploration-exploitation balance.
     """
 
     def __init__(
@@ -100,7 +168,7 @@ class EvolutionEngine:
         max_generations: int = 200,
         patience: int = 15,
         decline_limit: int = 10,
-        elite_ratio: float = 0.25,
+        elite_ratio: float = 0.15,
         leverage: int = 1,
         direction: str = "long",
         timeframe_pool: Optional[list] = None,
@@ -154,7 +222,8 @@ class EvolutionEngine:
         history = []
         champion = None
         champion_score = -1.0
-        stagnation_count = 0  # Track consecutive generations without improvement
+        stagnation_count = 0
+        adaptive_mut = _AdaptiveMutationController(window_size=10)
 
         for gen in range(1, self.max_generations + 1):
             # Enforce task-level constraints on all individuals before evaluation
@@ -185,6 +254,9 @@ class EvolutionEngine:
             else:
                 stagnation_count += 1
 
+            # Record for adaptive mutation
+            adaptive_mut.record(best_score)
+
             # Callback
             if on_generation:
                 on_generation(gen, best_score, avg_score)
@@ -201,15 +273,17 @@ class EvolutionEngine:
                     "target_reached": reason == "target_reached",
                 }
 
-            # Selection: keep top elite_ratio
+            # --- Selection ---
+
+            # Elite: top elite_ratio (min 2) survive unchanged
             elite_count = max(2, int(len(scored) * self.elite_ratio))
             elites = [ind for ind, _ in scored[:elite_count]]
 
-            # Crossover: breed new individuals from elites
-            children = []
+            # Parents for crossover: tournament selection from full population
+            n_children = self.population_size - elite_count - 3  # reserve 3 for fresh blood
+            parents = _tournament_select(scored, n_children * 2, tournsize=3)
 
-            # Adaptive mutation pool weights based on stagnation
-            # More structural changes when stuck, more refinement when improving
+            # --- Mutation weights based on stagnation + adaptive controller ---
             if stagnation_count > 8:
                 mut_weights = [15, 30, 10, 15, 20, 10]  # Heavy on indicator replacement
                 n_mutations_choices = [2, 3, 4]
@@ -223,23 +297,32 @@ class EvolutionEngine:
                 n_mutations_choices = [1, 2, 3]
                 n_mut_weights = [50, 35, 15]
 
+            # Apply adaptive mutation boost (1/5 rule)
+            boost = adaptive_mut.mutation_boost
+            if boost != 1.0:
+                n_mut_weights_adjusted = []
+                for w in n_mut_weights:
+                    # When stuck (boost > 1), shift towards more mutations
+                    # When improving (boost < 1), shift towards fewer mutations
+                    n_mut_weights_adjusted.append(w)
+                if boost > 1.0:
+                    # Shift weight towards higher mutation counts
+                    n_mut_weights = [
+                        int(w * (0.5 ** i)) for i, w in enumerate(reversed(n_mut_weights_adjusted))
+                    ]
+                    n_mut_weights.reverse()
+                elif boost < 1.0:
+                    # Shift weight towards lower mutation counts
+                    n_mut_weights = [
+                        int(w * (0.5 ** i)) for i, w in enumerate(n_mut_weights_adjusted)
+                    ]
+
             # Template-aware mutation bias (overlaid on stagnation weights)
-            TEMPLATE_MUTATION_BIAS = {
-                "profit_first": {"params": 1.5, "indicator": 1.2, "risk": 0.5},
-                "aggressive":   {"params": 1.5, "indicator": 1.2, "risk": 0.5},
-                "steady":       {"params": 1.0, "indicator": 1.0, "risk": 1.0},
-                "balanced":     {"params": 1.0, "indicator": 1.0, "risk": 1.0},
-                "risk_first":   {"params": 0.7, "indicator": 0.8, "risk": 1.8},
-                "conservative": {"params": 0.7, "indicator": 0.8, "risk": 1.8},
-                "custom":       {"params": 1.0, "indicator": 1.0, "risk": 1.0},
-            }
-            bias = TEMPLATE_MUTATION_BIAS.get(self.template_name, {})
-            # mut_weights indices: [0]params [1]indicator [2]logic [3]risk [4]add_signal [5]remove_signal
+            bias = _TEMPLATE_MUTATION_BIAS.get(self.template_name, {})
             if bias:
                 mut_weights[0] *= bias.get("params", 1.0)
                 mut_weights[1] *= bias.get("indicator", 1.0)
                 mut_weights[3] *= bias.get("risk", 1.0)
-                # Re-normalize to keep total weight meaningful
                 total_w = sum(mut_weights)
                 mut_weights = [w / total_w * 100 for w in mut_weights]
 
@@ -252,29 +335,36 @@ class EvolutionEngine:
                 mutation_pool.append(mutate_cross_logic)
                 mut_weights.append(10)
 
-            while len(children) < self.population_size - elite_count - 2:
-                if len(elites) >= 2:
-                    p1, p2 = random.sample(elites, 2)
-                    try:
-                        child = crossover(p1, p2)
-                        # Adaptive mutation intensity
-                        n_mutations = random.choices(
-                            n_mutations_choices, weights=n_mut_weights,
-                        )[0]
-                        for _ in range(n_mutations):
-                            mut = random.choices(mutation_pool, weights=mut_weights)[0]
-                            child = mut(child)
-                        children.append(child)
-                    except Exception:
-                        children.append(create_random_dna(
-                            leverage=self.leverage, direction=self.direction,
-                            timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
-                        ))
-                else:
+            # --- Crossover + Mutation ---
+            children = []
+            tf_pool_arg = self.timeframe_pool if len(self.timeframe_pool) > 1 else None
+
+            for i in range(0, len(parents) - 1, 2):
+                p1 = parents[i]
+                p2 = parents[i + 1]
+                try:
+                    child = crossover(p1, p2)
+                    n_mutations = random.choices(
+                        n_mutations_choices, weights=n_mut_weights,
+                    )[0]
+                    for _ in range(n_mutations):
+                        mut = random.choices(mutation_pool, weights=mut_weights)[0]
+                        child = mut(child)
+                    children.append(child)
+                except Exception:
                     children.append(create_random_dna(
                         leverage=self.leverage, direction=self.direction,
-                        timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
+                        timeframe_pool=tf_pool_arg,
                     ))
+                if len(children) >= n_children:
+                    break
+
+            # Fill shortfall with random individuals
+            while len(children) < n_children:
+                children.append(create_random_dna(
+                    leverage=self.leverage, direction=self.direction,
+                    timeframe_pool=tf_pool_arg,
+                ))
 
             # Fresh blood: 3-5 random individuals for diversity
             population = elites + children
@@ -283,14 +373,14 @@ class EvolutionEngine:
             population = inject_fresh_blood(
                 population, n=shortfall,
                 leverage=self.leverage, direction=self.direction,
-                timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
+                timeframe_pool=tf_pool_arg,
             )
 
             # Diversity maintenance: replace clones with fresh individuals
             population = check_and_maintain_diversity(
                 population,
                 leverage=self.leverage, direction=self.direction,
-                timeframe_pool=self.timeframe_pool if len(self.timeframe_pool) > 1 else None,
+                timeframe_pool=tf_pool_arg,
             )
 
             self._population = population
