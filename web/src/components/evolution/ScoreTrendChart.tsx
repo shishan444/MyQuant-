@@ -22,23 +22,34 @@ interface ChartDataPoint {
   generation: number;
   bestScore: number;
   avgScore: number;
+  prevBestScore?: number;
   isChampionChange?: boolean;
   stagnationCount?: number;
-  fallbackPct?: number;
-  zeroTradePct?: number;
   avgTrades?: number;
+  diversity?: number;
 }
 
 function parseDiagnostics(top3Summary?: string): {
-  fallbackPct?: number;
-  zeroTradePct?: number;
   avgTrades?: number;
+  diversity?: number;
 } {
   if (!top3Summary) return {};
   try {
     const match = top3Summary.match(/diag=(\{.*\})/);
     if (match) {
-      return JSON.parse(match[1]);
+      const raw = JSON.parse(match[1]) as Record<string, unknown>;
+      // Map snake_case -> camelCase
+      const avgTrades =
+        typeof raw.avg_trades === "number" ? raw.avg_trades : undefined;
+      // diversity: was float, now may be {genotype, signal, score}
+      const rawDiv = raw.diversity;
+      const diversity =
+        typeof rawDiv === "number"
+          ? rawDiv
+          : typeof rawDiv === "object" && rawDiv !== null
+            ? (rawDiv as Record<string, unknown>).genotype as number
+            : undefined;
+      return { avgTrades, diversity };
     }
   } catch {
     // ignore parse errors
@@ -57,39 +68,66 @@ function CustomTooltip({
 }) {
   if (!active || !payload) return null;
   const dataPoint = payload[0]?.payload as ChartDataPoint | undefined;
+  if (!dataPoint) return null;
+
+  const delta = dataPoint.prevBestScore != null
+    ? dataPoint.bestScore - dataPoint.prevBestScore
+    : undefined;
+  const diversityPct = dataPoint.diversity != null
+    ? `${(dataPoint.diversity * 100).toFixed(0)}%`
+    : null;
+
   return (
-    <div className="rounded-lg border border-slate-700/50 bg-[#0d1117]/95 px-3 py-2 text-xs">
-      <p className="mb-1 font-medium text-slate-300">第 {label} 代</p>
-      {payload.map((entry) => (
-        <p key={entry.name} style={{ color: entry.color }}>
-          {entry.name === "bestScore"
-            ? "最优分数"
-            : entry.name === "avgScore"
-              ? "平均分数"
-              : entry.dataKey === "championMarker"
-                ? "最优刷新"
-                : entry.name}:{" "}
-          {typeof entry.value === "number" ? entry.value.toFixed(1) : entry.value}
+    <div className="rounded-lg border border-slate-700/50 bg-[#0d1117]/95 px-3 py-2 text-xs min-w-[140px]">
+      <p className="mb-1.5 font-medium text-slate-300">第 {label} 代</p>
+
+      {/* Best score with delta */}
+      <p className="text-amber-400">
+        最优分数: {dataPoint.bestScore.toFixed(1)}
+        {delta != null && delta !== 0 && (
+          <span className={delta > 0 ? "text-emerald-400 ml-1" : "text-red-400/70 ml-1"}>
+            {delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)}
+          </span>
+        )}
+      </p>
+
+      {/* Avg score */}
+      <p className="text-purple-400/70">
+        平均分数: {dataPoint.avgScore.toFixed(1)}
+      </p>
+
+      {/* Avg trades */}
+      {dataPoint.avgTrades != null && (
+        <p className="text-slate-400">
+          种群平均交易: {dataPoint.avgTrades}
         </p>
-      ))}
-      {dataPoint && (
-        <div className="mt-1 border-t border-slate-700/30 pt-1">
-          {dataPoint.stagnationCount != null && dataPoint.stagnationCount > 0 && (
-            <p className="text-orange-400/70">
-              停滞: {dataPoint.stagnationCount} 代
-            </p>
-          )}
-          {dataPoint.avgTrades != null && (
-            <p className="text-slate-500">
-              平均交易: {dataPoint.avgTrades}
-            </p>
-          )}
-          {dataPoint.fallbackPct != null && dataPoint.fallbackPct > 0 && (
-            <p className="text-red-400/70">
-              Fallback: {dataPoint.fallbackPct}%
-            </p>
-          )}
-        </div>
+      )}
+
+      {/* Diversity */}
+      {diversityPct != null && (
+        <p className={
+          dataPoint.diversity! > 0.7
+            ? "text-emerald-400/80"
+            : dataPoint.diversity! > 0.4
+              ? "text-amber-400/80"
+              : "text-red-400/70"
+        }>
+          种群多样性: {diversityPct}
+        </p>
+      )}
+
+      {/* Stagnation */}
+      {dataPoint.stagnationCount != null && dataPoint.stagnationCount > 0 && (
+        <p className="text-orange-400/70">
+          停滞: {dataPoint.stagnationCount} 代未突破
+        </p>
+      )}
+
+      {/* Breakthrough indicator */}
+      {dataPoint.isChampionChange && (
+        <p className="mt-1 border-t border-slate-700/30 pt-1 text-emerald-400 font-medium">
+          最优记录刷新
+        </p>
       )}
     </div>
   );
@@ -110,10 +148,13 @@ export function ScoreTrendChart({
       };
     });
 
-    // Detect champion changes (score improvements)
+    // Detect champion changes and record prevBestScore for delta
     let prevBest = -Infinity;
     const changes: ChartDataPoint[] = [];
     for (const point of chartData) {
+      if (prevBest !== -Infinity) {
+        point.prevBestScore = prevBest;
+      }
       if (point.bestScore > prevBest) {
         point.isChampionChange = true;
         changes.push(point);
@@ -242,9 +283,15 @@ export function ScoreTrendChart({
         <span className={maxStagnation > 10 ? "text-orange-400" : "text-slate-500"}>
           最长停滞 {maxStagnation} 代
         </span>
-        {lastRecord?.fallbackPct != null && lastRecord.fallbackPct > 0 && (
-          <span className="text-red-400/70">
-            Fallback {lastRecord.fallbackPct}%
+        {lastRecord?.diversity != null && typeof lastRecord.diversity === "number" && (
+          <span className={
+            lastRecord.diversity > 0.7
+              ? "text-emerald-400/70"
+              : lastRecord.diversity > 0.4
+                ? "text-amber-400/70"
+                : "text-red-400/70"
+          }>
+            当前多样性 {(lastRecord.diversity * 100).toFixed(0)}%
           </span>
         )}
       </div>

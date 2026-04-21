@@ -15,6 +15,7 @@ export const evolutionKeys = {
   task: (id: string) => ["evolution", "task", id] as const,
   history: (id: string) => ["evolution", "history", id] as const,
   strategies: (id: string) => ["evolution", "strategies", id] as const,
+  discovered: () => ["evolution", "discovered"] as const,
 };
 
 export function useEvolutionTasks(filters?: {
@@ -48,6 +49,13 @@ export function useEvolutionStrategies(taskId: string) {
     queryKey: evolutionKeys.strategies(taskId),
     queryFn: () => api.getTaskStrategies(taskId),
     enabled: !!taskId,
+  });
+}
+
+export function useDiscoveredStrategies(minScore?: number) {
+  return queryOptions({
+    queryKey: [...evolutionKeys.discovered(), minScore],
+    queryFn: () => api.getAllDiscoveredStrategies({ min_score: minScore, limit: 20 }),
   });
 }
 
@@ -158,7 +166,10 @@ export function useEvolutionWebSocket(taskId: string | null) {
           } else if (update.type === "strategy_discovered") {
             // Invalidate discovered strategies list to trigger refetch
             qc.invalidateQueries({
-              queryKey: ["evolution", "discovered", currentTaskId],
+              queryKey: evolutionKeys.discovered(),
+            });
+            qc.invalidateQueries({
+              queryKey: ["evolution", "tasks"],
             });
           } else if (
             update.type === "generation_complete" ||
@@ -171,15 +182,15 @@ export function useEvolutionWebSocket(taskId: string | null) {
                 const prev = old as Record<string, unknown>;
                 return {
                   ...prev,
-                  current_generation: update.generation,
-                  best_score: update.best_score,
+                  ...(update.generation != null ? { current_generation: update.generation } : {}),
+                  ...(update.best_score != null ? { best_score: update.best_score } : {}),
                   champion_dna: update.champion_dna ?? prev.champion_dna,
                   status:
                     update.type === "evolution_complete"
                       ? "completed"
                       : prev.status,
-                  target_score: update.target_score,
-                  max_generations: update.max_generations,
+                  ...(update.target_score != null ? { target_score: update.target_score } : {}),
+                  ...(update.max_generations != null ? { max_generations: update.max_generations } : {}),
                 };
               }
             );

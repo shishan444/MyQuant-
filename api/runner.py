@@ -450,6 +450,10 @@ class EvolutionRunner(threading.Thread):
                 "stop_reason": stop_reason,
                 "total_generations": result["total_generations"],
                 "champion_score": result["champion_score"],
+                "generation": result["total_generations"],
+                "best_score": result["champion_score"],
+                "target_score": target_score,
+                "max_generations": max_gens,
             })
 
         except _StopEvolution as e:
