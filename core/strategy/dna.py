@@ -4,6 +4,7 @@ This module defines the core genetic building blocks used to represent, serializ
 and evolve trading strategies within the evolutionary optimization framework.
 """
 
+import hashlib
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -321,8 +322,9 @@ _DIRECTION_LABEL = {"long": "做多", "short": "做空", "mixed": "混合"}
 def generate_strategy_name(dna: "StrategyDNA") -> str:
     """Generate a human-readable strategy name from DNA.
 
-    Format: "{indicator}{type} {direction} {timeframe}"
-    Example: "EMA趋势 做多 4H"
+    Format: "{indicator}{type} {direction} {timeframe}-{hash4}"
+    Example: "EMA趋势 做多 4H-A3F2"
+    Hash suffix distinguishes strategies that share the same entry trigger.
     """
     genes = dna.layers[0].signal_genes if dna.layers else dna.signal_genes
     trigger = next((g for g in genes if g.role == SignalRole.ENTRY_TRIGGER), None)
@@ -330,4 +332,14 @@ def generate_strategy_name(dna: "StrategyDNA") -> str:
     type_label = INDICATOR_TYPE_MAP.get(indicator, "混合")
     dir_label = _DIRECTION_LABEL.get(dna.risk_genes.direction, "做多")
     tf = dna.execution_genes.timeframe.upper()
-    return f"{indicator}{type_label} {dir_label} {tf}"
+
+    # Build a short hash from all distinguishing fields for uniqueness
+    sig_parts = []
+    for g in dna.signal_genes:
+        sig_parts.append(f"{g.indicator}:{g.role.value}:{sorted(g.params.items())}")
+    sig_parts.append(f"logic:{dna.logic_genes.entry_logic}/{dna.logic_genes.exit_logic}")
+    sig_parts.append(f"risk:{dna.risk_genes.stop_loss}/{dna.risk_genes.take_profit}/{dna.risk_genes.position_size}")
+    sig_str = "|".join(sig_parts)
+    hash4 = hashlib.md5(sig_str.encode()).hexdigest()[:4].upper()
+
+    return f"{indicator}{type_label} {dir_label} {tf}-{hash4}"

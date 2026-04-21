@@ -129,7 +129,7 @@ export function useEvolutionWebSocket(taskId: string | null) {
     let mounted = true;
 
     function scheduleInvalidation() {
-      if (invalidateTimer) return;
+      if (invalidateTimer) clearTimeout(invalidateTimer);
       invalidateTimer = setTimeout(() => {
         invalidateTimer = null;
         if (!mounted) return;

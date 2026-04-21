@@ -32,11 +32,10 @@ import {
   usePauseEvolutionTask,
   useResumeEvolutionTask,
   useEvolutionWebSocket,
+  useDiscoveredStrategies,
 } from "@/hooks/useEvolution";
-import { useCreateStrategy } from "@/hooks/useStrategies";
 import { useAvailableSources } from "@/hooks/useDatasets";
 import { isActiveStatus, SCORE_TEMPLATE_LABELS } from "@/lib/constants";
-import { getStrategyName } from "@/lib/strategy-utils";
 import type { EvolutionTask, DNA } from "@/types/api";
 
 // ---------------------------------------------------------------------------
@@ -138,19 +137,11 @@ export function Evolution() {
 
   const currentTask = activeTaskDetail ?? activeTask;
 
-  // Completed/stopped tasks as "effective strategies", sorted by best_score desc
-  const effectiveStrategies = useMemo(
-    () =>
-      allTasks
-        .filter(
-          (t) =>
-            (t.status === "completed" || t.status === "stopped") &&
-            t.best_score != null &&
-            t.best_score > 0
-        )
-        .sort((a, b) => (b.best_score ?? 0) - (a.best_score ?? 0)),
-    [allTasks]
+  // Discovered strategies from strategy table (auto-extracted during evolution)
+  const { data: discoveredData } = useQuery(
+    useDiscoveredStrategies()
   );
+  const effectiveStrategies = discoveredData ?? [];
 
   // Historical tasks (completed or stopped)
   const historicalTasks = useMemo(
@@ -177,7 +168,6 @@ export function Evolution() {
   const pauseTask = usePauseEvolutionTask();
   const stopTask = useStopEvolutionTask();
   const resumeTask = useResumeEvolutionTask();
-  const saveStrategy = useCreateStrategy();
 
   // --- Handlers ---
   const handleStartAuto = useCallback(
@@ -194,6 +184,7 @@ export function Evolution() {
       dataStart?: string;
       dataEnd?: string;
       walkForwardEnabled?: boolean;
+      strategyThreshold?: number;
     }) => {
       if (activeTask) {
         toast.error("已有正在进行的探索任务，请先停止后再创建新任务");
@@ -215,6 +206,7 @@ export function Evolution() {
           data_start: config.dataStart,
           data_end: config.dataEnd,
           walk_forward_enabled: config.walkForwardEnabled ?? false,
+          strategy_threshold: config.strategyThreshold ?? 80,
         });
         setConfigCollapsed(true);
         setMutationLog([]);
@@ -279,21 +271,6 @@ export function Evolution() {
       onSuccess: () => setStopTarget(null),
     });
   }, [stopTarget, stopTask]);
-
-  const handleSaveStrategy = useCallback(
-    (task: EvolutionTask) => {
-      const dna = task.champion_dna;
-      const name = getStrategyName(dna) || `${task.symbol} ${task.timeframe} 进化策略`;
-      saveStrategy.mutate({
-        name,
-        dna: dna ?? {},
-        symbol: task.symbol,
-        timeframe: task.timeframe,
-        source: "evolution",
-      });
-    },
-    [saveStrategy]
-  );
 
   const handleSeedEvolve = useCallback(
     (dna: DNA) => {
@@ -522,7 +499,6 @@ export function Evolution() {
                   strategies={effectiveStrategies}
                   expandedId={expandedStrategyId}
                   onToggleExpand={handleToggleExpand}
-                  onSave={handleSaveStrategy}
                   onSeedEvolve={handleSeedEvolve}
                 />
               </div>

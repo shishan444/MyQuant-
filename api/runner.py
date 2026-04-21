@@ -592,14 +592,8 @@ class EvolutionRunner(threading.Thread):
                                dfs_by_timeframe=dfs_by_timeframe,
                                signal_set=sig_set)
 
-            from core.scoring.metrics import compute_metrics
-
-            metrics = compute_metrics(
-                bt_result.equity_curve, total_trades=bt_result.total_trades,
-                bars_per_year=bt_result.bars_per_year,
-                trade_win_rate=bt_result.trade_win_rate,
-                trade_returns=bt_result.trade_returns,
-            )
+            # Use pre-computed metrics from BacktestEngine (avoids double computation)
+            metrics = bt_result.metrics_dict
             template_name = task_row.get("score_template", "profit_first")
             score_result = score_strategy(metrics, template_name, liquidated=bt_result.liquidated)
 

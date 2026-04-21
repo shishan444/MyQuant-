@@ -44,6 +44,7 @@ interface AutoConfigFormProps {
     dataStart?: string;
     dataEnd?: string;
     walkForwardEnabled?: boolean;
+    strategyThreshold?: number;
   }) => void;
 }
 
@@ -56,10 +57,9 @@ export function AutoConfigForm({
 }: AutoConfigFormProps) {
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframePool, setTimeframePool] = useState<string[]>(["4h"]);
-  const [indicatorPool, setIndicatorPool] = useState<string[]>([
-    "EMA",
-    "RSI",
-  ]);
+  const [indicatorPool, setIndicatorPool] = useState<string[]>(
+    INDICATOR_GROUPS.flatMap((g) => g.items)
+  );
   const [scoreTemplate, setScoreTemplate] = useState("profit_first");
   const [advOpen, setAdvOpen] = useState(false);
   const [populationSize, setPopulationSize] = useState(15);
@@ -70,6 +70,7 @@ export function AutoConfigForm({
   const [dataStart, setDataStart] = useState("");
   const [dataEnd, setDataEnd] = useState("");
   const [walkForwardEnabled, setWalkForwardEnabled] = useState(false);
+  const [strategyThreshold, setStrategyThreshold] = useState(80);
 
   // Pre-fill date range from the most recent completed task
   useEffect(() => {
@@ -143,6 +144,7 @@ export function AutoConfigForm({
       dataStart: dataStart || undefined,
       dataEnd: dataEnd || undefined,
       walkForwardEnabled,
+      strategyThreshold,
     });
   }, [
     canSubmit,
@@ -158,6 +160,7 @@ export function AutoConfigForm({
     direction,
     dataStart,
     dataEnd,
+    strategyThreshold,
   ]);
 
   return (
@@ -461,6 +464,19 @@ export function AutoConfigForm({
                   )}
                 />
               </button>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] text-slate-500">策略提取阈值 (60-100)</label>
+              <Input
+                type="number"
+                min={60}
+                max={100}
+                value={strategyThreshold}
+                onChange={(e) =>
+                  setStrategyThreshold(Number(e.target.value) || 80)
+                }
+                className="h-7 w-24 text-xs"
+              />
             </div>
           </div>
         )}

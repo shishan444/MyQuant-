@@ -32,6 +32,7 @@ class BacktestResult:
     bars_per_year: int = 2190
     add_count: int = 0
     reduce_count: int = 0
+    metrics_dict: dict | None = None
 
 
 def _apply_funding_costs(
@@ -208,6 +209,11 @@ class BacktestEngine:
                     winning = int((pnl_arr > 0).sum())
                     trade_win_rate = winning / len(pnl_arr)
                     trade_returns = pnl_arr / self.init_cash
+                    # Deduct funding costs from trade returns for consistency
+                    # with post-funding equity_curve
+                    if total_funding_cost > 0:
+                        cost_per_trade = total_funding_cost / len(pnl_arr)
+                        trade_returns = trade_returns - (cost_per_trade / self.init_cash)
             except Exception:
                 pass
 
@@ -246,6 +252,7 @@ class BacktestEngine:
             bars_per_year=bars_per_year,
             add_count=add_count,
             reduce_count=reduce_count,
+            metrics_dict=metrics,
         )
 
     def run_with_portfolio(

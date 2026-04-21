@@ -37,6 +37,7 @@ export async function createEvolutionTask(payload: {
   data_start?: string;
   data_end?: string;
   walk_forward_enabled?: boolean;
+  strategy_threshold?: number;
 }): Promise<EvolutionTask> {
   const { data } = await api.post("/api/evolution/tasks", payload);
   return data;
@@ -83,5 +84,12 @@ export async function getDiscoveredStrategies(
   params?: { min_score?: number }
 ): Promise<DiscoveredStrategy[]> {
   const { data } = await api.get(`/api/evolution/tasks/${taskId}/discovered-strategies`, { params });
+  return data;
+}
+
+export async function getAllDiscoveredStrategies(
+  params?: { min_score?: number; limit?: number }
+): Promise<DiscoveredStrategy[]> {
+  const { data } = await api.get("/api/evolution/strategies", { params });
   return data;
 }

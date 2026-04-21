@@ -86,6 +86,10 @@ _MTF_COLUMNS = [
     ("mode", "TEXT"),
 ]
 
+_STRATEGY_EXT_COLUMNS = [
+    ("metrics_json", "TEXT"),  # JSON: {annual_return, sharpe_ratio, max_drawdown, win_rate, ...}
+]
+
 _CONSTRAINT_COLUMNS = [
     ("leverage", "INTEGER DEFAULT 1"),
     ("direction", "TEXT DEFAULT 'long'"),
@@ -130,6 +134,20 @@ def _apply_mtf_columns(conn: sqlite3.Connection) -> None:
         if col_name not in existing:
             conn.execute(
                 f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
+            )
+
+
+def _apply_strategy_ext_columns(conn: sqlite3.Connection) -> None:
+    """Add metrics_json column to strategy table (idempotent)."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(strategy)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+
+    for col_name, col_def in _STRATEGY_EXT_COLUMNS:
+        if col_name not in existing:
+            conn.execute(
+                f"ALTER TABLE strategy ADD COLUMN {col_name} {col_def}"
             )
 
 
@@ -202,6 +220,11 @@ def init_db_ext(db_path: Path) -> None:
         if 7 not in applied:
             _record_version(conn, 7)
 
+        # 7. ALTER TABLE for strategy metrics column
+        _apply_strategy_ext_columns(conn)
+        if 8 not in applied:
+            _record_version(conn, 8)
+
         conn.commit()
     finally:
         conn.close()
@@ -226,17 +249,26 @@ def save_strategy(
     parent_ids: Optional[str] = None,
     tags: Optional[str] = None,
     notes: Optional[str] = None,
+    metrics_json: Optional[str] = None,
 ) -> None:
-    """Insert a new strategy record."""
+    """Insert a new strategy record. Skips if dna_json already exists."""
     now = _now()
     conn = _connect(db_path)
+    # Dedup by DNA content to prevent identical strategies
+    existing = conn.execute(
+        "SELECT strategy_id FROM strategy WHERE dna_json = ? LIMIT 1",
+        (dna_json,),
+    ).fetchone()
+    if existing:
+        conn.close()
+        return
     conn.execute(
         """INSERT INTO strategy
            (strategy_id, name, dna_json, source, source_task_id, symbol, timeframe,
-            best_score, generation, parent_ids, tags, notes, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            best_score, generation, parent_ids, tags, notes, metrics_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (strategy_id, name, dna_json, source, source_task_id, symbol, timeframe,
-         best_score, generation, parent_ids, tags, notes, now, now),
+         best_score, generation, parent_ids, tags, notes, metrics_json, now, now),
     )
     conn.commit()
     conn.close()
@@ -339,7 +371,7 @@ def update_strategy(
     """
     allowed = {
         "name", "dna_json", "source", "source_task_id", "symbol", "timeframe",
-        "best_score", "generation", "parent_ids", "tags", "notes",
+        "best_score", "generation", "parent_ids", "tags", "notes", "metrics_json",
     }
     updates: list[str] = []
     params: list[Any] = []
