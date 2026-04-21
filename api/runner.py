@@ -158,9 +158,35 @@ class EvolutionRunner(threading.Thread):
             timeframe_pool=tf_pool,
         )
 
+        # Load market data once for all evaluations (saves ~1.8s per individual)
+        from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
+
+        _symbol = task_row["symbol"]
+        _timeframe = task_row["execution_timeframe"] if "execution_timeframe" in task_row else task_row["timeframe"]
+        _data_start = task_row.get("data_start")
+        _data_end = task_row.get("data_end")
+
+        _enhanced_df = load_and_prepare_df(
+            self.data_dir, _symbol, _timeframe, _data_start, _data_end,
+        )
+        if _enhanced_df is None:
+            update_task(self.db_path, task_id, status="stopped", stop_reason="no_data")
+            self._active_task_id = None
+            return
+
+        _dfs_by_timeframe = None
+        if tf_pool and len(tf_pool) > 1:
+            _dfs_by_timeframe = load_mtf_data(
+                self.data_dir, _symbol, _timeframe, _enhanced_df,
+                set(tf_pool), _data_start, _data_end,
+            )
+
         # Build a simple evaluate_fn that scores a DNA
         def evaluate_fn(individual: StrategyDNA) -> float:
-            result = self._evaluate_dna(individual, task_row, leverage, direction)
+            result = self._evaluate_dna(
+                individual, task_row, leverage, direction,
+                enhanced_df=_enhanced_df, dfs_by_timeframe=_dfs_by_timeframe,
+            )
             if isinstance(result, dict):
                 individual._eval_diagnostics = result
                 return result["score"]
@@ -436,6 +462,33 @@ class EvolutionRunner(threading.Thread):
                     )
                     conn.commit()
                     conn.close()
+
+                # Walk-Forward validation on champion only (moved from per-individual)
+                if champion_rec and champion_rec.score > 20:
+                    try:
+                        from core.backtest.walk_forward import WalkForwardValidator
+                        template_name = task_row.get("score_template", "profit_first")
+                        wf = WalkForwardValidator(template_name=template_name)
+                        wf_result = wf.validate(champion, _enhanced_df)
+                        if wf_result["wf_score"] > 0:
+                            _wf_metrics = (champion_rec.metrics or {}).copy()
+                            _wf_metrics["wf_score"] = wf_result["wf_score"]
+                            _wf_metrics["wf_rounds"] = wf_result["n_rounds"]
+                            import sqlite3
+                            conn = sqlite3.connect(str(self.db_path))
+                            conn.execute("PRAGMA journal_mode=WAL")
+                            conn.execute(
+                                "UPDATE evolution_task SET champion_metrics = ? WHERE task_id = ?",
+                                (json.dumps(_wf_metrics), task_id),
+                            )
+                            conn.commit()
+                            conn.close()
+                            logger.info(
+                                "Task %s: champion WF score=%.1f (%d rounds)",
+                                task_id, wf_result["wf_score"], wf_result["n_rounds"],
+                            )
+                    except Exception:
+                        logger.debug("WF validation failed for champion", exc_info=True)
             else:
                 update_task(
                     self.db_path, task_id,
@@ -465,11 +518,12 @@ class EvolutionRunner(threading.Thread):
             self._active_task_id = None
 
     def _evaluate_dna(self, individual: StrategyDNA, task_row: Dict[str, Any],
-                       leverage: int = 1, direction: str = "long") -> dict:
+                       leverage: int = 1, direction: str = "long",
+                       enhanced_df=None, dfs_by_timeframe=None) -> dict:
         """Score a DNA using backtesting against the dataset.
 
         Returns a dict with score and diagnostics.
-        Falls back to random scoring if backtesting data is unavailable.
+        Accepts pre-loaded data to avoid redundant I/O per individual.
         """
         # Force override task-level constraints before backtesting
         individual.risk_genes.leverage = leverage
@@ -487,58 +541,59 @@ class EvolutionRunner(threading.Thread):
 
         try:
             from core.backtest.engine import BacktestEngine
-            from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
-            from core.strategy.executor import dna_to_signals
+            from core.strategy.executor import dna_to_signal_set
             from core.scoring.scorer import score_strategy
 
-            symbol = task_row["symbol"]
-            timeframe = task_row["execution_timeframe"] if "execution_timeframe" in task_row else task_row["timeframe"]
-
-            # Load market data for the execution timeframe
-            data_start = task_row.get("data_start")
-            data_end = task_row.get("data_end")
-            enhanced_df = load_and_prepare_df(
-                self.data_dir, symbol, timeframe, data_start, data_end,
-            )
-
+            # Load data on demand if not pre-loaded (backward compatibility)
             if enhanced_df is None:
-                diagnostics["score"] = 0.0
-                return diagnostics
+                from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
+
+                symbol = task_row["symbol"]
+                timeframe = task_row["execution_timeframe"] if "execution_timeframe" in task_row else task_row["timeframe"]
+                data_start = task_row.get("data_start")
+                data_end = task_row.get("data_end")
+                enhanced_df = load_and_prepare_df(
+                    self.data_dir, symbol, timeframe, data_start, data_end,
+                )
+
+                if enhanced_df is None:
+                    diagnostics["score"] = 0.0
+                    return diagnostics
+
+                # Load multi-timeframe data if task has timeframe_pool
+                tf_pool_raw = task_row.get("timeframe_pool")
+                tf_pool = None
+                if tf_pool_raw:
+                    try:
+                        tf_pool = json.loads(tf_pool_raw) if isinstance(tf_pool_raw, str) else tf_pool_raw
+                    except (json.JSONDecodeError, Exception):
+                        tf_pool = None
+
+                if tf_pool and len(tf_pool) > 1:
+                    dfs_by_timeframe = load_mtf_data(
+                        self.data_dir, symbol, timeframe, enhanced_df,
+                        set(tf_pool), data_start, data_end,
+                    )
 
             diagnostics["used_real_data"] = True
             diagnostics["data_bars"] = len(enhanced_df)
 
-            # Load multi-timeframe data if task has timeframe_pool
-            dfs_by_timeframe = None
-            tf_pool_raw = task_row.get("timeframe_pool")
-            tf_pool = None
-            if tf_pool_raw:
-                try:
-                    tf_pool = json.loads(tf_pool_raw) if isinstance(tf_pool_raw, str) else tf_pool_raw
-                except (json.JSONDecodeError, Exception):
-                    tf_pool = None
+            # Compute signals once, pass to BacktestEngine to avoid double computation
+            sig_set = dna_to_signal_set(individual, enhanced_df,
+                                         dfs_by_timeframe=dfs_by_timeframe)
 
-            if tf_pool and len(tf_pool) > 1:
-                dfs_by_timeframe = load_mtf_data(
-                    self.data_dir, symbol, timeframe, enhanced_df,
-                    set(tf_pool), data_start, data_end,
-                )
-
-            entries, exits = dna_to_signals(individual, enhanced_df,
-                                            dfs_by_timeframe=dfs_by_timeframe)
-
-            if entries.sum() == 0:
+            if sig_set.entries.sum() == 0:
                 diagnostics["score"] = 5.0
                 diagnostics["fallback"] = False
                 return diagnostics
 
             bt = BacktestEngine()
             bt_result = bt.run(individual, enhanced_df,
-                               dfs_by_timeframe=dfs_by_timeframe)
+                               dfs_by_timeframe=dfs_by_timeframe,
+                               signal_set=sig_set)
 
             from core.scoring.metrics import compute_metrics
 
-            # Reuse trade-level data and bars_per_year from BacktestEngine
             metrics = compute_metrics(
                 bt_result.equity_curve, total_trades=bt_result.total_trades,
                 bars_per_year=bt_result.bars_per_year,
@@ -555,21 +610,6 @@ class EvolutionRunner(threading.Thread):
             diagnostics["data_bars"] = bt_result.data_bars
             diagnostics["raw_metrics"] = score_result["raw_metrics"]
             diagnostics["dimension_scores"] = score_result["dimension_scores"]
-
-            # Walk-Forward validation: enabled by default for strategies scoring > 20
-            if score_result["total_score"] > 20:
-                try:
-                    from core.backtest.walk_forward import WalkForwardValidator
-                    wf = WalkForwardValidator(template_name=template_name)
-                    wf_result = wf.validate(individual, enhanced_df)
-                    if wf_result["wf_score"] > 0:
-                        diagnostics["wf_score"] = wf_result["wf_score"]
-                        diagnostics["wf_rounds"] = wf_result["n_rounds"]
-                        if wf_result["rounds"]:
-                            diagnostics["wf_train_score"] = wf_result["rounds"][0]["train_score"]
-                            diagnostics["wf_val_score"] = wf_result["rounds"][0]["val_score"]
-                except Exception:
-                    pass  # WF failure should not block scoring
 
             return diagnostics
 

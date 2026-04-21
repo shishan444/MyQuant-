@@ -11,7 +11,7 @@ import pandas as pd
 import vectorbt as vbt
 
 from core.strategy.dna import StrategyDNA
-from core.strategy.executor import dna_to_signals
+from core.strategy.executor import dna_to_signals, dna_to_signal_set
 
 
 @dataclass
@@ -30,6 +30,8 @@ class BacktestResult:
     trade_win_rate: float | None = None
     trade_returns: np.ndarray | None = None
     bars_per_year: int = 2190
+    add_count: int = 0
+    reduce_count: int = 0
 
 
 def _apply_funding_costs(
@@ -48,13 +50,14 @@ def _apply_funding_costs(
     borrowed_ratio = (leverage - 1) / leverage
     cost_rate = RATE_PER_8H * periods_per_bar * borrowed_ratio
 
-    adjusted = equity_curve.copy()
+    # Use numpy array for fast element-wise access (avoids pandas iloc overhead)
+    adjusted = equity_curve.values.astype(np.float64).copy()
     total_cost = 0.0
     for i in range(1, len(adjusted)):
-        cost = adjusted.iloc[i - 1] * cost_rate
+        cost = adjusted[i - 1] * cost_rate
         total_cost += cost
-        adjusted.iloc[i] = adjusted.iloc[i] - cost
-    return adjusted, total_cost
+        adjusted[i] -= cost
+    return pd.Series(adjusted, index=equity_curve.index), total_cost
 
 
 def _check_liquidation(
@@ -86,9 +89,21 @@ class BacktestEngine:
         dna: StrategyDNA,
         enhanced_df: pd.DataFrame,
         dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None,
+        signal_set=None,
     ):
-        """Construct a vectorbt Portfolio from DNA signals."""
-        entries, exits = dna_to_signals(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+        """Construct a vectorbt Portfolio from DNA signals.
+
+        Uses SignalSet for add/reduce support.
+        """
+        if signal_set is not None:
+            sig_set = signal_set
+        else:
+            sig_set = dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+
+        entries = sig_set.entries
+        exits = sig_set.exits
+        adds = sig_set.adds
+        reduces = sig_set.reduces
 
         close = enhanced_df["close"]
         open_ = enhanced_df["open"]
@@ -98,10 +113,18 @@ class BacktestEngine:
         direction_map = {"long": 0, "short": 1}
         size = dna.risk_genes.position_size * dna.risk_genes.leverage
 
+        # Combine entries and adds for vectorbt (accumulate=True for adds)
+        # Use accumulate to allow multiple entries (adds)
+        all_entries = entries | adds
+        accumulate = bool(adds.any())
+
+        # Reduce signals become additional exits
+        all_exits = exits | reduces
+
         portfolio_kwargs = dict(
             close=close,
-            entries=entries,
-            exits=exits,
+            entries=all_entries,
+            exits=all_exits,
             open=open_,
             high=high,
             low=low,
@@ -112,17 +135,18 @@ class BacktestEngine:
             tp_stop=dna.risk_genes.take_profit,
             size=size,
             size_type="percent",
-            accumulate=False,
+            accumulate=accumulate,
             direction=direction_map.get(dna.risk_genes.direction, 0),
         )
 
-        return vbt.Portfolio.from_signals(**portfolio_kwargs)
+        return vbt.Portfolio.from_signals(**portfolio_kwargs), int(adds.sum()), int(reduces.sum())
 
     def run(
         self,
         dna: StrategyDNA,
         enhanced_df: pd.DataFrame,
         dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None,
+        signal_set=None,
     ) -> BacktestResult:
         """Run backtest for a single strategy DNA.
 
@@ -130,11 +154,17 @@ class BacktestEngine:
             dna: Strategy genome.
             enhanced_df: DataFrame with OHLCV + indicator columns.
             dfs_by_timeframe: Optional dict of {timeframe: DataFrame} for MTF signals.
+            signal_set: Optional precomputed SignalSet to avoid redundant signal computation.
 
         Returns:
             BacktestResult with key metrics computed from adjusted equity curve.
         """
-        portfolio = self._build_portfolio(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+        build_result = self._build_portfolio(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe, signal_set=signal_set)
+        if isinstance(build_result, tuple):
+            portfolio, add_count, reduce_count = build_result
+        else:
+            portfolio = build_result
+            add_count, reduce_count = 0, 0
 
         equity_curve = portfolio.value()
         if isinstance(equity_curve, pd.DataFrame):
@@ -214,6 +244,8 @@ class BacktestEngine:
             trade_win_rate=trade_win_rate,
             trade_returns=trade_returns,
             bars_per_year=bars_per_year,
+            add_count=add_count,
+            reduce_count=reduce_count,
         )
 
     def run_with_portfolio(
@@ -226,6 +258,10 @@ class BacktestEngine:
 
         The Portfolio object exposes .plot() for quick visualization.
         """
-        portfolio = self._build_portfolio(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+        build_result = self._build_portfolio(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+        if isinstance(build_result, tuple):
+            portfolio = build_result[0]
+        else:
+            portfolio = build_result
         result = self.run(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
         return result, portfolio
