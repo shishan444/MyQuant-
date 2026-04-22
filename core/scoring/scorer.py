@@ -80,10 +80,13 @@ def score_strategy(
         total *= (1.0 - 0.95 * penalty_ratio)
 
     # Trade count penalty: Sigmoid-based penalty for low trade count
-    MIN_TRADES_THRESHOLD = 35
+    # Dynamic threshold based on data size (total_bars)
+    total_bars = metrics.get("total_bars", 0)
+    min_trades = max(10, total_bars // 500) if total_bars > 0 else 35
     trade_count = metrics.get("total_trades", 0)
-    if trade_count < MIN_TRADES_THRESHOLD:
-        trade_factor = 1.0 / (1.0 + math.exp(-0.2 * (trade_count - 30)))
+    if trade_count < min_trades:
+        midpoint = min_trades - 5
+        trade_factor = 1.0 / (1.0 + math.exp(-0.2 * (trade_count - midpoint)))
     else:
         trade_factor = 1.0
     total *= trade_factor

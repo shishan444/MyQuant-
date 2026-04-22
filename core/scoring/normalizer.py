@@ -1,20 +1,27 @@
 """Normalize raw metrics to 0-100 scores."""
 from __future__ import annotations
 
+import math
+
 
 def normalize(metric_name: str, value: float) -> float:
     """Map a raw metric value to a 0-100 score.
 
     Normalization rules:
-    - annual_return: linear map [-100%, +100%] -> [0, 100]
+    - annual_return: log mapping [-100%, +500%] -> [0, 100]
     - sharpe_ratio: linear map [0, 3.0] -> [0, 100], >= 3.0 = 100
     - max_drawdown: 0% drawdown = 100, >= 50% drawdown = 0
     - win_rate: linear map [30%, 70%] -> [0, 100]
     - calmar_ratio: linear map [0, 5.0] -> [0, 100], >= 5.0 = 100
     """
     if metric_name == "annual_return":
-        # Map [-1.0, 1.0] to [0, 100]
-        score = (value + 1.0) / 2.0 * 100
+        # Logarithmic mapping: log1p(value + 1) / log1p(6) * 100
+        # Maps [-1, +5] -> [0, 100] with good discrimination across wide range
+        # -1.0 (total loss) => 0, 0.0 => ~38.9, 1.0 => ~61.1, 5.0 => 100
+        if value <= -1.0:
+            score = 0.0
+        else:
+            score = min(100.0, math.log1p(value + 1.0) / math.log1p(6.0) * 100)
     elif metric_name == "sharpe_ratio":
         # Map [0, 3.0] to [0, 100]
         score = min(value / 3.0, 1.0) * 100

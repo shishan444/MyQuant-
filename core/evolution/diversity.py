@@ -28,7 +28,6 @@ def _gene_signature(dna: StrategyDNA) -> str:
         parts.append(f"{gene.indicator}({param_summary}):{cond_type}:{gene.role.value}")
     parts.append(f"lev:{dna.risk_genes.leverage}")
     parts.append(f"dir:{dna.risk_genes.direction}")
-    parts.append(f"sl:{dna.risk_genes.stop_loss:.3f}")
     return "|".join(parts)
 
 

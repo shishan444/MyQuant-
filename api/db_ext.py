@@ -250,25 +250,59 @@ def save_strategy(
     tags: Optional[str] = None,
     notes: Optional[str] = None,
     metrics_json: Optional[str] = None,
+    gene_signature: Optional[str] = None,
 ) -> None:
-    """Insert a new strategy record. Skips if dna_json already exists."""
+    """Insert a new strategy record. Deduplicates by gene_signature.
+
+    If a strategy with the same gene_signature already exists, keeps the one
+    with the higher best_score.
+    """
+    # Compute gene_signature from DNA if not provided
+    if gene_signature is None:
+        try:
+            from core.strategy.dna import StrategyDNA
+            from core.evolution.diversity import _gene_signature
+            dna = StrategyDNA.from_json(dna_json)
+            gene_signature = _gene_signature(dna)
+        except Exception:
+            gene_signature = None
+
     now = _now()
     conn = _connect(db_path)
-    # Dedup by DNA content to prevent identical strategies
-    existing = conn.execute(
-        "SELECT strategy_id FROM strategy WHERE dna_json = ? LIMIT 1",
-        (dna_json,),
-    ).fetchone()
-    if existing:
-        conn.close()
-        return
+
+    # Dedup by gene_signature: keep the higher-scoring version
+    if gene_signature:
+        existing = conn.execute(
+            "SELECT strategy_id, best_score FROM strategy WHERE gene_signature = ? LIMIT 1",
+            (gene_signature,),
+        ).fetchone()
+        if existing:
+            existing_id, existing_score = existing[0], existing[1]
+            if best_score is not None and existing_score is not None and best_score > existing_score:
+                # New strategy is better: replace the old one
+                conn.execute(
+                    """UPDATE strategy SET
+                       strategy_id=?, name=?, dna_json=?, source=?, source_task_id=?,
+                       symbol=?, timeframe=?, best_score=?, generation=?, parent_ids=?,
+                       tags=?, notes=?, metrics_json=?, gene_signature=?, updated_at=?
+                       WHERE strategy_id=?""",
+                    (strategy_id, name, dna_json, source, source_task_id, symbol, timeframe,
+                     best_score, generation, parent_ids, tags, notes, metrics_json,
+                     gene_signature, now, existing_id),
+                )
+                conn.commit()
+            conn.close()
+            return
+
     conn.execute(
         """INSERT INTO strategy
            (strategy_id, name, dna_json, source, source_task_id, symbol, timeframe,
-            best_score, generation, parent_ids, tags, notes, metrics_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            best_score, generation, parent_ids, tags, notes, metrics_json,
+            gene_signature, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (strategy_id, name, dna_json, source, source_task_id, symbol, timeframe,
-         best_score, generation, parent_ids, tags, notes, metrics_json, now, now),
+         best_score, generation, parent_ids, tags, notes, metrics_json,
+         gene_signature, now, now),
     )
     conn.commit()
     conn.close()

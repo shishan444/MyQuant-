@@ -68,7 +68,7 @@ class TestComputeMetrics:
 class TestNormalize:
     def test_annual_return_good_is_high(self):
         score = normalize("annual_return", 0.50)  # 50% annual return
-        assert score > 50
+        assert score > 40  # Log mapping: 50% -> ~47
 
     def test_annual_return_negative_is_low(self):
         score = normalize("annual_return", -0.50)

@@ -209,11 +209,6 @@ class BacktestEngine:
                     winning = int((pnl_arr > 0).sum())
                     trade_win_rate = winning / len(pnl_arr)
                     trade_returns = pnl_arr / self.init_cash
-                    # Deduct funding costs from trade returns for consistency
-                    # with post-funding equity_curve
-                    if total_funding_cost > 0:
-                        cost_per_trade = total_funding_cost / len(pnl_arr)
-                        trade_returns = trade_returns - (cost_per_trade / self.init_cash)
             except Exception:
                 pass
 

@@ -182,9 +182,13 @@ class EvolutionRunner(threading.Thread):
             )
 
         # Build a simple evaluate_fn that scores a DNA
+        # NOTE: direction is fixed to the task's original direction (e.g. "mixed").
+        # Continuous evolution direction rotation only affects seed creation, NOT evaluation.
+        _eval_direction = direction
+
         def evaluate_fn(individual: StrategyDNA) -> float:
             result = self._evaluate_dna(
-                individual, task_row, leverage, direction,
+                individual, task_row, leverage, _eval_direction,
                 enhanced_df=_enhanced_df, dfs_by_timeframe=_dfs_by_timeframe,
             )
             if isinstance(result, dict):
@@ -323,6 +327,7 @@ class EvolutionRunner(threading.Thread):
                             source="evolution",
                             source_task_id=task_id,
                             best_score=diag["score"],
+                            gene_signature=sig,
                             generation=global_gen,
                             metrics_json=json.dumps(diag.get("raw_metrics")) if diag.get("raw_metrics") else None,
                         )
@@ -378,8 +383,8 @@ class EvolutionRunner(threading.Thread):
                 # Rotate direction for diversity in continuous mode
                 original_direction = task_row.get("direction", "long")
                 if original_direction == "mixed":
-                    directions = ["long", "short", "mixed"]
-                    direction = directions[self._population_count % 3]
+                    directions = ["long", "short"]
+                    direction = directions[self._population_count % 2]
                     logger.info(
                         "Task %s: rotating direction to '%s' for population #%d",
                         task_id, direction, self._population_count + 1,
@@ -419,14 +424,16 @@ class EvolutionRunner(threading.Thread):
                         tpl, _tf, _sym, leverage, direction,
                     )
                     extra_ancestors.append(seed)
-                engine._population = None
 
                 # Collect signatures from previous population for dedup
-                pop_sigs = set()
+                # MUST happen before setting _population = None
                 if hasattr(engine, '_population') and engine._population:
                     for ind in engine._population:
-                        pop_sigs.add(_gene_signature(ind))
-                discovered_signatures.update(pop_sigs)
+                        discovered_signatures.add(_gene_signature(ind))
+                    # Preserve top elites as ancestors for next population
+                    extra_ancestors.extend(engine._population[:3])
+
+                engine._population = None
 
                 result = engine.evolve(
                     ancestor=dna,

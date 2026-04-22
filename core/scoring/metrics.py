@@ -41,6 +41,7 @@ def compute_metrics(
             "max_consecutive_losses": 0,
             "monthly_consistency": 0.0,
             "r_squared": 0.0,
+            "total_bars": len(equity_curve),
         }
 
     # Annual return (from equity curve - standard)
@@ -156,4 +157,5 @@ def compute_metrics(
         "max_consecutive_losses": int(max_consecutive_losses),
         "monthly_consistency": float(monthly_consistency),
         "r_squared": float(r_squared),
+        "total_bars": len(equity_curve),
     }

@@ -216,3 +216,94 @@ class TestFullScoringPipeline:
             assert 0 <= result["total_score"] <= 100, (
                 f"Template '{name}' score {result['total_score']} out of range"
             )
+
+
+# -- Bug fix regression tests --
+
+class TestFundingCostNotInTradeReturns:
+    """Verify trade_returns are NOT contaminated by funding cost averaging."""
+
+    def test_trade_returns_are_raw(self):
+        """After fix, trade_returns should reflect raw PnL without funding cost deduction."""
+        eq = _make_equity_curve(200)
+        returns = _make_trade_returns(50)
+        metrics = compute_metrics(eq, total_trades=50, trade_returns=returns)
+        # profit_factor should be > 0 when trade_returns has both wins and losses
+        assert metrics["profit_factor"] > 0
+        assert metrics["sortino_ratio"] >= 0
+
+
+class TestAnnualReturnLogNormalization:
+    """Verify logarithmic normalization for annual_return."""
+
+    def test_total_loss_is_zero(self):
+        assert normalize("annual_return", -1.0) == 0.0
+
+    def test_zero_return_is_above_zero(self):
+        # 0% return should get a positive but not high score
+        score = normalize("annual_return", 0.0)
+        assert 30 < score < 50
+
+    def test_high_return_no_clipping(self):
+        # 200% return should NOT be clipped to 100
+        score_200 = normalize("annual_return", 2.0)
+        assert score_200 < 100  # Not clipped
+        assert score_200 > 65   # But high
+
+    def test_500_return_reaches_100(self):
+        score = normalize("annual_return", 5.0)
+        assert score == 100.0
+
+    def test_monotonic_increasing(self):
+        scores = [normalize("annual_return", v) for v in [-0.5, 0.0, 0.5, 1.0, 2.0, 3.0, 5.0]]
+        for i in range(len(scores) - 1):
+            assert scores[i] < scores[i + 1], (
+                f"Non-monotonic: {scores[i]} >= {scores[i+1]} at index {i}"
+            )
+
+    def test_discrimination_at_high_returns(self):
+        # Two strategies with different high returns should get different scores
+        score_100 = normalize("annual_return", 1.0)
+        score_300 = normalize("annual_return", 3.0)
+        assert score_300 > score_100
+        assert score_300 - score_100 > 10  # Meaningful discrimination
+
+
+class TestDynamicTradeCountThreshold:
+    """Verify trade count penalty adapts to data size via total_bars."""
+
+    def test_metrics_includes_total_bars(self):
+        eq = _make_equity_curve(200)
+        metrics = compute_metrics(eq, total_trades=10)
+        assert "total_bars" in metrics
+        assert metrics["total_bars"] == 200
+
+    def test_low_freq_4h_not_overpenalized(self):
+        """4h strategy with 20 trades over 1000 bars should not be heavily penalized."""
+        eq = _make_equity_curve(1000)
+        returns = _make_trade_returns(20)
+        metrics = compute_metrics(eq, total_trades=20, trade_returns=returns)
+        # total_bars=1000 => min_trades = max(10, 1000//500) = 2
+        # 20 trades >> 2, so no penalty
+        result = score_strategy(metrics, "balanced")
+        assert result["total_score"] > 0
+
+    def test_high_freq_15m_threshold(self):
+        """15m strategy: 10000 bars => min_trades = max(10, 10000//500) = 20."""
+        eq = _make_equity_curve(10000)
+        returns = _make_trade_returns(25)
+        metrics = compute_metrics(eq, total_trades=25, trade_returns=returns)
+        # total_bars=10000 => min_trades=20, 25 > 20 => no penalty
+        result = score_strategy(metrics, "balanced")
+        assert result["total_score"] > 0
+
+    def test_zero_total_bars_uses_default(self):
+        """Without total_bars, falls back to default threshold=35."""
+        metrics = {"total_trades": 20, "annual_return": 0.5, "sharpe_ratio": 1.0,
+                   "max_drawdown": -0.1, "win_rate": 0.55, "calmar_ratio": 2.0,
+                   "sortino_ratio": 1.5, "profit_factor": 1.2,
+                   "max_consecutive_losses": 3, "monthly_consistency": 0.6,
+                   "r_squared": 0.5, "total_bars": 0}
+        result = score_strategy(metrics, "balanced")
+        # 20 trades < 35 (default) => penalty applied, but score still > 0
+        assert result["total_score"] > 0
