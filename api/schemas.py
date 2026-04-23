@@ -231,6 +231,8 @@ class CompareRequest(BaseModel):
     fee: float = 0.001
     slippage: float = 0.0005
     score_template: str = "profit_first"
+    data_start: Optional[str] = None
+    data_end: Optional[str] = None
 
 
 class CompareResultItem(BaseModel):

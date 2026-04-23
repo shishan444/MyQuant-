@@ -261,6 +261,8 @@ def backtest_strategy(
     needed_tfs: set[str] = set()
     if dna.is_mtf and dna.layers:
         needed_tfs = {layer.timeframe for layer in dna.layers}
+        # Always include execution timeframe for cross-timeframe signal evaluation
+        needed_tfs.add(timeframe)
     elif payload.timeframe_pool and len(payload.timeframe_pool) > 1:
         needed_tfs = set(payload.timeframe_pool)
 
@@ -375,6 +377,7 @@ def compare_strategies(
         )
 
     from core.data.storage import load_parquet
+    from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
 
     engine = _bt_engine_mod.BacktestEngine(
         init_cash=payload.init_cash,
@@ -382,6 +385,7 @@ def compare_strategies(
         slippage=payload.slippage,
     )
 
+    # Load raw data first to get symbol/timeframe info
     df = load_parquet(parquet_path)
     results: List[CompareResultItem] = []
 
@@ -396,7 +400,31 @@ def compare_strategies(
 
         try:
             dna = StrategyDNA.from_json(row["dna_json"])
-            bt_result = engine.run(dna, df)
+            symbol = dna.execution_genes.symbol
+            timeframe = dna.execution_genes.timeframe
+
+            # Use enhanced data with indicators (same as backtest endpoint)
+            enhanced_df = load_and_prepare_df(
+                data_dir, symbol, timeframe,
+                data_start=payload.data_start,
+                data_end=payload.data_end,
+            )
+            if enhanced_df is None:
+                enhanced_df = df
+
+            # Load MTF data if strategy uses multiple timeframes
+            dfs_by_timeframe = None
+            if dna.is_mtf:
+                dfs_by_timeframe = load_mtf_data(
+                    data_dir, dna, enhanced_df,
+                    data_start=payload.data_start,
+                    data_end=payload.data_end,
+                )
+
+            bt_result = engine.run(
+                dna, enhanced_df,
+                dfs_by_timeframe=dfs_by_timeframe,
+            )
             metrics = compute_metrics(
                 bt_result.equity_curve,
                 total_trades=bt_result.total_trades,
