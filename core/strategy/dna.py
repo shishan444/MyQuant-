@@ -151,17 +151,22 @@ class TimeframeLayer:
 
     Each layer contains signal genes and logic genes evaluated
     independently on its own timeframe's data.
+
+    role: "trend" for state signals (ffilled), "execution" for pulse signals.
+          None defaults to "execution" for backward compatibility.
     """
 
     timeframe: str
     signal_genes: List[SignalGene] = field(default_factory=list)
     logic_genes: LogicGenes = field(default_factory=LogicGenes)
+    role: Optional[str] = None  # "trend" | "execution"
 
     def to_dict(self) -> dict:
         return {
             "timeframe": self.timeframe,
             "signal_genes": [sg.to_dict() for sg in self.signal_genes],
             "logic_genes": self.logic_genes.to_dict(),
+            "role": self.role,
         }
 
     @classmethod

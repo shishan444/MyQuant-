@@ -489,6 +489,22 @@ def resample_signals(
     return reindexed.fillna(False).astype(bool)
 
 
+def _resample_pulse(
+    signal: pd.Series,
+    target_index: pd.DatetimeIndex,
+) -> pd.Series:
+    """Resample pulse signal to target index without forward-fill.
+
+    Execution layer signals are single-bar triggers: True only on the
+    bar where the signal fires, not carried forward.
+    """
+    if signal.empty or len(target_index) == 0:
+        return pd.Series(False, index=target_index)
+
+    reindexed = signal.reindex(target_index, fill_value=False)
+    return reindexed.fillna(False).astype(bool)
+
+
 def dna_to_signals(
     dna: StrategyDNA,
     enhanced_df: pd.DataFrame,
@@ -509,12 +525,22 @@ def dna_to_signal_set(
     dfs_by_timeframe: dict | None = None,
 ) -> SignalSet:
     """Convert a StrategyDNA to a full SignalSet with adds/reduces."""
-    # MTF mode
+    # MTF mode with role-aware signal combination
     if dna.is_mtf and dfs_by_timeframe is not None:
-        layer_entries = []
-        layer_exits = []
-        layer_adds = []
-        layer_reduces = []
+        trend_entries = []
+        trend_exits = []
+        exec_entries = []
+        exec_exits = []
+        exec_adds = []
+        exec_reduces = []
+
+        # Legacy: also track all signals for non-role-aware combination
+        all_layer_entries = []
+        all_layer_exits = []
+        all_layer_adds = []
+        all_layer_reduces = []
+
+        has_any_role = any(layer.role is not None for layer in dna.layers)
 
         for layer in dna.layers:
             layer_df = dfs_by_timeframe.get(layer.timeframe)
@@ -522,32 +548,79 @@ def dna_to_signal_set(
                 continue
 
             sig = evaluate_layer(layer, layer_df)
-
+            layer_role = layer.role  # None means "execution" default
             exec_tf = dna.execution_genes.timeframe
-            if layer.timeframe != exec_tf:
-                layer_entries.append(resample_signals(sig.entries, enhanced_df.index))
-                layer_exits.append(resample_signals(sig.exits, enhanced_df.index))
-                layer_adds.append(resample_signals(sig.adds, enhanced_df.index))
-                layer_reduces.append(resample_signals(sig.reduces, enhanced_df.index))
+            is_cross_tf = layer.timeframe != exec_tf
+
+            if is_cross_tf:
+                resampled_entries = resample_signals(sig.entries, enhanced_df.index)
+                resampled_exits = resample_signals(sig.exits, enhanced_df.index)
+                resampled_adds = resample_signals(sig.adds, enhanced_df.index)
+                resampled_reduces = resample_signals(sig.reduces, enhanced_df.index)
+
+                pulse_entries = _resample_pulse(sig.entries, enhanced_df.index)
+                pulse_exits = _resample_pulse(sig.exits, enhanced_df.index)
+                pulse_adds = _resample_pulse(sig.adds, enhanced_df.index)
+                pulse_reduces = _resample_pulse(sig.reduces, enhanced_df.index)
             else:
-                layer_entries.append(sig.entries.reindex(enhanced_df.index, fill_value=False))
-                layer_exits.append(sig.exits.reindex(enhanced_df.index, fill_value=False))
-                layer_adds.append(sig.adds.reindex(enhanced_df.index, fill_value=False))
-                layer_reduces.append(sig.reduces.reindex(enhanced_df.index, fill_value=False))
+                resampled_entries = sig.entries.reindex(enhanced_df.index, fill_value=False)
+                resampled_exits = sig.exits.reindex(enhanced_df.index, fill_value=False)
+                resampled_adds = sig.adds.reindex(enhanced_df.index, fill_value=False)
+                resampled_reduces = sig.reduces.reindex(enhanced_df.index, fill_value=False)
 
-        if not layer_entries:
-            return SignalSet(
-                entries=pd.Series(False, index=enhanced_df.index),
-                exits=pd.Series(False, index=enhanced_df.index),
-                adds=pd.Series(False, index=enhanced_df.index),
-                reduces=pd.Series(False, index=enhanced_df.index),
-                trend_direction=pd.Series(0, index=enhanced_df.index),
-            )
+                pulse_entries = resampled_entries
+                pulse_exits = resampled_exits
+                pulse_adds = resampled_adds
+                pulse_reduces = resampled_reduces
 
-        combined_entries = combine_signals(layer_entries, dna.cross_layer_logic)
-        combined_exits = combine_signals(layer_exits, dna.cross_layer_logic)
-        combined_adds = combine_signals(layer_adds, dna.cross_layer_logic)
-        combined_reduces = combine_signals(layer_reduces, dna.cross_layer_logic)
+            # Always add to legacy all_layer lists for backward compat
+            all_layer_entries.append(resampled_entries)
+            all_layer_exits.append(resampled_exits)
+            all_layer_adds.append(resampled_adds)
+            all_layer_reduces.append(resampled_reduces)
+
+            if layer_role == "trend":
+                # Trend layers: forward-filled state signals
+                trend_entries.append(resampled_entries)
+                trend_exits.append(resampled_exits)
+            else:
+                # Execution layers (default): pulse signals (no ffill)
+                exec_entries.append(pulse_entries)
+                exec_exits.append(pulse_exits)
+                exec_adds.append(pulse_adds)
+                exec_reduces.append(pulse_reduces)
+
+        # Combine signals
+        if has_any_role:
+            # Role-aware combination: trend as gate, execution as trigger
+            if trend_entries and exec_entries:
+                trend_gate = combine_signals(trend_entries, "AND")
+                exec_trigger = combine_signals(exec_entries, "OR")
+                combined_entries = trend_gate & exec_trigger
+            elif exec_entries:
+                combined_entries = combine_signals(exec_entries, "OR")
+            elif trend_entries:
+                combined_entries = combine_signals(trend_entries, "AND")
+            else:
+                combined_entries = pd.Series(False, index=enhanced_df.index)
+
+            combined_exits = combine_signals(exec_exits, "OR") if exec_exits else pd.Series(False, index=enhanced_df.index)
+            combined_adds = combine_signals(exec_adds, "OR") if exec_adds else pd.Series(False, index=enhanced_df.index)
+            combined_reduces = combine_signals(exec_reduces, "OR") if exec_reduces else pd.Series(False, index=enhanced_df.index)
+        else:
+            # Legacy behavior: no roles defined, use cross_layer_logic on all
+            if not all_layer_entries:
+                return SignalSet(
+                    entries=pd.Series(False, index=enhanced_df.index),
+                    exits=pd.Series(False, index=enhanced_df.index),
+                    adds=pd.Series(False, index=enhanced_df.index),
+                    reduces=pd.Series(False, index=enhanced_df.index),
+                    trend_direction=pd.Series(0, index=enhanced_df.index),
+                )
+            combined_entries = combine_signals(all_layer_entries, dna.cross_layer_logic)
+            combined_exits = combine_signals(all_layer_exits, dna.cross_layer_logic)
+            combined_adds = combine_signals(all_layer_adds, dna.cross_layer_logic)
+            combined_reduces = combine_signals(all_layer_reduces, dna.cross_layer_logic)
 
         both = combined_entries & combined_exits
         combined_entries = combined_entries & ~both

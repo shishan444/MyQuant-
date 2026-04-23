@@ -120,6 +120,7 @@ class TimeframeLayerModel(BaseModel):
     timeframe: str
     signal_genes: List[SignalGeneModel] = Field(default_factory=list)
     logic_genes: LogicGenesModel = Field(default_factory=LogicGenesModel)
+    role: Optional[str] = None  # "trend" | "execution"
 
 
 # ── Strategy Schemas ──

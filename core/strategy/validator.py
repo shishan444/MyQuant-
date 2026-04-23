@@ -28,24 +28,25 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
     """
     errors: List[str] = []
 
-    # Check entry signals
-    entry_signals = [
-        g for g in dna.signal_genes
-        if g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)
-    ]
-    if not entry_signals:
-        errors.append("No entry signal defined (need at least one entry_trigger or entry_guard)")
+    # For non-MTF strategies, check top-level signal_genes
+    if not dna.layers:
+        entry_signals = [
+            g for g in dna.signal_genes
+            if g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)
+        ]
+        if not entry_signals:
+            errors.append("No entry signal defined (need at least one entry_trigger or entry_guard)")
 
-    # Check exit signals
-    exit_signals = [
-        g for g in dna.signal_genes
-        if g.role in (SignalRole.EXIT_TRIGGER, SignalRole.EXIT_GUARD)
-    ]
-    if not exit_signals:
-        errors.append("No exit signal defined (need at least one exit_trigger or exit_guard)")
+        exit_signals = [
+            g for g in dna.signal_genes
+            if g.role in (SignalRole.EXIT_TRIGGER, SignalRole.EXIT_GUARD)
+        ]
+        if not exit_signals:
+            errors.append("No exit signal defined (need at least one exit_trigger or exit_guard)")
 
     # Also check layers for MTF strategies
     if dna.layers:
+        has_execution = False
         for layer in dna.layers:
             layer_entry = [
                 g for g in layer.signal_genes
@@ -59,6 +60,12 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
             ]
             if not layer_exit:
                 errors.append(f"Layer {layer.timeframe}: no exit signal defined")
+            if layer.role not in (None, "trend", "execution"):
+                errors.append(f"Layer {layer.timeframe}: invalid role '{layer.role}'")
+            if layer.role in (None, "execution"):
+                has_execution = True
+        if not has_execution:
+            errors.append("MTF strategy needs at least one execution layer")
 
     # Validate condition structures
     for i, gene in enumerate(dna.signal_genes):
