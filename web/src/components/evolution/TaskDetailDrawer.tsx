@@ -44,7 +44,7 @@ export function TaskDetailDrawer({
   if (!open || !task) return null;
 
   const historyRecords = historyData?.records ?? [];
-  const strategies = strategiesData?.strategies ?? [];
+  const strategies = strategiesData?.items ?? [];
   const championDna = task.champion_dna;
 
   const tabs: { key: TabKey; label: string }[] = [

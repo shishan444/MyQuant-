@@ -7,6 +7,8 @@ import {
   ChevronUp,
   RotateCcw,
   BarChart3,
+  Crosshair,
+  Settings2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation, useNavigate } from "react-router";
@@ -27,28 +29,24 @@ import {
 } from "@/components/ui/select";
 
 import {
-  ConditionPillGroup,
-  ValidationConclusion,
-  DistributionChart,
-  ReferencePanel,
-  TriggerTable,
-  TriggerDetailDrawer,
+  RuleConditionGroup,
   SaveStrategyDialog,
   BacktestModePanel,
+  SceneModePanel,
 } from "@/components/lab";
+import type { BacktestModePanelHandle } from "@/components/lab/BacktestModePanel";
 
-import { useValidateHypothesis } from "@/hooks/useValidation";
-import { useCreateStrategy } from "@/hooks/useStrategies";
+import { useValidateRules } from "@/hooks/useValidation";
+import { useCreateStrategy, useStrategies } from "@/hooks/useStrategies";
 import { useAvailableSources } from "@/hooks/useDatasets";
 import { getOhlcvBySymbol, getChartIndicators } from "@/services/datasets";
-import { SYMBOL_OPTIONS, TIMEFRAME_SELECT_OPTIONS } from "@/lib/constants";
-import { generateDnaFromValidation } from "@/lib/dna-generator";
+import { SYMBOL_OPTIONS, TIMEFRAME_SELECT_OPTIONS, LEVERAGE_OPTIONS } from "@/lib/constants";
 import type {
-  ConditionInput,
-  ValidateResponse,
-  TriggerRecord,
+  RuleCondition,
+  RuleValidateResponse,
   ChartIndicatorsResponse,
   DNA,
+  Strategy,
 } from "@/types/api";
 import type { IndicatorData } from "@/components/charts/KlineChart";
 import type { BollingerBandData } from "@/types/chart";
@@ -65,37 +63,6 @@ const QUICK_DATES = [
   { label: "近1年", days: 365 },
   { label: "今年", days: -1 },
   { label: "全部", days: 0 },
-];
-
-const EXAMPLE_PRESETS = [
-  {
-    label: "上轨触碰后下跌",
-    when: [
-      { subject: "close", action: "touch", target: "bb_upper", logic: "AND" as const },
-    ],
-    then: [
-      { subject: "close", action: "drop", target: "0", window: 8, logic: "AND" as const },
-    ],
-  },
-  {
-    label: "放量突破后上涨",
-    when: [
-      { subject: "close", action: "breakout", target: "bb_upper", logic: "AND" as const },
-      { subject: "volume", action: "spike", target: "2", logic: "AND" as const },
-    ],
-    then: [
-      { subject: "close", action: "rise", target: "0", window: 8, logic: "AND" as const },
-    ],
-  },
-  {
-    label: "RSI超买后回调",
-    when: [
-      { subject: "rsi", action: "gt", target: "70", logic: "AND" as const },
-    ],
-    then: [
-      { subject: "close", action: "drop", target: "0", window: 12, logic: "AND" as const },
-    ],
-  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -149,17 +116,29 @@ export function Lab() {
   } | null;
 
   // -- Lab mode --
-  type LabMode = "hypothesis" | "backtest";
+  type LabMode = "hypothesis" | "backtest" | "scene";
   const [labMode, setLabMode] = useState<LabMode>(
     routeState?.dna ? "backtest" : "hypothesis"
   );
 
-  // -- Backtest mode state (from route) --
-  const [backtestDna] = useState<DNA | null>(routeState?.dna ?? null);
-  const [backtestSymbol] = useState(routeState?.symbol ?? "BTCUSDT");
-  const [backtestTimeframe] = useState(routeState?.timeframe ?? "4h");
-  const [backtestDataStart] = useState(routeState?.dataStart);
-  const [backtestDataEnd] = useState(routeState?.dataEnd);
+  // -- Backtest mode state (editable) --
+  const [backtestDna, setBacktestDna] = useState<DNA | null>(routeState?.dna ?? null);
+  const [backtestSymbol, setBacktestSymbol] = useState(routeState?.symbol ?? "BTCUSDT");
+  const [backtestTimeframe, setBacktestTimeframe] = useState(routeState?.timeframe ?? "4h");
+  const [backtestDateRange, setBacktestDateRange] = useState<{ start: string; end: string }>({
+    start: routeState?.dataStart ?? "",
+    end: routeState?.dataEnd ?? "",
+  });
+  const [btLeverage, setBtLeverage] = useState(1);
+  const [btFee, setBtFee] = useState(0.001);
+  const [btSlippage, setBtSlippage] = useState(0.0005);
+  const [btInitCash, setBtInitCash] = useState(100000);
+  const [btAdvancedOpen, setBtAdvancedOpen] = useState(false);
+  const [btConfigCollapsed, setBtConfigCollapsed] = useState(!!routeState?.dna);
+  const backtestPanelRef = useRef<BacktestModePanelHandle>(null);
+
+  // Track whether initial auto-run has been triggered from route state
+  const [btAutoRun] = useState(!!routeState?.dna);
 
   // Clear route state on first load so refresh returns to hypothesis mode
   useEffect(() => {
@@ -170,17 +149,15 @@ export function Lab() {
 
   // -- Builder state --
   const [pair, setPair] = useState("BTCUSDT");
-  const [timeframe, setTimeframe] = useState("4h");
+  const [timeframe, setTimeframe] = useState("15m");
   const [dateRange, setDateRange] = useState(getDefaultDates);
-  const [whenConditions, setWhenConditions] = useState<ConditionInput[]>([]);
-  const [thenConditions, setThenConditions] = useState<ConditionInput[]>([]);
+  const [entryConditions, setEntryConditions] = useState<RuleCondition[]>([]);
+  const [exitConditions, setExitConditions] = useState<RuleCondition[]>([]);
   const [builderCollapsed, setBuilderCollapsed] = useState(false);
 
   // -- Result state --
-  const [result, setResult] = useState<ValidateResponse | null>(null);
+  const [ruleResult, setRuleResult] = useState<RuleValidateResponse | null>(null);
   const [candleData, setCandleData] = useState<Array<{ timestamp: string; open: number; high: number; low: number; close: number; volume?: number }>>([]);
-  const [detailTrigger, setDetailTrigger] = useState<TriggerRecord | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [indicatorResponse, setIndicatorResponse] = useState<ChartIndicatorsResponse | null>(null);
 
@@ -191,11 +168,31 @@ export function Lab() {
   const chartSettings = useChartSettings();
 
   // -- Mutations --
-  const validateMutation = useValidateHypothesis();
+  const validateMutation = useValidateRules();
   const createStrategyMutation = useCreateStrategy();
 
   // -- Available data sources --
   const { data: sourcesData } = useQuery(useAvailableSources());
+
+  // -- Strategy library (for backtest strategy selector) --
+  const { data: strategiesData } = useQuery(
+    useStrategies({ sort_by: "created_at", sort_order: "desc", limit: 100 })
+  );
+  const allStrategies = strategiesData?.items ?? [];
+
+  // When a strategy is selected from the library, populate backtest config
+  const handleSelectStrategy = useCallback(
+    (strategy: Strategy) => {
+      if (strategy.dna) {
+        setBacktestDna(strategy.dna);
+        setBacktestSymbol(strategy.symbol);
+        setBacktestTimeframe(strategy.timeframe);
+        setBtLeverage(strategy.dna.risk_genes?.leverage ?? 1);
+        setBtConfigCollapsed(false);
+      }
+    },
+    [],
+  );
 
   // Build dynamic symbol and timeframe options from available sources
   const dynamicSymbolOptions = useMemo(() => {
@@ -247,24 +244,52 @@ export function Lab() {
     }
   }, [pair, timeframe, sourcesData]);
 
+  // -- Backtest quick date handler --
+  const handleBtQuickDate = useCallback(
+    (days: number) => {
+      const match = sourcesData?.sources?.find(
+        (s) => s.symbol === backtestSymbol && s.timeframe === backtestTimeframe
+      );
+      const endStr = match?.time_end ? match.time_end.slice(0, 10) : toLocalDateStr(new Date());
+      const endDate = new Date(endStr);
+      let startDate: Date;
+      if (days === 0) {
+        startDate = match?.time_start ? new Date(match.time_start) : new Date(endDate.getFullYear() - 1, 0, 1);
+      } else if (days === -1) {
+        startDate = new Date(endDate.getFullYear(), 0, 1);
+      } else {
+        startDate = new Date(endDate);
+        startDate.setDate(startDate.getDate() - days);
+      }
+      const startStr = toLocalDateStr(startDate);
+      setBacktestDateRange({ start: clampDate(startStr), end: endStr });
+    },
+    [sourcesData, backtestSymbol, backtestTimeframe],
+  );
+
   // -- baseTimeframe = timeframe (data source period) --
   const baseTimeframe = timeframe;
 
   // -- Derived --
-  const hasConditions = whenConditions.length > 0 && thenConditions.length > 0;
+  const hasConditions = entryConditions.length > 0 && exitConditions.length > 0;
   const isLoading = validateMutation.isPending;
-  const hasResult = result !== null;
+  const hasResult = ruleResult !== null;
 
-  // Collect referenced timeframes from conditions
-  const referencedTimeframes = useMemo(() => {
+  // Collect all referenced timeframes for the condition builders
+  const availableTimeframes = useMemo(() => {
     const tfs = new Set<string>();
-    for (const c of [...whenConditions, ...thenConditions]) {
-      if (c.timeframe && c.timeframe !== baseTimeframe) {
-        tfs.add(c.timeframe);
-      }
+    tfs.add(baseTimeframe);
+    for (const c of [...entryConditions, ...exitConditions]) {
+      if (c.timeframe) tfs.add(c.timeframe);
     }
-    return Array.from(tfs);
-  }, [whenConditions, thenConditions, baseTimeframe]);
+    // Also add common timeframes from dynamic options
+    for (const o of dynamicTimeframeOptions) {
+      tfs.add(o.value);
+    }
+    // Sort by duration (longest first)
+    const ordered = ["3d", "1d", "4h", "1h", "15m", "5m", "1m"];
+    return ordered.filter((tf) => tfs.has(tf));
+  }, [baseTimeframe, entryConditions, exitConditions, dynamicTimeframeOptions]);
 
   // Extract volume data from candle data
   const volumeData = useMemo(
@@ -304,18 +329,18 @@ export function Lab() {
   }, [pair, timeframe, sourcesData]);
 
   const handleValidate = useCallback(async () => {
-    if (whenConditions.length === 0) {
-      toast.error("请至少添加一个WHEN条件");
+    if (entryConditions.length === 0) {
+      toast.error("请至少添加一个入场条件");
       return;
     }
-    if (thenConditions.length === 0) {
-      toast.error("请至少添加一个THEN条件");
+    if (exitConditions.length === 0) {
+      toast.error("请至少添加一个出场条件");
       return;
     }
 
     // Validate dates before submitting
     if (!dateRange.start || !dateRange.end) {
-      toast.error("请输入有效的日期范围（非法日期如 04-31 会被浏览器清除）");
+      toast.error("请输入有效的日期范围");
       return;
     }
     if (dateRange.start > dateRange.end) {
@@ -323,7 +348,6 @@ export function Lab() {
       return;
     }
 
-    // Clamp dates before submitting (fixes invalid dates like 04-31)
     const safeStart = clampDate(dateRange.start);
     const safeEnd = clampDate(dateRange.end);
 
@@ -331,15 +355,14 @@ export function Lab() {
       const res = await validateMutation.mutateAsync({
         pair,
         timeframe,
-        base_timeframe: baseTimeframe,
         start: safeStart,
         end: safeEnd,
-        when: whenConditions,
-        then: thenConditions,
+        entry_conditions: entryConditions,
+        exit_conditions: exitConditions,
       });
-      setResult(res);
+      setRuleResult(res);
 
-      // Fetch OHLCV and chart indicators independently (each can fail without blocking the other)
+      // Fetch OHLCV and chart indicators
       const enabledEma = chartSettings.emaList.filter((e) => e.enabled);
       const indParams = {
         start: safeStart,
@@ -352,7 +375,6 @@ export function Lab() {
         rsi_period: chartSettings.rsi.period,
       };
 
-      // Fetch OHLCV data (critical for chart)
       try {
         const ohlcvRes = await getOhlcvBySymbol(pair, timeframe, {
           start: safeStart,
@@ -360,56 +382,79 @@ export function Lab() {
           limit: 10000,
         });
         setCandleData(ohlcvRes.data);
-      } catch (err) {
-        // silently handle
-      }
+      } catch { /* silently handle */ }
 
-      // Fetch indicator data (optional, failure should not affect chart)
       try {
         const indRes = await getChartIndicators(pair, timeframe, indParams);
         setIndicatorResponse(indRes);
-      } catch (err) {
-        // indicators unavailable - chart still works without them
-      }
+      } catch { /* indicators unavailable */ }
     } catch {
       // handled by mutation
     }
-  }, [pair, timeframe, baseTimeframe, dateRange, whenConditions, thenConditions, validateMutation]);
+  }, [pair, timeframe, dateRange, entryConditions, exitConditions, validateMutation]);
 
   const handleClearAll = useCallback(() => {
-    setWhenConditions([]);
-    setThenConditions([]);
-    setResult(null);
+    setEntryConditions([]);
+    setExitConditions([]);
+    setRuleResult(null);
     setCandleData([]);
     setIndicatorResponse(null);
   }, []);
 
   const handlePreset = useCallback((idx: number) => {
-    const preset = EXAMPLE_PRESETS[idx];
-    setWhenConditions([...preset.when]);
-    setThenConditions([...preset.then]);
-    setResult(null);
-  }, []);
-
-  const handleLocate = useCallback((trigger: TriggerRecord) => {
-    chartRef.current?.scrollToTime(trigger.time);
-    const chartEl = document.getElementById("lab-kline-section");
-    if (chartEl) {
-      chartEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    const presets = [
+      {
+        entry: [
+          { logic: "IF" as const, timeframe: "4h", subject: "ema", action: "cross_above", target: "bb_upper" },
+        ],
+        exit: [
+          { logic: "IF" as const, timeframe: "15m", subject: "rsi", action: "gt", target: "70" },
+        ],
+      },
+      {
+        entry: [
+          { logic: "IF" as const, timeframe: "15m", subject: "rsi", action: "lt", target: "30" },
+          { logic: "AND" as const, timeframe: "15m", subject: "kdj", action: "cross_above", target: "" },
+        ],
+        exit: [
+          { logic: "IF" as const, timeframe: "15m", subject: "rsi", action: "gt", target: "70" },
+        ],
+      },
+    ];
+    const preset = presets[idx];
+    if (preset) {
+      setEntryConditions([...preset.entry]);
+      setExitConditions([...preset.exit]);
+      setRuleResult(null);
     }
   }, []);
 
-  const handleViewDetail = useCallback((trigger: TriggerRecord) => {
-    setDetailTrigger(trigger);
-    setDrawerOpen(true);
-  }, []);
-
   const handleSaveStrategy = useCallback(async (data: { name: string; description: string; tags: string }) => {
-    if (!result) return;
+    if (!ruleResult) return;
     try {
-      const generatedDna = generateDnaFromValidation(
-        whenConditions, thenConditions, pair, timeframe
-      );
+      // Build a simple DNA from entry/exit conditions
+      const entrySignals = entryConditions.map((c) => ({
+        indicator: c.subject,
+        params: {},
+        role: "entry_trigger",
+        field_name: null,
+        condition: { type: c.action, threshold: c.target },
+        timeframe: c.timeframe,
+      }));
+      const exitSignals = exitConditions.map((c) => ({
+        indicator: c.subject,
+        params: {},
+        role: "exit_trigger",
+        field_name: null,
+        condition: { type: c.action, threshold: c.target },
+        timeframe: c.timeframe,
+      }));
+      const generatedDna = {
+        signal_genes: [...entrySignals, ...exitSignals],
+        logic_genes: { entry_logic: "AND", exit_logic: "OR" },
+        execution_genes: { timeframe, symbol: pair, leverage: 1, direction: "long" },
+        risk_genes: { stop_loss: 0.05, take_profit: 0.1, position_size: 0.3 },
+      };
       await createStrategyMutation.mutateAsync({
         name: data.name,
         dna: generatedDna,
@@ -424,22 +469,20 @@ export function Lab() {
     } catch {
       // handled by mutation
     }
-  }, [result, whenConditions, thenConditions, pair, timeframe, createStrategyMutation]);
+  }, [ruleResult, entryConditions, exitConditions, pair, timeframe, createStrategyMutation]);
 
-  const handleHypothesisToBacktest = useCallback((dna: DNA) => {
-    navigate("/lab", { state: { dna, symbol: pair, timeframe, dataStart: dateRange.start, dataEnd: dateRange.end } });
-  }, [pair, timeframe, dateRange, navigate]);
-
-  // -- Trigger markers for chart --
-  const triggerMarkers = useMemo(
-    () =>
-      result?.triggers?.map((t) => ({
-        id: t.id,
-        time: t.time,
-        matched: t.matched,
-      })) ?? [],
-    [result?.triggers],
-  );
+  // -- Buy/Sell signals for chart --
+  const chartSignals = useMemo(() => {
+    if (!ruleResult) return [];
+    const signals: Array<{ type: "buy" | "sell"; timestamp: string }> = [];
+    for (const s of ruleResult.buy_signals) {
+      signals.push({ type: "buy", timestamp: s.time });
+    }
+    for (const s of ruleResult.sell_signals) {
+      signals.push({ type: "sell", timestamp: s.time });
+    }
+    return signals;
+  }, [ruleResult]);
 
   // -- Chart indicator data for KlineChart --
   const chartIndicators = useMemo<IndicatorData[] | undefined>(() => {
@@ -481,22 +524,22 @@ export function Lab() {
   // -- Collapsed summary --
   const collapsedSummary = useMemo(() => {
     const parts = [`${pair} ${timeframe}`];
-    if (whenConditions.length > 0) {
-      const whenStr = whenConditions
+    if (entryConditions.length > 0) {
+      const entryStr = entryConditions
         .filter((c) => c.subject)
-        .map((c) => `${c.subject} ${c.action} ${c.target}`)
-        .join("+");
-      parts.push(`WHEN: ${whenStr}`);
+        .map((c) => `${c.timeframe}:${c.subject} ${c.action} ${c.target}`)
+        .join(" + ");
+      parts.push(`入场: ${entryStr}`);
     }
-    if (thenConditions.length > 0) {
-      const thenStr = thenConditions
+    if (exitConditions.length > 0) {
+      const exitStr = exitConditions
         .filter((c) => c.subject)
-        .map((c) => `${c.subject} ${c.action} ${c.target}`)
-        .join("+");
-      parts.push(`THEN: ${thenStr}`);
+        .map((c) => `${c.timeframe}:${c.subject} ${c.action} ${c.target}`)
+        .join(" + ");
+      parts.push(`出场: ${exitStr}`);
     }
     return parts.join(" / ");
-  }, [pair, timeframe, whenConditions, thenConditions]);
+  }, [pair, timeframe, entryConditions, exitConditions]);
 
   return (
     <PageTransition>
@@ -527,30 +570,288 @@ export function Lab() {
             <BarChart3 className="h-3.5 w-3.5" />
             策略回测
           </button>
+          <button
+            type="button"
+            onClick={() => setLabMode("scene")}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+              labMode === "scene"
+                ? "bg-amber-400/15 text-amber-400"
+                : "text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            <Crosshair className="h-3.5 w-3.5" />
+            场景验证
+          </button>
         </div>
 
         {/* Backtest mode */}
         {labMode === "backtest" && (
           <GlassCard className="p-5" hover={false}>
-            {backtestDna ? (
-              <BacktestModePanel
-                initialDna={backtestDna}
-                initialSymbol={backtestSymbol}
-                initialTimeframe={backtestTimeframe}
-                initialDataStart={backtestDataStart}
-                initialDataEnd={backtestDataEnd}
-              />
-            ) : (
-              <div className="flex flex-col items-center gap-3 py-12 text-center">
-                <BarChart3 className="h-10 w-10 text-slate-700" />
-                <p className="text-xs text-slate-500">
-                  请从进化中心选择一个策略进行可视化验证
-                </p>
-                <p className="text-[11px] text-slate-600">
-                  或手动输入 DNA 数据
-                </p>
-              </div>
-            )}
+            <div className="flex flex-col gap-5">
+              {/* Config section (collapsible) */}
+              {btConfigCollapsed ? (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3 text-xs text-slate-400">
+                    <span className="font-medium text-slate-200">{backtestSymbol}</span>
+                    <span>{backtestTimeframe.toUpperCase()}</span>
+                    {backtestDna && (
+                      <>
+                        <span>{backtestDna.risk_genes?.leverage ?? 1}x</span>
+                        <span>{backtestDna.risk_genes?.direction ?? "long"}</span>
+                      </>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => setBtConfigCollapsed(false)}
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                    配置
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  {/* Strategy selector */}
+                  <div>
+                    <span className="mb-1.5 block text-xs font-medium text-text-muted">
+                      策略选择
+                    </span>
+                    <Select
+                      value=""
+                      onValueChange={(v) => {
+                        const s = allStrategies.find((st) => st.strategy_id === v);
+                        if (s) handleSelectStrategy(s);
+                      }}
+                    >
+                      <SelectTrigger className="h-8 w-full text-xs">
+                        <SelectValue placeholder={allStrategies.length === 0 ? "策略库为空，请先从进化中心保存策略" : "从策略库选择..."} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {allStrategies.map((s) => (
+                          <SelectItem key={s.strategy_id} value={s.strategy_id}>
+                            {s.name || s.strategy_id.slice(0, 8)} | {s.symbol} {s.timeframe} {s.source === "evolution" ? "(进化)" : "(手动)"}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Data source row */}
+                  <div>
+                    <span className="mb-1.5 block text-xs font-medium text-text-muted">
+                      数据源
+                    </span>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Select value={backtestSymbol} onValueChange={setBacktestSymbol}>
+                        <SelectTrigger className="h-8 w-36 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {dynamicSymbolOptions.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      <Select value={backtestTimeframe} onValueChange={setBacktestTimeframe}>
+                        <SelectTrigger className="h-8 w-24 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(sourcesData?.sources?.filter((s) => s.symbol === backtestSymbol).length ?? 0) > 0
+                            ? sourcesData!.sources
+                                .filter((s) => s.symbol === backtestSymbol)
+                                .reduce<{ value: string; label: string }[]>((acc, s) => {
+                                  if (!acc.find((a) => a.value === s.timeframe)) {
+                                    acc.push({ value: s.timeframe, label: s.timeframe });
+                                  }
+                                  return acc;
+                                }, [])
+                                .map((o) => (
+                                  <SelectItem key={o.value} value={o.value}>
+                                    {o.label}
+                                  </SelectItem>
+                                ))
+                            : TIMEFRAME_SELECT_OPTIONS.map((o) => (
+                                <SelectItem key={o.value} value={o.value}>
+                                  {o.label}
+                                </SelectItem>
+                              ))}
+                        </SelectContent>
+                      </Select>
+
+                      <input
+                        type="date"
+                        value={backtestDateRange.start}
+                        onChange={(e) =>
+                          setBacktestDateRange((prev) => ({ ...prev, start: e.target.value }))
+                        }
+                        className="h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer"
+                      />
+                      <span className="text-xs text-text-muted">~</span>
+                      <input
+                        type="date"
+                        value={backtestDateRange.end}
+                        onChange={(e) =>
+                          setBacktestDateRange((prev) => ({ ...prev, end: e.target.value }))
+                        }
+                        className="h-8 w-28 cursor-pointer rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold [::-webkit-calendar-picker-indicator]:cursor-pointer"
+                      />
+
+                      <div className="flex items-center gap-1">
+                        {QUICK_DATES.map((qd) => (
+                          <button
+                            key={qd.label}
+                            type="button"
+                            onClick={() => handleBtQuickDate(qd.days)}
+                            className="rounded px-2 py-1 text-[11px] text-text-muted transition-colors hover:bg-white/5 hover:text-text-secondary"
+                          >
+                            {qd.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Advanced parameters (collapsible) */}
+                  <div>
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary"
+                      onClick={() => setBtAdvancedOpen(!btAdvancedOpen)}
+                    >
+                      <Settings2 className="h-3.5 w-3.5" />
+                      高级参数
+                      {btAdvancedOpen ? (
+                        <ChevronUp className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
+                    {btAdvancedOpen && (
+                      <div className="mt-2 flex flex-wrap items-center gap-4">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-text-muted">杠杆</span>
+                          <Select
+                            value={String(btLeverage)}
+                            onValueChange={(v) => setBtLeverage(Number(v))}
+                          >
+                            <SelectTrigger className="h-7 w-16 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {LEVERAGE_OPTIONS.map((o) => (
+                                <SelectItem key={o.value} value={String(o.value)}>
+                                  {o.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-text-muted">手续费</span>
+                          <input
+                            type="number"
+                            step="0.0001"
+                            min={0}
+                            max={0.01}
+                            value={btFee}
+                            onChange={(e) => setBtFee(Number(e.target.value))}
+                            className="h-7 w-20 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-text-muted">滑点</span>
+                          <input
+                            type="number"
+                            step="0.0001"
+                            min={0}
+                            max={0.01}
+                            value={btSlippage}
+                            onChange={(e) => setBtSlippage(Number(e.target.value))}
+                            className="h-7 w-20 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-text-muted">初始资金</span>
+                          <input
+                            type="number"
+                            step={10000}
+                            min={1000}
+                            value={btInitCash}
+                            onChange={(e) => setBtInitCash(Number(e.target.value))}
+                            className="h-7 w-28 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action row */}
+                  <div className="flex items-center gap-2">
+                    {backtestDna && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        className="text-slate-500"
+                        onClick={() => setBtConfigCollapsed(true)}
+                      >
+                        收起配置
+                      </Button>
+                    )}
+                    <div className="flex-1" />
+                    <Button
+                      className="gap-2"
+                      size="sm"
+                      disabled={!backtestDna}
+                      onClick={() => backtestPanelRef.current?.runBacktest()}
+                    >
+                      <Play className="h-4 w-4" />
+                      运行回测
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Backtest result panel */}
+              {backtestDna ? (
+                <BacktestModePanel
+                  ref={backtestPanelRef}
+                  dna={{
+                    ...backtestDna,
+                    risk_genes: { ...backtestDna.risk_genes, leverage: btLeverage },
+                  }}
+                  symbol={backtestSymbol}
+                  timeframe={backtestTimeframe}
+                  dataStart={backtestDateRange.start || undefined}
+                  dataEnd={backtestDateRange.end || undefined}
+                  fee={btFee}
+                  slippage={btSlippage}
+                  initCash={btInitCash}
+                  autoRun={btAutoRun}
+                />
+              ) : (
+                <div className="flex flex-col items-center gap-3 py-12 text-center">
+                  <BarChart3 className="h-10 w-10 text-slate-700" />
+                  <p className="text-xs text-slate-500">
+                    从上方选择一个策略，或从进化中心跳转
+                  </p>
+                </div>
+              )}
+            </div>
+          </GlassCard>
+        )}
+
+        {/* Scene mode */}
+        {labMode === "scene" && (
+          <GlassCard className="p-5" hover={false}>
+            <SceneModePanel
+              initialSymbol={pair}
+              initialTimeframe={timeframe}
+            />
           </GlassCard>
         )}
 
@@ -654,25 +955,22 @@ export function Lab() {
                 </div>
               </div>
 
-              {/* WHEN conditions */}
-              <ConditionPillGroup
-                label="WHEN"
-                description='找出"什么情况下"'
-                conditions={whenConditions}
-                onConditionsChange={setWhenConditions}
-                baseTimeframe={baseTimeframe}
-                referencedTimeframes={referencedTimeframes}
+              {/* Entry rules */}
+              <RuleConditionGroup
+                title="入场规则"
+                description="全部满足则买入"
+                conditions={entryConditions}
+                onConditionsChange={setEntryConditions}
+                availableTimeframes={availableTimeframes}
               />
 
-              {/* THEN conditions */}
-              <ConditionPillGroup
-                label="THEN"
-                description='验证"触发后会发生什么"'
-                conditions={thenConditions}
-                onConditionsChange={setThenConditions}
-                isThen
-                baseTimeframe={baseTimeframe}
-                referencedTimeframes={referencedTimeframes}
+              {/* Exit rules */}
+              <RuleConditionGroup
+                title="出场规则"
+                description="任一满足则卖出"
+                conditions={exitConditions}
+                onConditionsChange={setExitConditions}
+                availableTimeframes={availableTimeframes}
               />
 
               {/* Action buttons */}
@@ -694,10 +992,10 @@ export function Lab() {
                     className="gap-1.5 bg-accent-gold text-black hover:bg-accent-gold/90"
                   >
                     <Play className="h-3.5 w-3.5" />
-                    {isLoading ? "验证中..." : "验证规律"}
+                    {isLoading ? "验证中..." : "验证策略"}
                   </Button>
 
-                  {hasResult && result.total_count > 0 && (
+                  {hasResult && ruleResult && ruleResult.total_trades > 0 && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -723,24 +1021,11 @@ export function Lab() {
               <FlaskConical className="h-16 w-16 text-text-muted/30" />
               <div className="flex flex-col items-center gap-1 text-center">
                 <h3 className="text-base font-medium text-text-secondary">
-                  定义你的交易假设, 验证它的可靠性
+                  配置入场和出场规则, 验证策略效果
                 </h3>
                 <p className="text-sm text-text-muted">
-                  添加WHEN和THEN条件, 然后点击"验证规律"
+                  添加入场条件和出场条件, 然后点击"验证策略"
                 </p>
-              </div>
-              <div className="flex items-center gap-3">
-                {EXAMPLE_PRESETS.map((preset, i) => (
-                  <Button
-                    key={i}
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handlePreset(i)}
-                    className="text-xs"
-                  >
-                    示例{i + 1}: {preset.label}
-                  </Button>
-                ))}
               </div>
             </div>
           </GlassCard>
@@ -761,30 +1046,41 @@ export function Lab() {
           </>
         )}
 
-        {hasResult && !isLoading && (
+        {hasResult && !isLoading && ruleResult && (
           <>
-            {/* Region 2: Validation Conclusion */}
-            <ValidationConclusion
-              result={result}
-              onSave={result.total_count > 0 ? () => setSaveDialogOpen(true) : undefined}
-              onBacktest={handleHypothesisToBacktest}
-              seedDna={result.total_count > 0 ? generateDnaFromValidation(whenConditions, thenConditions, pair, timeframe) : undefined}
-            />
+            {/* Stats summary */}
+            <GlassCard className="p-3" hover={false}>
+              <div className="flex items-center gap-6 text-xs">
+                <span className="text-text-secondary">
+                  交易次数: <span className="font-medium text-text-primary">{ruleResult.total_trades}</span>
+                </span>
+                <span className="text-text-secondary">
+                  胜率: <span className={`font-medium ${ruleResult.win_rate >= 50 ? "text-profit" : "text-loss"}`}>
+                    {ruleResult.win_rate}%
+                  </span>
+                </span>
+                <span className="text-text-secondary">
+                  盈利: <span className="font-medium text-profit">{ruleResult.win_trades}</span>
+                </span>
+                <span className="text-text-secondary">
+                  亏损: <span className="font-medium text-loss">{ruleResult.loss_trades}</span>
+                </span>
+                <span className="text-text-secondary">
+                  累计收益: <span className={`font-medium ${ruleResult.total_return_pct >= 0 ? "text-profit" : "text-loss"}`}>
+                    {ruleResult.total_return_pct}%
+                  </span>
+                </span>
+                <span className="text-text-secondary">
+                  平均收益: <span className="font-medium text-text-primary">{ruleResult.avg_return_pct}%</span>
+                </span>
+              </div>
+            </GlassCard>
 
-            {/* Low match rate suggestion */}
-            {result.total_count > 0 && result.match_rate < 20 && (
-              <GlassCard className="p-3" hover={false}>
-                <p className="text-xs text-text-muted">
-                  符合率较低 ({result.match_rate}%)。建议：扩大时间范围、调整条件参数、或切换到更高周期进行验证。
-                </p>
-              </GlassCard>
-            )}
-
-            {/* No matches suggestion */}
-            {result.total_count === 0 && (
+            {/* No trades suggestion */}
+            {ruleResult.total_trades === 0 && (
               <GlassCard className="p-4" hover={false}>
                 <div className="flex flex-col items-center gap-3 text-center">
-                  <p className="text-sm text-text-muted">未找到符合条件的触发记录</p>
+                  <p className="text-sm text-text-muted">未找到符合条件的交易信号</p>
                   <div className="flex items-center gap-2">
                     <Button size="sm" variant="outline" onClick={handleClearAll}>
                       调整条件
@@ -797,18 +1093,18 @@ export function Lab() {
               </GlassCard>
             )}
 
-            {/* Region 3: KlineChart */}
+            {/* KlineChart with buy/sell signals */}
             <GlassCard className="p-4" hover={false} id="lab-kline-section">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-3 text-xs text-text-muted">
                   <span className="font-medium text-text-secondary">
                     {pair} / {timeframe}
                   </span>
-                  {result.match_count > 0 && (
-                    <span className="text-profit">符合 {result.match_count}</span>
+                  {ruleResult.buy_signals.length > 0 && (
+                    <span className="text-profit">买入 {ruleResult.buy_signals.length}</span>
                   )}
-                  {result.mismatch_count > 0 && (
-                    <span className="text-loss">不符合 {result.mismatch_count}</span>
+                  {ruleResult.sell_signals.length > 0 && (
+                    <span className="text-loss">卖出 {ruleResult.sell_signals.length}</span>
                   )}
                 </div>
                 <ChartToolbar
@@ -830,51 +1126,13 @@ export function Lab() {
                 data={candleData}
                 indicators={chartIndicators}
                 bollData={chartBollData}
-                triggers={triggerMarkers}
+                signals={chartSignals}
                 height={650}
                 volumeData={volumeData}
               />
             </GlassCard>
-
-            {/* Region 4: Distribution + Reference */}
-            {result.total_count > 0 && (
-              <GlassCard className="p-4" hover={false}>
-                <div className="grid grid-cols-2 gap-6">
-                  <DistributionChart distribution={result.distribution} />
-                  <ReferencePanel
-                    percentiles={result.percentiles}
-                    concentration={result.concentration}
-                    signal_frequency={result.signal_frequency}
-                    extremes={result.extremes}
-                  />
-                </div>
-              </GlassCard>
-            )}
-
-            {/* Region 5: Trigger Table */}
-            {result.triggers.length > 0 && (
-              <GlassCard className="p-4" hover={false}>
-                <TriggerTable
-                  triggers={result.triggers}
-                  onLocate={handleLocate}
-                  onViewDetail={handleViewDetail}
-                  pair={pair}
-                  timeframe={timeframe}
-                />
-              </GlassCard>
-            )}
           </>
         )}
-
-        {/* Trigger Detail Drawer */}
-        <TriggerDetailDrawer
-          trigger={detailTrigger}
-          open={drawerOpen}
-          onClose={() => {
-            setDrawerOpen(false);
-            setDetailTrigger(null);
-          }}
-        />
 
         {/* Save Strategy Dialog */}
         <SaveStrategyDialog
@@ -883,8 +1141,8 @@ export function Lab() {
           onSave={handleSaveStrategy}
           pair={pair}
           timeframe={timeframe}
-          matchRate={result?.match_rate ?? 0}
-          totalCount={result?.total_count ?? 0}
+          matchRate={ruleResult?.win_rate ?? 0}
+          totalCount={ruleResult?.total_trades ?? 0}
         />
           </>
         )}

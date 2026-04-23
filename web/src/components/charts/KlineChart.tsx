@@ -50,6 +50,7 @@ interface TriggerMarker {
   id: number;
   time: string;
   matched: boolean;
+  subtype?: string; // "double_top" | "head_shoulders_top" | "triple_top"
 }
 
 interface KlineChartProps {
@@ -62,6 +63,11 @@ interface KlineChartProps {
   bollData?: BollingerBandData;
   volumeData?: Array<{ time: string; value: number; color?: string }>;
   mtfIndicators?: MTFIndicatorData[];
+  /** Called once after chart and series are created. */
+  onChartReady?: (chart: IChartApi, series: ISeriesApi<"Candlestick">) => void;
+  subChartType?: "volume" | "macd" | "rsi" | "kdj";
+  macdData?: { macd: Array<{ time: string; value: number }>; signal: Array<{ time: string; value: number }>; histogram: Array<{ time: string; value: number }> } | null;
+  kdjData?: { k: Array<{ time: string; value: number }>; d: Array<{ time: string; value: number }>; j: Array<{ time: string; value: number }> } | null;
 }
 
 export interface KlineChartHandle {
@@ -111,25 +117,30 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   bollData,
   volumeData,
   mtfIndicators,
+  onChartReady,
+  subChartType = "rsi",
+  macdData,
+  kdjData,
 }, ref) {
   const mainRef = useRef<HTMLDivElement>(null);
-  const rsiRef = useRef<HTMLDivElement>(null);
+  const subChartDivRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const mainChartRef = useRef<IChartApi | null>(null);
-  const rsiChartRef = useRef<IChartApi | null>(null);
+  const subChartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const indicatorSeriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(
     new Map(),
   );
-  const rsiSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const subChartSeriesRefs = useRef<ISeriesApi<"Line" | "Histogram">[]>([]);
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
-  const rsiRefLineSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
   const bollSeriesRefs = useRef<ISeriesApi<"Line">[]>([]);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const mtfSeriesRefs = useRef<ISeriesApi<"Line">[]>([]);
   const triggerOffsetSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const initialFitDoneRef = useRef(false);
+  const onChartReadyRef = useRef(onChartReady);
+  onChartReadyRef.current = onChartReady;
 
   // Legend state
   const [legendGroups, setLegendGroups] = useState<LegendGroup[]>([]);
@@ -195,7 +206,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   }), []);
 
   // Sync charts via shared hook.
-  useChartSync(mainChartRef.current, rsiChartRef.current);
+  useChartSync(mainChartRef.current, subChartRef.current);
 
   // Build legend groups from current data
   useEffect(() => {
@@ -291,7 +302,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   // Chart creation / destruction
   // -------------------------------------------------------------------------
   useLayoutEffect(() => {
-    if (!mainRef.current || !rsiRef.current) return;
+    if (!mainRef.current || !subChartDivRef.current) return;
 
     const mainHeight = Math.round(height * 0.78);
     const subHeight = Math.round(height * 0.22);
@@ -318,10 +329,15 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     mainChartRef.current = mainChart;
     candleSeriesRef.current = candleSeries;
 
-    // -- RSI sub-chart --
-    const rsiChart = createChart(rsiRef.current, {
+    // Notify parent that chart is ready
+    if (onChartReadyRef.current) {
+      onChartReadyRef.current(mainChart, candleSeries);
+    }
+
+    // -- Sub-chart (generic, series created dynamically per type) --
+    const subChart = createChart(subChartDivRef.current, {
       ...DARK_CHART_THEME,
-      width: rsiRef.current.clientWidth,
+      width: subChartDivRef.current.clientWidth,
       height: subHeight,
       timeScale: {
         ...DARK_CHART_THEME.timeScale,
@@ -329,15 +345,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       },
     });
 
-    const rsiSeries = rsiChart.addSeries(LineSeries, {
-      color: CHART_COLORS.rsi,
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: true,
-    });
-
-    rsiChartRef.current = rsiChart;
-    rsiSeriesRef.current = rsiSeries;
+    subChartRef.current = subChart;
 
     // -- ResizeObserver --
     const resizeObserver = new ResizeObserver((entries) => {
@@ -345,14 +353,14 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         const { width } = entry.contentRect;
         if (entry.target === mainRef.current) {
           mainChart.applyOptions({ width });
-        } else if (entry.target === rsiRef.current) {
-          rsiChart.applyOptions({ width });
+        } else if (entry.target === subChartDivRef.current) {
+          subChart.applyOptions({ width });
         }
       }
     });
 
     resizeObserver.observe(mainRef.current);
-    resizeObserver.observe(rsiRef.current);
+    resizeObserver.observe(subChartDivRef.current);
 
     // Crosshair move for legend values
     mainChart.subscribeCrosshairMove((param: MouseEventParams) => {
@@ -381,14 +389,13 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     return () => {
       resizeObserver.disconnect();
       mainChart.remove();
-      rsiChart.remove();
+      subChart.remove();
       mainChartRef.current = null;
-      rsiChartRef.current = null;
+      subChartRef.current = null;
       candleSeriesRef.current = null;
-      rsiSeriesRef.current = null;
       indicatorSeriesRefs.current.clear();
       markersPluginRef.current = null;
-      rsiRefLineSeriesRef.current = [];
+      subChartSeriesRefs.current = [];
       bollSeriesRefs.current = [];
       volumeSeriesRef.current = null;
       mtfSeriesRefs.current = [];
@@ -583,17 +590,31 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         text: string;
       }> = [];
 
+      const SUBTYPE_COLORS: Record<string, string> = {
+        double_top: "#F59E0B",
+        head_shoulders_top: "#A855F7",
+        triple_top: "#3B82F6",
+      };
+
+      const SUBTYPE_LABELS: Record<string, string> = {
+        double_top: "M",
+        head_shoulders_top: "H&S",
+        triple_top: "T",
+      };
+
       for (const t of memoizedTriggers) {
         const triggerTime = toTime(t.time);
         const high = candleHighMap.get(triggerTime as number);
         if (high !== undefined) {
           offsetData.push({ time: triggerTime, value: high * TRIGGER_OFFSET });
+          const subtypeColor = t.subtype ? SUBTYPE_COLORS[t.subtype] : undefined;
+          const subtypeLabel = t.subtype ? SUBTYPE_LABELS[t.subtype] : undefined;
           triggerMarkers.push({
             time: triggerTime,
             position: "aboveBar",
-            color: t.matched ? "#00C853" : "#EF4444",
+            color: subtypeColor ?? (t.matched ? "#00C853" : "#EF4444"),
             shape: "circle",
-            text: `(${t.id})`,
+            text: subtypeLabel ? `${subtypeLabel}(${t.id})` : `(${t.id})`,
           });
         }
       }
@@ -630,7 +651,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   }, [memoizedCandles, memoizedIndicators, memoizedSignals, memoizedTriggers, memoizedBollData, memoizedVolumeData, memoizedMtfIndicators, chartSettings.boll]);
 
   // -------------------------------------------------------------------------
-  // RSI data update
+  // Sub-chart data update (generic: supports volume, macd, rsi, kdj)
   // -------------------------------------------------------------------------
   const rsiIndicator = memoizedIndicators.find((i) => i.type === "rsi");
   const rsiData = useMemo(
@@ -644,56 +665,171 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     [rsiIndicator],
   );
 
+  const memoizedMacdData = useMemo(() => macdData, [macdData]);
+  const memoizedKdjData = useMemo(() => kdjData, [kdjData]);
+  const memoizedSubChartType = useMemo(() => subChartType, [subChartType]);
+
   useEffect(() => {
-    const rsiSeries = rsiSeriesRef.current;
-    const rsiChart = rsiChartRef.current;
-    if (!rsiSeries || !rsiChart) return;
+    const subChart = subChartRef.current;
+    if (!subChart) return;
 
-    rsiSeries.setData(rsiData);
-
-    for (const s of rsiRefLineSeriesRef.current) {
-      rsiChart.removeSeries(s);
+    // Remove all existing series
+    for (const s of subChartSeriesRefs.current) {
+      subChart.removeSeries(s);
     }
-    rsiRefLineSeriesRef.current = [];
+    subChartSeriesRefs.current = [];
 
-    if (rsiData.length > 0) {
-      const time = rsiData[0].time;
-      const lastTime = rsiData[rsiData.length - 1].time;
+    const createdSeries: ISeriesApi<"Line" | "Histogram">[] = [];
 
-      const refLines: ISeriesApi<"Line">[] = [];
-
-      const obSeries = rsiChart.addSeries(LineSeries, {
-        color: CHART_COLORS.overbought,
-        lineWidth: 1,
-        lineStyle: 2,
+    if (memoizedSubChartType === "volume") {
+      // Volume sub-chart: histogram with green/red bars
+      const volSrc = memoizedVolumeData ?? [];
+      if (volSrc.length > 0) {
+        const histSeries = subChart.addSeries(HistogramSeries, {
+          priceFormat: { type: "volume" },
+          priceLineVisible: false,
+          lastValueVisible: true,
+        });
+        histSeries.setData(
+          volSrc.map((d) => ({
+            time: toTime(d.time),
+            value: d.value,
+            color: d.color ?? "rgba(100,116,139,0.3)",
+          })),
+        );
+        createdSeries.push(histSeries);
+      }
+    } else if (memoizedSubChartType === "macd" && memoizedMacdData) {
+      // MACD sub-chart: histogram + macd line + signal line
+      const histogramSeries = subChart.addSeries(HistogramSeries, {
         priceLineVisible: false,
         lastValueVisible: false,
-        crosshairMarkerVisible: false,
       });
-      obSeries.setData([
-        { time, value: 70 },
-        { time: lastTime, value: 70 },
-      ]);
-      refLines.push(obSeries);
+      histogramSeries.setData(
+        memoizedMacdData.histogram.map((d) => ({
+          time: toTime(d.time),
+          value: d.value,
+          color: d.value >= 0 ? "rgba(34,197,94,0.6)" : "rgba(239,68,68,0.6)",
+        })),
+      );
+      createdSeries.push(histogramSeries);
 
-      const osSeries = rsiChart.addSeries(LineSeries, {
-        color: CHART_COLORS.oversold,
+      const macdLine = subChart.addSeries(LineSeries, {
+        color: "#3B82F6",
         lineWidth: 1,
-        lineStyle: 2,
         priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
+        lastValueVisible: true,
       });
-      osSeries.setData([
-        { time, value: 30 },
-        { time: lastTime, value: 30 },
-      ]);
-      refLines.push(osSeries);
+      macdLine.setData(memoizedMacdData.macd.map((d) => ({ time: toTime(d.time), value: d.value })));
+      createdSeries.push(macdLine);
 
-      rsiRefLineSeriesRef.current = refLines;
-      rsiChart.timeScale().fitContent();
+      const signalLine = subChart.addSeries(LineSeries, {
+        color: "#F59E0B",
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: true,
+      });
+      signalLine.setData(memoizedMacdData.signal.map((d) => ({ time: toTime(d.time), value: d.value })));
+      createdSeries.push(signalLine);
+    } else if (memoizedSubChartType === "rsi") {
+      // RSI sub-chart: line + 70/30 reference lines
+      if (rsiData.length > 0) {
+        const rsiSeries = subChart.addSeries(LineSeries, {
+          color: CHART_COLORS.rsi,
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: true,
+        });
+        rsiSeries.setData(rsiData);
+        createdSeries.push(rsiSeries);
+
+        const time = rsiData[0].time;
+        const lastTime = rsiData[rsiData.length - 1].time;
+
+        const obSeries = subChart.addSeries(LineSeries, {
+          color: CHART_COLORS.overbought,
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        obSeries.setData([{ time, value: 70 }, { time: lastTime, value: 70 }]);
+        createdSeries.push(obSeries);
+
+        const osSeries = subChart.addSeries(LineSeries, {
+          color: CHART_COLORS.oversold,
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        osSeries.setData([{ time, value: 30 }, { time: lastTime, value: 30 }]);
+        createdSeries.push(osSeries);
+      }
+    } else if (memoizedSubChartType === "kdj" && memoizedKdjData) {
+      // KDJ sub-chart: K/D/J lines + 80/20 reference lines
+      const kLine = subChart.addSeries(LineSeries, {
+        color: "#3B82F6",
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: true,
+      });
+      kLine.setData(memoizedKdjData.k.map((d) => ({ time: toTime(d.time), value: d.value })));
+      createdSeries.push(kLine);
+
+      const dLine = subChart.addSeries(LineSeries, {
+        color: "#F59E0B",
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: true,
+      });
+      dLine.setData(memoizedKdjData.d.map((d) => ({ time: toTime(d.time), value: d.value })));
+      createdSeries.push(dLine);
+
+      const jLine = subChart.addSeries(LineSeries, {
+        color: "#A78BFA",
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: true,
+      });
+      jLine.setData(memoizedKdjData.j.map((d) => ({ time: toTime(d.time), value: d.value })));
+      createdSeries.push(jLine);
+
+      // 80/20 reference lines
+      const allKdjPoints = memoizedKdjData.k;
+      if (allKdjPoints.length > 0) {
+        const time = toTime(allKdjPoints[0].time);
+        const lastTime = toTime(allKdjPoints[allKdjPoints.length - 1].time);
+
+        const ref80 = subChart.addSeries(LineSeries, {
+          color: "rgba(239,68,68,0.4)",
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        ref80.setData([{ time, value: 80 }, { time: lastTime, value: 80 }]);
+        createdSeries.push(ref80);
+
+        const ref20 = subChart.addSeries(LineSeries, {
+          color: "rgba(34,197,94,0.4)",
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        ref20.setData([{ time, value: 20 }, { time: lastTime, value: 20 }]);
+        createdSeries.push(ref20);
+      }
     }
-  }, [rsiData]);
+
+    subChartSeriesRefs.current = createdSeries;
+    subChart.timeScale().fitContent();
+  }, [memoizedSubChartType, rsiData, memoizedMacdData, memoizedKdjData, memoizedVolumeData]);
 
   // Fullscreen toggle
   const handleFullscreen = useCallback(() => {
@@ -772,7 +908,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       <div className="flex flex-col h-full">
         <div ref={mainRef} className="flex-[3] min-h-0" />
         <div
-          ref={rsiRef}
+          ref={subChartDivRef}
           className="flex-1 min-h-0 border-t border-slate-800/50"
         />
       </div>

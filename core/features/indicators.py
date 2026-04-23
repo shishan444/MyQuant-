@@ -58,6 +58,17 @@ _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
     "CMO": [{"period": 14}],
     "TRIX": [{"period": 12}],
     # VolumeProfile is guard_only and expensive; compute on demand only
+    # Pattern indicators (no params)
+    "BearishEngulfing": [{}],
+    "EveningStar": [{}],
+    "ThreeBlackCrows": [{}],
+    "ShootingStar": [{}],
+    "ThreeWhiteSoldiers": [{}],
+    "MorningStar": [{}],
+    "BullishReversal": [{}],
+    "BearishReversal": [{}],
+    "BullishDivergence": [{}],
+    "BearishDivergence": [{}],
 }
 
 
@@ -206,6 +217,48 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> p
         result[val_col] = _rolling_volume_profile(
             df["close"], df["volume"], bins=bins, lookback=lookback, which="val",
         )
+
+    # ── Pattern indicators ──
+    elif name == "BearishEngulfing":
+        from core.features.patterns.candlestick import detect_bearish_engulfing
+        pat = detect_bearish_engulfing(result)
+        result["pattern_bearish_engulfing"] = pat["pattern_bearish_engulfing"]
+    elif name == "EveningStar":
+        from core.features.patterns.candlestick import detect_evening_star
+        pat = detect_evening_star(result)
+        result["pattern_evening_star"] = pat["pattern_evening_star"]
+    elif name == "ThreeBlackCrows":
+        from core.features.patterns.candlestick import detect_three_black_crows
+        pat = detect_three_black_crows(result)
+        result["pattern_3blackcrows"] = pat["pattern_3blackcrows"]
+    elif name == "ShootingStar":
+        from core.features.patterns.candlestick import detect_shooting_star
+        pat = detect_shooting_star(result)
+        result["pattern_shooting_star"] = pat["pattern_shooting_star"]
+    elif name == "ThreeWhiteSoldiers":
+        from core.features.patterns.candlestick import detect_three_white_soldiers
+        pat = detect_three_white_soldiers(result)
+        result["pattern_3whitesoldiers"] = pat["pattern_3whitesoldiers"]
+    elif name == "MorningStar":
+        from core.features.patterns.candlestick import detect_morning_star
+        pat = detect_morning_star(result)
+        result["pattern_morning_star"] = pat["pattern_morning_star"]
+    elif name == "BullishReversal":
+        from core.features.patterns.candlestick import detect_bullish_reversal
+        pat = detect_bullish_reversal(result)
+        result["pattern_bullish_reversal"] = pat["pattern_bullish_reversal"]
+    elif name == "BearishReversal":
+        from core.features.patterns.candlestick import detect_bearish_reversal
+        pat = detect_bearish_reversal(result)
+        result["pattern_bearish_reversal"] = pat["pattern_bearish_reversal"]
+    elif name == "BullishDivergence":
+        from core.features.patterns.divergence import detect_bullish_divergence
+        pat = detect_bullish_divergence(result)
+        result["pattern_bullish_divergence"] = pat["pattern_bullish_divergence"]
+    elif name == "BearishDivergence":
+        from core.features.patterns.divergence import detect_bearish_divergence
+        pat = detect_bearish_divergence(result)
+        result["pattern_bearish_divergence"] = pat["pattern_bearish_divergence"]
 
     return result
 

@@ -2,22 +2,22 @@
 import pytest
 import numpy as np
 
-from MyQuant.core.strategy.dna import (
+from core.strategy.dna import (
     SignalRole, SignalGene, LogicGenes, RiskGenes, ExecutionGenes,
     StrategyDNA, TimeframeLayer,
 )
-from MyQuant.core.strategy.validator import validate_dna
-from MyQuant.core.evolution.operators import (
+from core.strategy.validator import validate_dna
+from core.evolution.operators import (
     mutate_params, mutate_indicator, mutate_logic, mutate_risk, crossover,
     mutate_add_layer, mutate_remove_layer, mutate_layer_timeframe, mutate_cross_logic,
     generate_random_condition,
 )
-from MyQuant.core.evolution.population import (
+from core.evolution.population import (
     create_random_dna, init_population, create_random_mtf_layer,
 )
-from MyQuant.core.evolution.diversity import compute_diversity, inject_fresh_blood
-from MyQuant.core.evolution.lineage import record_mutation, get_lineage
-from MyQuant.core.evolution.engine import EarlyStopChecker, EvolutionEngine
+from core.evolution.diversity import compute_diversity, inject_fresh_blood
+from core.evolution.lineage import record_mutation, get_lineage
+from core.evolution.engine import EarlyStopChecker, EvolutionEngine
 
 
 def _make_simple_dna() -> StrategyDNA:

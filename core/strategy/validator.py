@@ -44,6 +44,22 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
     if not exit_signals:
         errors.append("No exit signal defined (need at least one exit_trigger or exit_guard)")
 
+    # Also check layers for MTF strategies
+    if dna.layers:
+        for layer in dna.layers:
+            layer_entry = [
+                g for g in layer.signal_genes
+                if g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)
+            ]
+            if not layer_entry:
+                errors.append(f"Layer {layer.timeframe}: no entry signal defined")
+            layer_exit = [
+                g for g in layer.signal_genes
+                if g.role in (SignalRole.EXIT_TRIGGER, SignalRole.EXIT_GUARD)
+            ]
+            if not layer_exit:
+                errors.append(f"Layer {layer.timeframe}: no exit signal defined")
+
     # Validate condition structures
     for i, gene in enumerate(dna.signal_genes):
         cond_errors = _validate_condition_structure(gene.condition, i)

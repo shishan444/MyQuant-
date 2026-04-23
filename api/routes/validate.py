@@ -1,4 +1,4 @@
-"""Validation API routes for WHEN/THEN hypothesis testing."""
+"""Validation API routes for WHEN/THEN hypothesis testing and rule evaluation."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from api.deps import get_db_path, get_data_dir
 from core.validation.engine import validate_hypothesis
+from core.validation.rule_engine import evaluate_rules
 
 
 router = APIRouter(prefix="/api", tags=["validation"])
@@ -54,6 +55,55 @@ class ValidateResponse(BaseModel):
     concentration: Dict[str, Any] = {}
     signal_frequency: Dict[str, float] = {}
     extremes: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+
+
+# ---------------------------------------------------------------------------
+# Rule validation schemas
+# ---------------------------------------------------------------------------
+
+class RuleConditionInput(BaseModel):
+    logic: str = "AND"  # "IF", "AND", "OR"
+    timeframe: str  # "3d", "4h", "15m" etc.
+    subject: str
+    action: str
+    target: str = ""
+
+
+class RuleValidateRequest(BaseModel):
+    pair: str
+    timeframe: str  # execution timeframe (shortest)
+    start: str
+    end: str
+    entry_conditions: List[RuleConditionInput]
+    exit_conditions: List[RuleConditionInput]
+
+
+class RuleSignalResponse(BaseModel):
+    time: str
+    price: float
+    type: str  # "buy" or "sell"
+
+
+class TradeRecordResponse(BaseModel):
+    entry_time: str
+    entry_price: float
+    exit_time: str
+    exit_price: float
+    return_pct: float
+    is_win: bool
+
+
+class RuleValidateResponse(BaseModel):
+    buy_signals: List[RuleSignalResponse] = []
+    sell_signals: List[RuleSignalResponse] = []
+    trades: List[TradeRecordResponse] = []
+    total_trades: int = 0
+    win_trades: int = 0
+    loss_trades: int = 0
+    win_rate: float = 0.0
+    total_return_pct: float = 0.0
+    avg_return_pct: float = 0.0
     warnings: List[str] = []
 
 
@@ -118,3 +168,49 @@ def get_validation_triggers(
 ) -> Dict[str, Any]:
     """Get trigger records for a validation task (placeholder for future caching)."""
     return {"total": 0, "page": page, "per_page": per_page, "records": []}
+
+
+@router.post("/validate/rules", response_model=RuleValidateResponse)
+def run_rule_validation(
+    payload: RuleValidateRequest,
+    data_dir: Path = Depends(get_data_dir),
+) -> RuleValidateResponse:
+    """Evaluate entry/exit rule conditions and return paired trades."""
+    result = evaluate_rules(
+        symbol=payload.pair,
+        timeframe=payload.timeframe,
+        start=payload.start,
+        end=payload.end,
+        entry_conditions=[c.model_dump() for c in payload.entry_conditions],
+        exit_conditions=[c.model_dump() for c in payload.exit_conditions],
+        data_dir=str(data_dir),
+    )
+
+    return RuleValidateResponse(
+        buy_signals=[
+            RuleSignalResponse(time=s.time, price=s.price, type=s.type)
+            for s in result.buy_signals
+        ],
+        sell_signals=[
+            RuleSignalResponse(time=s.time, price=s.price, type=s.type)
+            for s in result.sell_signals
+        ],
+        trades=[
+            TradeRecordResponse(
+                entry_time=t.entry_time,
+                entry_price=t.entry_price,
+                exit_time=t.exit_time,
+                exit_price=t.exit_price,
+                return_pct=t.return_pct,
+                is_win=t.is_win,
+            )
+            for t in result.trades
+        ],
+        total_trades=result.total_trades,
+        win_trades=result.win_trades,
+        loss_trades=result.loss_trades,
+        win_rate=result.win_rate,
+        total_return_pct=result.total_return_pct,
+        avg_return_pct=result.avg_return_pct,
+        warnings=result.warnings,
+    )

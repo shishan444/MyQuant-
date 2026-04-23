@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pandas as pd
 
 from core.strategy.dna import StrategyDNA, SignalRole
+
+
+@dataclass
+class SignalSet:
+    """Complete set of trading signals for a strategy."""
+
+    entries: pd.Series     # open position signals
+    exits: pd.Series       # close position signals
+    adds: pd.Series        # add to position signals
+    reduces: pd.Series     # reduce position signals
+    trend_direction: pd.Series  # trend direction (+1 long, -1 short, 0 neutral)
 
 
 def evaluate_condition(
@@ -27,7 +40,10 @@ def evaluate_condition(
     """
     cond_type = condition["type"]
 
-    if cond_type == "lt":
+    if cond_type == "eq":
+        threshold = condition.get("threshold", 1)
+        return indicator_series == threshold
+    elif cond_type == "lt":
         return indicator_series < condition["threshold"]
     elif cond_type == "gt":
         return indicator_series > condition["threshold"]
@@ -344,6 +360,26 @@ def _get_indicator_column(df: pd.DataFrame, gene) -> pd.Series:
         col = "psar"
     elif indicator == "Williams %R":
         col = f"willr_{params['period']}"
+    elif indicator == "BearishEngulfing":
+        col = "pattern_bearish_engulfing"
+    elif indicator == "EveningStar":
+        col = "pattern_evening_star"
+    elif indicator == "ThreeBlackCrows":
+        col = "pattern_3blackcrows"
+    elif indicator == "ShootingStar":
+        col = "pattern_shooting_star"
+    elif indicator == "ThreeWhiteSoldiers":
+        col = "pattern_3whitesoldiers"
+    elif indicator == "MorningStar":
+        col = "pattern_morning_star"
+    elif indicator == "BullishReversal":
+        col = "pattern_bullish_reversal"
+    elif indicator == "BearishReversal":
+        col = "pattern_bearish_reversal"
+    elif indicator == "BullishDivergence":
+        col = "pattern_bullish_divergence"
+    elif indicator == "BearishDivergence":
+        col = "pattern_bearish_divergence"
     else:
         # Fallback: try to find by prefix
         matches = [c for c in df.columns if c.lower().startswith(indicator.lower())]
@@ -366,14 +402,16 @@ def _get_indicator_column(df: pd.DataFrame, gene) -> pd.Series:
 def evaluate_layer(
     layer,
     df: pd.DataFrame,
-) -> tuple[pd.Series, pd.Series]:
+) -> SignalSet:
     """Evaluate a single TimeframeLayer on a pre-computed DataFrame.
 
-    Returns (entry_signal, exit_signal) boolean Series.
+    Returns SignalSet with entries, exits, adds, reduces, trend_direction.
     """
     close = df["close"]
     entry_triggers, entry_guards = [], []
     exit_triggers, exit_guards = [], []
+    add_triggers, add_guards = [], []
+    reduce_triggers, reduce_guards = [], []
 
     for gene in layer.signal_genes:
         try:
@@ -389,6 +427,14 @@ def evaluate_layer(
                 exit_triggers.append(signal)
             elif gene.role == SignalRole.EXIT_GUARD:
                 exit_guards.append(signal)
+            elif gene.role == SignalRole.ADD_TRIGGER:
+                add_triggers.append(signal)
+            elif gene.role == SignalRole.ADD_GUARD:
+                add_guards.append(signal)
+            elif gene.role == SignalRole.REDUCE_TRIGGER:
+                reduce_triggers.append(signal)
+            elif gene.role == SignalRole.REDUCE_GUARD:
+                reduce_guards.append(signal)
         except ValueError:
             continue
 
@@ -398,7 +444,37 @@ def evaluate_layer(
     all_exit = exit_triggers + exit_guards
     exits = combine_signals(all_exit, layer.logic_genes.exit_logic) if all_exit else pd.Series(False, index=df.index)
 
-    return entries, exits
+    logic = layer.logic_genes
+    add_logic = getattr(logic, 'add_logic', 'AND') or 'AND'
+    reduce_logic = getattr(logic, 'reduce_logic', 'AND') or 'AND'
+
+    all_add = add_triggers + add_guards
+    adds = combine_signals(all_add, add_logic) if all_add else pd.Series(False, index=df.index)
+
+    all_reduce = reduce_triggers + reduce_guards
+    reduces = combine_signals(all_reduce, reduce_logic) if all_reduce else pd.Series(False, index=df.index)
+
+    # Prevent simultaneous entry+exit (favor exit)
+    both = entries & exits
+    entries = entries & ~both
+
+    # Simple trend direction: +1 if close > EMA(50), -1 if below
+    trend_cols = [c for c in df.columns if c.startswith("ema_")]
+    if trend_cols:
+        ema_col = df[trend_cols[0]]
+        trend_direction = pd.Series(0, index=df.index)
+        trend_direction[close > ema_col] = 1
+        trend_direction[close < ema_col] = -1
+    else:
+        trend_direction = pd.Series(0, index=df.index)
+
+    return SignalSet(
+        entries=entries,
+        exits=exits,
+        adds=adds,
+        reduces=reduces,
+        trend_direction=trend_direction,
+    )
 
 
 def resample_signals(
@@ -418,48 +494,88 @@ def dna_to_signals(
     enhanced_df: pd.DataFrame,
     dfs_by_timeframe: dict | None = None,
 ) -> tuple[pd.Series, pd.Series]:
-    """Convert a StrategyDNA to entry/exit boolean Series."""
+    """Convert a StrategyDNA to entry/exit boolean Series.
+
+    Returns (entries, exits) for backward compatibility.
+    Use dna_to_signal_set() for full SignalSet with adds/reduces.
+    """
+    sig_set = dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe)
+    return sig_set.entries, sig_set.exits
+
+
+def dna_to_signal_set(
+    dna: StrategyDNA,
+    enhanced_df: pd.DataFrame,
+    dfs_by_timeframe: dict | None = None,
+) -> SignalSet:
+    """Convert a StrategyDNA to a full SignalSet with adds/reduces."""
     # MTF mode
     if dna.is_mtf and dfs_by_timeframe is not None:
         layer_entries = []
         layer_exits = []
+        layer_adds = []
+        layer_reduces = []
 
         for layer in dna.layers:
             layer_df = dfs_by_timeframe.get(layer.timeframe)
             if layer_df is None:
                 continue
 
-            entries, exits = evaluate_layer(layer, layer_df)
+            sig = evaluate_layer(layer, layer_df)
 
             exec_tf = dna.execution_genes.timeframe
             if layer.timeframe != exec_tf:
-                entries = resample_signals(entries, enhanced_df.index)
-                exits = resample_signals(exits, enhanced_df.index)
+                layer_entries.append(resample_signals(sig.entries, enhanced_df.index))
+                layer_exits.append(resample_signals(sig.exits, enhanced_df.index))
+                layer_adds.append(resample_signals(sig.adds, enhanced_df.index))
+                layer_reduces.append(resample_signals(sig.reduces, enhanced_df.index))
             else:
-                entries = entries.reindex(enhanced_df.index, fill_value=False)
-                exits = exits.reindex(enhanced_df.index, fill_value=False)
-
-            layer_entries.append(entries)
-            layer_exits.append(exits)
+                layer_entries.append(sig.entries.reindex(enhanced_df.index, fill_value=False))
+                layer_exits.append(sig.exits.reindex(enhanced_df.index, fill_value=False))
+                layer_adds.append(sig.adds.reindex(enhanced_df.index, fill_value=False))
+                layer_reduces.append(sig.reduces.reindex(enhanced_df.index, fill_value=False))
 
         if not layer_entries:
-            return pd.Series(False, index=enhanced_df.index), pd.Series(False, index=enhanced_df.index)
+            return SignalSet(
+                entries=pd.Series(False, index=enhanced_df.index),
+                exits=pd.Series(False, index=enhanced_df.index),
+                adds=pd.Series(False, index=enhanced_df.index),
+                reduces=pd.Series(False, index=enhanced_df.index),
+                trend_direction=pd.Series(0, index=enhanced_df.index),
+            )
 
         combined_entries = combine_signals(layer_entries, dna.cross_layer_logic)
         combined_exits = combine_signals(layer_exits, dna.cross_layer_logic)
+        combined_adds = combine_signals(layer_adds, dna.cross_layer_logic)
+        combined_reduces = combine_signals(layer_reduces, dna.cross_layer_logic)
 
         both = combined_entries & combined_exits
         combined_entries = combined_entries & ~both
 
-        return combined_entries, combined_exits
+        # Trend direction from shortest timeframe
+        trend_cols = [c for c in enhanced_df.columns if c.startswith("ema_")]
+        if trend_cols:
+            trend_direction = pd.Series(0, index=enhanced_df.index)
+            trend_direction[enhanced_df["close"] > enhanced_df[trend_cols[0]]] = 1
+            trend_direction[enhanced_df["close"] < enhanced_df[trend_cols[0]]] = -1
+        else:
+            trend_direction = pd.Series(0, index=enhanced_df.index)
 
-    # Single-timeframe mode (backward compatible)
+        return SignalSet(
+            entries=combined_entries,
+            exits=combined_exits,
+            adds=combined_adds,
+            reduces=combined_reduces,
+            trend_direction=trend_direction,
+        )
+
+    # Single-timeframe mode
     close = enhanced_df["close"]
 
-    entry_triggers = []
-    entry_guards = []
-    exit_triggers = []
-    exit_guards = []
+    entry_triggers, entry_guards = [], []
+    exit_triggers, exit_guards = [], []
+    add_triggers, add_guards = [], []
+    reduce_triggers, reduce_guards = [], []
 
     for gene in dna.signal_genes:
         try:
@@ -475,22 +591,48 @@ def dna_to_signals(
                 exit_triggers.append(signal)
             elif gene.role == SignalRole.EXIT_GUARD:
                 exit_guards.append(signal)
+            elif gene.role == SignalRole.ADD_TRIGGER:
+                add_triggers.append(signal)
+            elif gene.role == SignalRole.ADD_GUARD:
+                add_guards.append(signal)
+            elif gene.role == SignalRole.REDUCE_TRIGGER:
+                reduce_triggers.append(signal)
+            elif gene.role == SignalRole.REDUCE_GUARD:
+                reduce_guards.append(signal)
         except ValueError:
             continue
 
     all_entry = entry_triggers + entry_guards
-    if not all_entry:
-        entries = pd.Series(False, index=enhanced_df.index)
-    else:
-        entries = combine_signals(all_entry, dna.logic_genes.entry_logic)
+    entries = combine_signals(all_entry, dna.logic_genes.entry_logic) if all_entry else pd.Series(False, index=enhanced_df.index)
 
     all_exit = exit_triggers + exit_guards
-    if not all_exit:
-        exits = pd.Series(False, index=enhanced_df.index)
-    else:
-        exits = combine_signals(all_exit, dna.logic_genes.exit_logic)
+    exits = combine_signals(all_exit, dna.logic_genes.exit_logic) if all_exit else pd.Series(False, index=enhanced_df.index)
+
+    add_logic = getattr(dna.logic_genes, 'add_logic', 'AND') or 'AND'
+    reduce_logic = getattr(dna.logic_genes, 'reduce_logic', 'AND') or 'AND'
+
+    all_add = add_triggers + add_guards
+    adds = combine_signals(all_add, add_logic) if all_add else pd.Series(False, index=enhanced_df.index)
+
+    all_reduce = reduce_triggers + reduce_guards
+    reduces = combine_signals(all_reduce, reduce_logic) if all_reduce else pd.Series(False, index=enhanced_df.index)
 
     both = entries & exits
     entries = entries & ~both
 
-    return entries, exits
+    # Trend direction
+    trend_cols = [c for c in enhanced_df.columns if c.startswith("ema_")]
+    if trend_cols:
+        trend_direction = pd.Series(0, index=enhanced_df.index)
+        trend_direction[close > enhanced_df[trend_cols[0]]] = 1
+        trend_direction[close < enhanced_df[trend_cols[0]]] = -1
+    else:
+        trend_direction = pd.Series(0, index=enhanced_df.index)
+
+    return SignalSet(
+        entries=entries,
+        exits=exits,
+        adds=adds,
+        reduces=reduces,
+        trend_direction=trend_direction,
+    )

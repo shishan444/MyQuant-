@@ -35,8 +35,9 @@ import {
   useDiscoveredStrategies,
 } from "@/hooks/useEvolution";
 import { useAvailableSources } from "@/hooks/useDatasets";
+import { useCreateStrategy } from "@/hooks/useStrategies";
 import { isActiveStatus, SCORE_TEMPLATE_LABELS } from "@/lib/constants";
-import type { EvolutionTask, DNA } from "@/types/api";
+import type { EvolutionTask, DNA, DiscoveredStrategy } from "@/types/api";
 
 // ---------------------------------------------------------------------------
 // Main Page Component
@@ -74,6 +75,9 @@ export function Evolution() {
 
   // --- Config collapsed state ---
   const [configCollapsed, setConfigCollapsed] = useState(false);
+
+  // --- Last active task ID (for chart data retention after task completes) ---
+  const [lastActiveTaskId, setLastActiveTaskId] = useState<string>("");
 
   // --- Mutation log ---
   const [mutationLog, setMutationLog] = useState<
@@ -122,6 +126,14 @@ export function Evolution() {
 
   const activeTaskId = activeTask?.task_id ?? "";
 
+  // Track last active task ID for chart data retention
+  useEffect(() => {
+    if (activeTaskId) setLastActiveTaskId(activeTaskId);
+  }, [activeTaskId]);
+
+  // Use lastActiveTaskId as fallback so chart keeps showing data after task completes
+  const historyTaskId = activeTaskId || lastActiveTaskId;
+
   // Subscribe to WS updates for the active task
   useEvolutionWebSocket(activeTaskId);
 
@@ -130,16 +142,16 @@ export function Evolution() {
     useEvolutionTask(activeTaskId)
   );
 
-  // Fetch history for score trend chart
+  // Fetch history for score trend chart (uses lastActiveTaskId fallback)
   const { data: historyData } = useQuery(
-    useEvolutionHistory(activeTaskId)
+    useEvolutionHistory(historyTaskId)
   );
 
   const currentTask = activeTaskDetail ?? activeTask;
 
   // Discovered strategies from strategy table (auto-extracted during evolution)
   const { data: discoveredData } = useQuery(
-    useDiscoveredStrategies()
+    useDiscoveredStrategies(historyTaskId)
   );
   const effectiveStrategies = discoveredData ?? [];
 
@@ -168,6 +180,7 @@ export function Evolution() {
   const pauseTask = usePauseEvolutionTask();
   const stopTask = useStopEvolutionTask();
   const resumeTask = useResumeEvolutionTask();
+  const saveStrategyMutation = useCreateStrategy();
 
   // --- Handlers ---
   const handleStartAuto = useCallback(
@@ -319,6 +332,39 @@ export function Evolution() {
       });
     },
     [navigate]
+  );
+
+  const handleSaveStrategy = useCallback(
+    (strategy: DiscoveredStrategy) => {
+      if (!strategy.dna) return;
+      saveStrategyMutation.mutateAsync({
+        name: strategy.name || `${strategy.symbol} ${strategy.timeframe} 进化策略`,
+        dna: strategy.dna,
+        symbol: strategy.symbol,
+        timeframe: strategy.timeframe,
+        source: "evolution",
+        tags: "evolution,discovered",
+        source_task_id: strategy.source_task_id,
+      });
+    },
+    [saveStrategyMutation]
+  );
+
+  const handleStrategyBacktest = useCallback(
+    (strategy: DiscoveredStrategy) => {
+      if (!strategy.dna) return;
+      const task = currentTask;
+      navigate("/lab", {
+        state: {
+          dna: strategy.dna,
+          symbol: strategy.symbol,
+          timeframe: strategy.timeframe,
+          dataStart: task?.data_start || task?.data_time_start?.slice(0, 10) || undefined,
+          dataEnd: task?.data_end || task?.data_time_end?.slice(0, 10) || undefined,
+        },
+      });
+    },
+    [navigate, currentTask]
   );
 
   const handleNewExploration = useCallback(() => {
@@ -500,6 +546,8 @@ export function Evolution() {
                   expandedId={expandedStrategyId}
                   onToggleExpand={handleToggleExpand}
                   onSeedEvolve={handleSeedEvolve}
+                  onSave={handleSaveStrategy}
+                  onVisualVerify={handleStrategyBacktest}
                 />
               </div>
             </GlassCard>

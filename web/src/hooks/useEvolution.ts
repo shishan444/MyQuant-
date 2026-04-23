@@ -14,8 +14,7 @@ export const evolutionKeys = {
     ["evolution", "tasks", filters] as const,
   task: (id: string) => ["evolution", "task", id] as const,
   history: (id: string) => ["evolution", "history", id] as const,
-  strategies: (id: string) => ["evolution", "strategies", id] as const,
-  discovered: () => ["evolution", "discovered"] as const,
+  discovered: (id: string) => ["evolution", "discovered", id] as const,
 };
 
 export function useEvolutionTasks(filters?: {
@@ -44,18 +43,14 @@ export function useEvolutionHistory(id: string) {
   });
 }
 
-export function useEvolutionStrategies(taskId: string) {
+export function useDiscoveredStrategies(taskId?: string, minScore?: number) {
   return queryOptions({
-    queryKey: evolutionKeys.strategies(taskId),
-    queryFn: () => api.getTaskStrategies(taskId),
+    queryKey: [...evolutionKeys.discovered(taskId ?? ""), minScore],
+    queryFn: () =>
+      taskId
+        ? api.getDiscoveredStrategies(taskId, { min_score: minScore, limit: 50 })
+        : api.getAllDiscoveredStrategies({ min_score: minScore, limit: 20 }),
     enabled: !!taskId,
-  });
-}
-
-export function useDiscoveredStrategies(minScore?: number) {
-  return queryOptions({
-    queryKey: [...evolutionKeys.discovered(), minScore],
-    queryFn: () => api.getAllDiscoveredStrategies({ min_score: minScore, limit: 20 }),
   });
 }
 
@@ -136,9 +131,6 @@ export function useEvolutionWebSocket(taskId: string | null) {
         qc.invalidateQueries({
           queryKey: evolutionKeys.history(currentTaskId),
         });
-        qc.invalidateQueries({
-          queryKey: evolutionKeys.strategies(currentTaskId),
-        });
       }, 2000);
     }
 
@@ -164,9 +156,9 @@ export function useEvolutionWebSocket(taskId: string | null) {
               }
             );
           } else if (update.type === "strategy_discovered") {
-            // Invalidate discovered strategies list to trigger refetch
+            // Invalidate per-task discovered strategies
             qc.invalidateQueries({
-              queryKey: evolutionKeys.discovered(),
+              queryKey: evolutionKeys.discovered(currentTaskId),
             });
             qc.invalidateQueries({
               queryKey: ["evolution", "tasks"],

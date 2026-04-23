@@ -11,3 +11,13 @@ export function useValidateHypothesis() {
     onError: (err) => toast.error(`验证失败: ${err.message}`),
   });
 }
+
+export function useValidateRules() {
+  return useMutation({
+    mutationFn: api.validateRules,
+    onSuccess: () => {
+      toast.success("验证完成");
+    },
+    onError: (err) => toast.error(`验证失败: ${err.message}`),
+  });
+}

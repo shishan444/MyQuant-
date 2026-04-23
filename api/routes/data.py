@@ -502,9 +502,17 @@ def get_chart_indicators(
     rvol_period: int = 20,
     vwma_enabled: bool = False,
     vwma_period: int = 20,
+    limit: int = 800,
+    macd_enabled: bool = False,
+    macd_fast: int = 12,
+    macd_slow: int = 26,
+    macd_signal: int = 9,
+    kdj_enabled: bool = False,
+    kdj_k_period: int = 14,
+    kdj_d_period: int = 3,
     data_dir: Path = Depends(get_data_dir),
 ) -> Dict[str, Any]:
-    """Compute chart indicators (EMA, BOLL, RSI, RVOL, VWMA) for chart rendering."""
+    """Compute chart indicators (EMA, BOLL, RSI, RVOL, VWMA, MACD, KDJ) for chart rendering."""
     import re
 
     from core.features.indicators import _compute_indicator
@@ -523,7 +531,10 @@ def get_chart_indicators(
 
     df = df.sort_index()
 
-    result: Dict[str, Any] = {"ema": {}, "boll": None, "rsi": None, "rvol": None, "vwma": None}
+    if limit > 0:
+        df = df.head(limit)
+
+    result: Dict[str, Any] = {"ema": {}, "boll": None, "rsi": None, "rvol": None, "vwma": None, "macd": None, "kdj": None}
 
     # Compute EMA for requested periods
     if ema_periods:
@@ -605,6 +616,63 @@ def get_chart_indicators(
                     {"time": str(idx), "value": float(val)}
                     for idx, val in series.items()
                 ]
+        except Exception:
+            pass
+
+    # Compute MACD
+    if macd_enabled:
+        try:
+            macd_df = _compute_indicator(df, "MACD", {"fast": macd_fast, "slow": macd_slow, "signal": macd_signal})
+            macd_col = f"macd_{macd_fast}_{macd_slow}_{macd_signal}"
+            signal_col = f"macd_signal_{macd_fast}_{macd_slow}_{macd_signal}"
+            hist_col = f"macd_histogram_{macd_fast}_{macd_slow}_{macd_signal}"
+            if all(col in macd_df.columns for col in [macd_col, signal_col, hist_col]):
+                result["macd"] = {
+                    "macd": [
+                        {"time": str(idx), "value": float(val)}
+                        for idx, val in macd_df[macd_col].dropna().items()
+                    ],
+                    "signal": [
+                        {"time": str(idx), "value": float(val)}
+                        for idx, val in macd_df[signal_col].dropna().items()
+                    ],
+                    "histogram": [
+                        {"time": str(idx), "value": float(val)}
+                        for idx, val in macd_df[hist_col].dropna().items()
+                    ],
+                }
+        except Exception:
+            pass
+
+    # Compute KDJ
+    if kdj_enabled:
+        try:
+            stoch_df = _compute_indicator(df, "Stochastic", {"k_period": kdj_k_period, "d_period": kdj_d_period})
+            k_col = f"stoch_k_{kdj_k_period}_{kdj_d_period}"
+            d_col = f"stoch_d_{kdj_k_period}_{kdj_d_period}"
+            if all(col in stoch_df.columns for col in [k_col, d_col]):
+                k_series = stoch_df[k_col].dropna()
+                d_series = stoch_df[d_col].dropna()
+                # Align indices for J calculation
+                common_idx = k_series.index.intersection(d_series.index)
+                k_aligned = k_series.loc[common_idx]
+                d_aligned = d_series.loc[common_idx]
+                j_series = 3 * k_aligned - 2 * d_aligned
+
+                result["kdj"] = {
+                    "k": [
+                        {"time": str(idx), "value": float(val)}
+                        for idx, val in k_series.items()
+                    ],
+                    "d": [
+                        {"time": str(idx), "value": float(val)}
+                        for idx, val in d_series.items()
+                    ],
+                    "j": [
+                        {"time": str(idx), "value": float(val)}
+                        for idx, val in j_series.items()
+                    ],
+                }
         except Exception:
             pass
 

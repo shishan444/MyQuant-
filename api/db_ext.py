@@ -270,8 +270,10 @@ def save_strategy(
     now = _now()
     conn = _connect(db_path)
 
-    # Dedup by gene_signature: keep the higher-scoring version
-    if gene_signature:
+    # Dedup by gene_signature: keep the higher-scoring version.
+    # Only apply dedup for scored strategies (from evolution); manual saves
+    # (best_score=None) always insert so users can re-save with different tags/notes.
+    if gene_signature and best_score is not None:
         existing = conn.execute(
             "SELECT strategy_id, best_score FROM strategy WHERE gene_signature = ? LIMIT 1",
             (gene_signature,),
@@ -354,6 +356,7 @@ def list_strategies(
     *,
     symbol: Optional[str] = None,
     source: Optional[str] = None,
+    source_task_id: Optional[str] = None,
     tags: Optional[str] = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
@@ -364,6 +367,7 @@ def list_strategies(
     Args:
         symbol: filter by trading pair (e.g. 'BTCUSDT').
         source: filter by origin (e.g. 'manual', 'evolution').
+        source_task_id: filter by originating task ID.
         tags: substring match against the tags column.
         sort_by: column name to sort by.
         sort_order: 'asc' or 'desc'.
@@ -378,6 +382,9 @@ def list_strategies(
     if source is not None:
         conditions.append("source = ?")
         params.append(source)
+    if source_task_id is not None:
+        conditions.append("source_task_id = ?")
+        params.append(source_task_id)
     if tags is not None:
         conditions.append("tags LIKE ?")
         params.append(f"%{tags}%")

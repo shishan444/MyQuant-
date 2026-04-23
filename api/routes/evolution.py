@@ -119,6 +119,51 @@ def _task_row_to_response(
     )
 
 
+@router.get("/strategies")
+def list_all_discovered_strategies(
+    min_score: Optional[float] = None,
+    limit: int = 20,
+    db_path: Path = Depends(get_db_path),
+) -> List[Dict[str, Any]]:
+    """List all evolution-discovered strategies across all tasks."""
+    from api.db_ext import list_strategies
+    strategies = list_strategies(
+        db_path, source="evolution", sort_by="best_score",
+        sort_order="desc", limit=limit,
+    )
+    result: List[Dict[str, Any]] = []
+    for s in strategies:
+        score = s.get("best_score") or 0
+        if min_score is not None and score < min_score:
+            continue
+        dna_dict = None
+        if s.get("dna_json"):
+            try:
+                dna_dict = json.loads(s["dna_json"])
+            except (json.JSONDecodeError, Exception):
+                pass
+        metrics = None
+        if s.get("metrics_json"):
+            try:
+                metrics = json.loads(s["metrics_json"])
+            except (json.JSONDecodeError, Exception):
+                pass
+        result.append({
+            "strategy_id": s["strategy_id"],
+            "name": s.get("name"),
+            "dna": dna_dict,
+            "source": "evolution",
+            "source_task_id": s.get("source_task_id"),
+            "score": score,
+            "generation": s.get("generation", 0),
+            "created_at": s.get("created_at"),
+            "symbol": s.get("symbol", ""),
+            "timeframe": s.get("timeframe", ""),
+            "metrics": metrics,
+        })
+    return result
+
+
 @router.post("/tasks", status_code=201)
 def create_task(
     payload: EvolutionTaskCreate,
@@ -418,6 +463,7 @@ def get_task_strategies(
 def get_discovered_strategies(
     task_id: str,
     min_score: Optional[float] = None,
+    limit: int = 50,
     db_path: Path = Depends(get_db_path),
 ) -> List[Dict[str, Any]]:
     """Get auto-extracted strategies for a task from the strategy table."""
@@ -425,27 +471,41 @@ def get_discovered_strategies(
     strategies = list_strategies(
         db_path,
         source="evolution",
-        limit=100,
+        source_task_id=task_id,
+        sort_by="best_score",
+        sort_order="desc",
+        limit=limit,
     )
-    # Filter by source_task_id and optional min_score
-    result = []
+    result: List[Dict[str, Any]] = []
     for s in strategies:
-        if s.get("source_task_id") != task_id:
+        score = s.get("best_score") or 0
+        if min_score is not None and score < min_score:
             continue
-        if min_score is not None and (s.get("best_score") or 0) < min_score:
-            continue
+        dna_dict = None
+        if s.get("dna_json"):
+            try:
+                dna_dict = json.loads(s["dna_json"])
+            except (json.JSONDecodeError, Exception):
+                pass
+        metrics = None
+        if s.get("metrics_json"):
+            try:
+                metrics = json.loads(s["metrics_json"])
+            except (json.JSONDecodeError, Exception):
+                pass
         result.append({
             "strategy_id": s["strategy_id"],
             "name": s.get("name"),
-            "dna": json.loads(s["dna_json"]) if s.get("dna_json") else None,
+            "dna": dna_dict,
             "source": "evolution",
             "source_task_id": s.get("source_task_id"),
-            "score": s.get("best_score"),
+            "score": score,
             "generation": s.get("generation", 0),
             "created_at": s.get("created_at"),
+            "symbol": s.get("symbol", ""),
+            "timeframe": s.get("timeframe", ""),
+            "metrics": metrics,
         })
-    # Sort by score desc
-    result.sort(key=lambda x: x.get("score", 0) or 0, reverse=True)
     return result
 
 

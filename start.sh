@@ -27,13 +27,21 @@ API_PID=$!
 echo $API_PID > .myquant_api.pid
 log_info "START" "Backend API started" "pid=$API_PID port=8000"
 
+# 启动前端 dev server (端口 8080)
+log_info "START" "Starting Frontend dev server on port 8080..."
+(cd web && npx vite --host 0.0.0.0 --port 8080) >> logs/start/web_$(date +%Y%m%d).log 2>&1 &
+WEB_PID=$!
+echo $WEB_PID > .myquant_web.pid
+log_info "START" "Frontend dev server started" "pid=$WEB_PID port=8080"
+
 echo ""
 echo -e "${GREEN}MyQuant is ready!${NC}"
+echo "  Frontend:    http://localhost:8080"
 echo "  Backend API: http://localhost:8000"
 echo "  API Docs:    http://localhost:8000/docs"
 echo ""
 
-log_start "MyQuant is ready" "api=http://localhost:8000"
+log_start "MyQuant is ready" "api=http://localhost:8000 web=http://localhost:8080"
 echo "Press Ctrl+C to stop all services"
 
 wait

@@ -182,7 +182,7 @@ export interface PaginatedResponse<T> {
 }
 
 export interface StrategyListResponse {
-  strategies: Strategy[];
+  items: Strategy[];
   total: number;
 }
 
@@ -222,6 +222,20 @@ export interface GenerationUpdate {
   name?: string;
 }
 
+export interface StrategyMetrics {
+  annual_return: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  win_rate: number;
+  total_trades: number;
+  calmar_ratio: number;
+  profit_factor: number;
+  sortino_ratio?: number;
+  max_consecutive_losses?: number;
+  monthly_consistency?: number;
+  r_squared?: number;
+}
+
 export interface DiscoveredStrategy {
   strategy_id: string;
   name: string;
@@ -231,6 +245,9 @@ export interface DiscoveredStrategy {
   score: number;
   generation: number;
   created_at: string;
+  symbol: string;
+  timeframe: string;
+  metrics?: StrategyMetrics | null;
 }
 
 export interface MutationRecord {
@@ -322,6 +339,47 @@ export interface AvailableSource {
 
 export interface AvailableSourcesResponse {
   sources: AvailableSource[];
+}
+
+// ---------------------------------------------------------------------------
+// Rule validation (Strategy Lab v2.4)
+// ---------------------------------------------------------------------------
+
+export interface RuleCondition {
+  logic: "IF" | "AND" | "OR";
+  timeframe: string;
+  subject: string;
+  action: string;
+  target: string;
+}
+
+export interface RuleValidateRequest {
+  pair: string;
+  timeframe: string;
+  start: string;
+  end: string;
+  entry_conditions: RuleCondition[];
+  exit_conditions: RuleCondition[];
+}
+
+export interface RuleValidateResponse {
+  buy_signals: Array<{ time: string; price: number; type: string }>;
+  sell_signals: Array<{ time: string; price: number; type: string }>;
+  trades: Array<{
+    entry_time: string;
+    entry_price: number;
+    exit_time: string;
+    exit_price: number;
+    return_pct: number;
+    is_win: boolean;
+  }>;
+  total_trades: number;
+  win_trades: number;
+  loss_trades: number;
+  win_rate: number;
+  total_return_pct: number;
+  avg_return_pct: number;
+  warnings: string[];
 }
 
 // ---------------------------------------------------------------------------

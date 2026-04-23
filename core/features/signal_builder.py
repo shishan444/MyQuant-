@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Tuple
 import pandas as pd
 
 from core.strategy.dna import StrategyDNA, SignalRole
-from core.strategy.executor import evaluate_condition, combine_signals
+from core.strategy.executor import evaluate_condition, combine_signals, SignalSet
 
 
 def extract_indicator_requirements(dna: StrategyDNA) -> List[Tuple[str, Dict[str, Any]]]:
@@ -60,6 +60,26 @@ def _resolve_column(df: pd.DataFrame, indicator: str, params: Dict[str, Any],
         col = f"atr_{params['period']}"
     elif indicator == "ADX":
         col = f"adx_{params['period']}"
+    elif indicator == "BearishEngulfing":
+        col = "pattern_bearish_engulfing"
+    elif indicator == "EveningStar":
+        col = "pattern_evening_star"
+    elif indicator == "ThreeBlackCrows":
+        col = "pattern_3blackcrows"
+    elif indicator == "ShootingStar":
+        col = "pattern_shooting_star"
+    elif indicator == "ThreeWhiteSoldiers":
+        col = "pattern_3whitesoldiers"
+    elif indicator == "MorningStar":
+        col = "pattern_morning_star"
+    elif indicator == "BullishReversal":
+        col = "pattern_bullish_reversal"
+    elif indicator == "BearishReversal":
+        col = "pattern_bearish_reversal"
+    elif indicator == "BullishDivergence":
+        col = "pattern_bullish_divergence"
+    elif indicator == "BearishDivergence":
+        col = "pattern_bearish_divergence"
     else:
         # Generic fallback
         matches = [c for c in df.columns if c.lower().startswith(indicator.lower())]
@@ -87,13 +107,23 @@ def build_signals(
 
     Similar to executor.dna_to_signals but with more robust column resolution.
     Missing indicator columns are silently skipped.
+    Returns (entries, exits) for backward compatibility.
     """
+    sig_set = build_signal_set(dna, enhanced_df)
+    return sig_set.entries, sig_set.exits
+
+
+def build_signal_set(
+    dna: StrategyDNA,
+    enhanced_df: pd.DataFrame,
+) -> SignalSet:
+    """Build full SignalSet with adds/reduces from StrategyDNA."""
     close = enhanced_df["close"]
 
-    entry_triggers = []
-    entry_guards = []
-    exit_triggers = []
-    exit_guards = []
+    entry_triggers, entry_guards = [], []
+    exit_triggers, exit_guards = [], []
+    add_triggers, add_guards = [], []
+    reduce_triggers, reduce_guards = [], []
 
     for gene in dna.signal_genes:
         col_series = _resolve_column(enhanced_df, gene.indicator, gene.params, gene.field_name)
@@ -111,6 +141,14 @@ def build_signals(
             exit_triggers.append(signal)
         elif gene.role == SignalRole.EXIT_GUARD:
             exit_guards.append(signal)
+        elif gene.role == SignalRole.ADD_TRIGGER:
+            add_triggers.append(signal)
+        elif gene.role == SignalRole.ADD_GUARD:
+            add_guards.append(signal)
+        elif gene.role == SignalRole.REDUCE_TRIGGER:
+            reduce_triggers.append(signal)
+        elif gene.role == SignalRole.REDUCE_GUARD:
+            reduce_guards.append(signal)
 
     # Combine
     all_entry = entry_triggers + entry_guards
@@ -125,8 +163,32 @@ def build_signals(
     else:
         exits = combine_signals(all_exit, dna.logic_genes.exit_logic)
 
+    add_logic = getattr(dna.logic_genes, 'add_logic', 'AND') or 'AND'
+    reduce_logic = getattr(dna.logic_genes, 'reduce_logic', 'AND') or 'AND'
+
+    all_add = add_triggers + add_guards
+    adds = combine_signals(all_add, add_logic) if all_add else pd.Series(False, index=enhanced_df.index)
+
+    all_reduce = reduce_triggers + reduce_guards
+    reduces = combine_signals(all_reduce, reduce_logic) if all_reduce else pd.Series(False, index=enhanced_df.index)
+
     # Prevent simultaneous entry+exit (favor exit)
     both = entries & exits
     entries = entries & ~both
 
-    return entries, exits
+    # Trend direction
+    trend_cols = [c for c in enhanced_df.columns if c.startswith("ema_")]
+    if trend_cols:
+        trend_direction = pd.Series(0, index=enhanced_df.index)
+        trend_direction[close > enhanced_df[trend_cols[0]]] = 1
+        trend_direction[close < enhanced_df[trend_cols[0]]] = -1
+    else:
+        trend_direction = pd.Series(0, index=enhanced_df.index)
+
+    return SignalSet(
+        entries=entries,
+        exits=exits,
+        adds=adds,
+        reduces=reduces,
+        trend_direction=trend_direction,
+    )

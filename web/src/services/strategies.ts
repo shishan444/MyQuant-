@@ -29,6 +29,7 @@ export async function createStrategy(payload: {
   symbol: string;
   timeframe: string;
   source: string;
+  source_task_id?: string;
   tags?: string;
   notes?: string;
 }): Promise<Strategy> {
@@ -61,7 +62,9 @@ export async function runBacktest(payload: {
   data_end?: string;
   timeframe_pool?: string[];
 }): Promise<BacktestResult> {
-  const { data } = await api.post("/api/strategies/backtest", payload);
+  const { data } = await api.post("/api/strategies/backtest", payload, {
+    timeout: 60000,
+  });
   return data;
 }
 

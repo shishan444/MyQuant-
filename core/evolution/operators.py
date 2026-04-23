@@ -582,6 +582,10 @@ def mutate_risk(dna: StrategyDNA) -> StrategyDNA:
                 max(risk["stop_loss"] + 0.005, risk["take_profit"] + delta), 4
             )
 
+    # Mutate direction: flip long <-> short with low probability
+    if random.random() < 0.15:
+        risk["direction"] = "short" if risk["direction"] == "long" else "long"
+
     data["risk_genes"] = risk
     return StrategyDNA.from_dict(data)
 

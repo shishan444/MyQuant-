@@ -90,6 +90,14 @@ export async function getChartIndicators(
     boll_std?: number;
     rsi_enabled?: boolean;
     rsi_period?: number;
+    macd_enabled?: boolean;
+    macd_fast?: number;
+    macd_slow?: number;
+    macd_signal?: number;
+    kdj_enabled?: boolean;
+    kdj_k_period?: number;
+    kdj_d_period?: number;
+    limit?: number;
   }
 ): Promise<ChartIndicatorsResponse> {
   const { data } = await api.get(`/api/data/chart-indicators/${symbol}/${timeframe}`, { params });

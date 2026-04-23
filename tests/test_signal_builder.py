@@ -9,10 +9,10 @@ import pytest
 import pandas as pd
 import numpy as np
 
-from MyQuant.core.strategy.dna import (
+from core.strategy.dna import (
     SignalRole, SignalGene, LogicGenes, RiskGenes, ExecutionGenes, StrategyDNA,
 )
-from MyQuant.core.features.signal_builder import (
+from core.features.signal_builder import (
     extract_indicator_requirements,
     build_signals,
 )

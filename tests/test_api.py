@@ -29,9 +29,18 @@ from MyQuant.api.app import create_app
 
 @pytest.fixture
 def tmp_data_dir(tmp_path: Path) -> Path:
-    """Create a temporary data directory."""
+    """Create a temporary data directory with a minimal parquet file."""
+    import pandas as pd
+
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    # Create minimal parquet file for BTCUSDT_4h so evolution task creation passes
+    dummy_df = pd.DataFrame(
+        {"open": [60000], "high": [61000], "low": [59000],
+         "close": [60500], "volume": [100]},
+        index=pd.DatetimeIndex(["2024-01-01"], name="timestamp"),
+    )
+    dummy_df.to_parquet(data_dir / "BTCUSDT_4h.parquet")
     return data_dir
 
 
@@ -52,20 +61,20 @@ def client(db_path: Path, tmp_data_dir: Path):
         yield c
 
 
-def _sample_dna_dict() -> Dict[str, Any]:
-    """Build a minimal valid StrategyDNA dict."""
+def _sample_dna_dict(indicator: str = "RSI", period: int = 14) -> Dict[str, Any]:
+    """Build a minimal valid StrategyDNA dict with configurable indicator."""
     return {
         "signal_genes": [
             {
-                "indicator": "RSI",
-                "params": {"period": 14},
+                "indicator": indicator,
+                "params": {"period": period},
                 "role": "entry_trigger",
                 "field": None,
                 "condition": {"type": "lt", "threshold": 30},
             },
             {
-                "indicator": "RSI",
-                "params": {"period": 14},
+                "indicator": indicator,
+                "params": {"period": period},
                 "role": "exit_trigger",
                 "field": None,
                 "condition": {"type": "gt", "threshold": 70},
@@ -77,11 +86,11 @@ def _sample_dna_dict() -> Dict[str, Any]:
     }
 
 
-def _sample_strategy_create() -> Dict[str, Any]:
-    """Build a payload for POST /api/strategies."""
+def _sample_strategy_create(indicator: str = "RSI", period: int = 14) -> Dict[str, Any]:
+    """Build a payload for POST /api/strategies with configurable DNA."""
     return {
-        "name": "RSI Reversal",
-        "dna": _sample_dna_dict(),
+        "name": f"{indicator} Reversal",
+        "dna": _sample_dna_dict(indicator, period),
         "symbol": "BTCUSDT",
         "timeframe": "4h",
         "source": "manual",
@@ -196,8 +205,9 @@ class TestStrategyList:
 
     def test_list_strategies_sort_by_score(self, client: TestClient) -> None:
         """GET /api/strategies?sort_by=best_score should sort."""
-        for i in range(3):
-            payload = {**_sample_strategy_create(), "name": f"Strat {i}"}
+        indicators = [("RSI", 14), ("EMA", 20), ("MACD", 12)]
+        for i, (ind, per) in enumerate(indicators):
+            payload = {**_sample_strategy_create(ind, per), "name": f"Strat {i}"}
             client.post("/api/strategies", json=payload)
         response = client.get("/api/strategies", params={"sort_by": "created_at", "sort_order": "asc"})
         assert response.status_code == 200
@@ -206,8 +216,9 @@ class TestStrategyList:
 
     def test_list_strategies_with_limit(self, client: TestClient) -> None:
         """GET /api/strategies?limit=2 should limit results."""
-        for i in range(5):
-            payload = {**_sample_strategy_create(), "name": f"Strat {i}"}
+        indicators = [("RSI", 14), ("EMA", 20), ("MACD", 12), ("SMA", 50), ("BB", 20)]
+        for i, (ind, per) in enumerate(indicators):
+            payload = {**_sample_strategy_create(ind, per), "name": f"Strat {i}"}
             client.post("/api/strategies", json=payload)
         response = client.get("/api/strategies", params={"limit": 2})
         assert response.status_code == 200
@@ -363,10 +374,10 @@ class TestStrategyCompare:
         """POST /api/strategies/compare should compare multiple strategies."""
         import pandas as pd
 
-        # Create two strategies
+        # Create two strategies with different DNA
         ids = []
-        for i in range(2):
-            payload = {**_sample_strategy_create(), "name": f"Strat {i}"}
+        for i, (ind, per) in enumerate([("RSI", 14), ("EMA", 20)]):
+            payload = {**_sample_strategy_create(ind, per), "name": f"Strat {i}"}
             resp = client.post("/api/strategies", json=payload)
             ids.append(resp.json()["strategy_id"])
 
@@ -490,8 +501,8 @@ class TestEvolutionTaskHistory:
         create_resp = client.post("/api/evolution/tasks", json=_sample_evolution_create())
         task_id = create_resp.json()["task_id"]
         # Add history via the DB layer
-        from MyQuant.core.persistence.db import save_history
-        from MyQuant.api.deps import get_db_path
+        from core.persistence.db import save_history
+        from api.deps import get_db_path
 
         # We need to use the test db_path - use the app state
         db_path = client.app.state.db_path
@@ -552,7 +563,7 @@ class TestDatasetList:
 
     def test_list_datasets_with_data(self, client: TestClient) -> None:
         """GET /api/data/datasets should list datasets."""
-        from MyQuant.api.db_ext import save_dataset_meta
+        from api.db_ext import save_dataset_meta
 
         db_path = client.app.state.db_path
         save_dataset_meta(
@@ -570,7 +581,7 @@ class TestDatasetList:
 
     def test_list_datasets_filter_by_symbol(self, client: TestClient) -> None:
         """GET /api/data/datasets?symbol=BTCUSDT should filter."""
-        from MyQuant.api.db_ext import save_dataset_meta
+        from api.db_ext import save_dataset_meta
 
         db_path = client.app.state.db_path
         save_dataset_meta(
@@ -596,7 +607,7 @@ class TestDatasetList:
 class TestDatasetGet:
     def test_get_dataset(self, client: TestClient) -> None:
         """GET /api/data/datasets/{id} should return dataset details."""
-        from MyQuant.api.db_ext import save_dataset_meta
+        from api.db_ext import save_dataset_meta
 
         db_path = client.app.state.db_path
         save_dataset_meta(
@@ -623,7 +634,7 @@ class TestDatasetGet:
 class TestDatasetDelete:
     def test_delete_dataset(self, client: TestClient) -> None:
         """DELETE /api/data/datasets/{id} should delete dataset."""
-        from MyQuant.api.db_ext import save_dataset_meta
+        from api.db_ext import save_dataset_meta
 
         db_path = client.app.state.db_path
         save_dataset_meta(
@@ -653,7 +664,7 @@ class TestDataImport:
         self, mock_import: MagicMock, client: TestClient, tmp_data_dir: Path
     ) -> None:
         """POST /api/data/import with valid CSV should import data."""
-        from MyQuant.core.data.csv_importer import CsvImportResult, ImportFormat, TimestampPrecision
+        from core.data.csv_importer import CsvImportResult, ImportFormat, TimestampPrecision
 
         mock_import.return_value = CsvImportResult(
             dataset_id="BTCUSDT_4h",
@@ -687,7 +698,7 @@ class TestDatasetPreview:
         """GET /api/data/datasets/{id}/preview should return first N rows."""
         import pandas as pd
 
-        from MyQuant.api.db_ext import save_dataset_meta
+        from api.db_ext import save_dataset_meta
 
         db_path = client.app.state.db_path
         data_dir = client.app.state.data_dir
@@ -728,7 +739,7 @@ class TestDatasetOhlcv:
         """GET /api/data/datasets/{id}/ohlcv should return OHLCV data."""
         import pandas as pd
 
-        from MyQuant.api.db_ext import save_dataset_meta
+        from api.db_ext import save_dataset_meta
 
         db_path = client.app.state.db_path
         data_dir = client.app.state.data_dir

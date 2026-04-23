@@ -14,3 +14,8 @@ export { SaveStrategyDialog } from "./SaveStrategyDialog";
 export { BacktestModePanel } from "./BacktestModePanel";
 export { BacktestMetricsPanel } from "./BacktestMetricsPanel";
 export { EquityCurveChart } from "./EquityCurveChart";
+export { SceneModePanel } from "./SceneModePanel";
+export { SceneSelector } from "./SceneSelector";
+export { SceneResult } from "./SceneResult";
+export { RuleConditionRow } from "./RuleConditionRow";
+export { RuleConditionGroup } from "./RuleConditionGroup";

@@ -1,17 +1,18 @@
 import { useMemo, useCallback, memo } from "react";
-import { Eye, Save, Dna } from "lucide-react";
+import { Eye, Dna, Play, Save } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatPercent, formatNumber } from "@/lib/utils";
 import { getStrategyName, getStrategyType } from "@/lib/strategy-utils";
-import type { EvolutionTask, DNA } from "@/types/api";
+import type { DiscoveredStrategy, StrategyMetrics, DNA } from "@/types/api";
 
 interface StrategyListProps {
-  strategies: EvolutionTask[];
+  strategies: DiscoveredStrategy[];
   expandedId: string | null;
-  onToggleExpand: (taskId: string) => void;
-  onSave: (task: EvolutionTask) => void;
+  onToggleExpand: (strategyId: string) => void;
   onSeedEvolve: (dna: DNA) => void;
+  onSave?: (strategy: DiscoveredStrategy) => void;
+  onVisualVerify?: (strategy: DiscoveredStrategy) => void;
 }
 
 function formatIndicatorLabel(gene: {
@@ -34,33 +35,6 @@ function getDnaIndicators(dna: DNA | null | undefined): string {
   return dna.signal_genes.map(formatIndicatorLabel).join("+");
 }
 
-function getDnaDescription(dna: DNA | null | undefined): string {
-  if (!dna) return "";
-  if (dna.layers && dna.layers.length > 0) {
-    return dna.layers
-      .map((l, i) => {
-        const indicators = l.signal_genes.map((g) => g.indicator).join("+");
-        if (i === 0 && dna.layers!.length > 1) return `${l.timeframe}趋势过滤`;
-        if (i === dna.layers!.length - 1 && dna.layers!.length > 1)
-          return `${l.timeframe}入场信号`;
-        return `${l.timeframe}:${indicators}`;
-      })
-      .join("+");
-  }
-  return dna.signal_genes
-    .map((g) => {
-      const condType = g.condition.type;
-      if (condType === "price_above") return `${g.indicator}价格上方`;
-      if (condType === "price_below") return `${g.indicator}价格下方`;
-      if (condType === "lt") return `${g.indicator}超卖`;
-      if (condType === "gt") return `${g.indicator}超买`;
-      if (condType === "cross_above") return `${g.indicator}金叉`;
-      if (condType === "cross_below") return `${g.indicator}死叉`;
-      return g.indicator;
-    })
-    .join("+");
-}
-
 function getMtfBadge(dna: DNA | null | undefined): string | null {
   if (!dna?.layers || dna.layers.length <= 1) return null;
   return dna.layers.map((l) => l.timeframe.toUpperCase()).join("+");
@@ -70,8 +44,9 @@ export function StrategyList({
   strategies,
   expandedId,
   onToggleExpand,
-  onSave,
   onSeedEvolve,
+  onSave,
+  onVisualVerify,
 }: StrategyListProps) {
   if (strategies.length === 0) return null;
 
@@ -80,21 +55,25 @@ export function StrategyList({
       {/* Header row */}
       <div className="flex items-center gap-4 px-4 py-2 text-[11px] text-slate-500">
         <span className="w-7 shrink-0 text-center">排名</span>
-        <span className="flex-1">策略(指标组合)</span>
-        <span className="w-24 shrink-0 text-right">收益率</span>
-        <span className="w-16 shrink-0 text-right">夏普</span>
-        <span className="w-20 shrink-0 text-right">操作</span>
+        <span className="flex-1">策略</span>
+        <span className="w-20 shrink-0 text-right">年化收益</span>
+        <span className="w-16 shrink-0 text-right">最大回撤</span>
+        <span className="w-14 shrink-0 text-right">夏普</span>
+        <span className="w-14 shrink-0 text-right">胜率</span>
+        <span className="w-12 shrink-0 text-right">交易数</span>
+        <span className="w-28 shrink-0 text-right">操作</span>
       </div>
 
-      {strategies.map((task, idx) => (
+      {strategies.map((strategy, idx) => (
         <StrategyRow
-          key={task.task_id}
+          key={strategy.strategy_id}
           rank={idx + 1}
-          task={task}
-          expanded={expandedId === task.task_id}
-          onToggle={() => onToggleExpand(task.task_id)}
-          onSave={() => onSave(task)}
-          onSeedEvolve={() => task.champion_dna && onSeedEvolve(task.champion_dna)}
+          strategy={strategy}
+          expanded={expandedId === strategy.strategy_id}
+          onToggle={() => onToggleExpand(strategy.strategy_id)}
+          onSeedEvolve={() => strategy.dna && onSeedEvolve(strategy.dna)}
+          onSave={onSave ? () => onSave(strategy) : undefined}
+          onVisualVerify={onVisualVerify ? () => onVisualVerify(strategy) : undefined}
         />
       ))}
     </div>
@@ -103,30 +82,33 @@ export function StrategyList({
 
 interface StrategyRowProps {
   rank: number;
-  task: EvolutionTask;
+  strategy: DiscoveredStrategy;
   expanded: boolean;
   onToggle: () => void;
-  onSave: () => void;
   onSeedEvolve: () => void;
+  onSave?: () => void;
+  onVisualVerify?: () => void;
 }
 
 const StrategyRow = memo(function StrategyRow({
   rank,
-  task,
+  strategy,
   expanded,
   onToggle,
-  onSave,
   onSeedEvolve,
+  onSave,
+  onVisualVerify,
 }: StrategyRowProps) {
-  const bestScore = task.best_score ?? 0;
-  const returnRate = task.champion_metrics?.annual_return ?? 0;
-  const sharpe = task.champion_metrics?.sharpe_ratio ?? 0;
-  const mtfBadge = useMemo(() => getMtfBadge(task.champion_dna), [task.champion_dna]);
-  const strategyName = useMemo(() => getStrategyName(task.champion_dna), [task.champion_dna]);
-  const strategyType = useMemo(() => getStrategyType(task.champion_dna), [task.champion_dna]);
+  const m = strategy.metrics;
+  const mtfBadge = useMemo(() => getMtfBadge(strategy.dna), [strategy.dna]);
+  const strategyName = useMemo(
+    () => strategy.name || getStrategyName(strategy.dna),
+    [strategy.name, strategy.dna]
+  );
+  const strategyType = useMemo(() => getStrategyType(strategy.dna), [strategy.dna]);
   const indicators = useMemo(
-    () => getDnaIndicators(task.champion_dna),
-    [task.champion_dna]
+    () => getDnaIndicators(strategy.dna),
+    [strategy.dna]
   );
 
   return (
@@ -186,23 +168,39 @@ const StrategyRow = memo(function StrategyRow({
           </span>
         </div>
 
-        {/* Return rate */}
-        <span
-          className={cn(
-            "w-24 shrink-0 text-right font-mono text-[13px] font-semibold",
-            returnRate >= 0 ? "text-emerald-400" : "text-red-400"
-          )}
-        >
-          {formatPercent(returnRate)}
+        {/* Annual return */}
+        <MetricValue
+          className="w-20"
+          value={m ? formatPercent(m.annual_return) : "-"}
+          positive={m ? m.annual_return > 0 : undefined}
+        />
+
+        {/* Max drawdown */}
+        <span className="w-16 shrink-0 text-right font-mono text-[13px] text-red-400">
+          {m ? formatPercent(m.max_drawdown) : "-"}
         </span>
 
-        {/* Sharpe */}
-        <span className="w-16 shrink-0 text-right font-mono text-[13px] text-slate-400">
-          {formatNumber(sharpe)}
+        {/* Sharpe ratio */}
+        <MetricValue
+          className="w-14"
+          value={m ? formatNumber(m.sharpe_ratio) : "-"}
+          positive={m ? m.sharpe_ratio > 0 : undefined}
+        />
+
+        {/* Win rate */}
+        <MetricValue
+          className="w-14"
+          value={m ? `${(m.win_rate * 100).toFixed(1)}%` : "-"}
+          positive={m ? m.win_rate > 0.5 : undefined}
+        />
+
+        {/* Trade count */}
+        <span className="w-12 shrink-0 text-right font-mono text-[13px] text-slate-400">
+          {m?.total_trades ?? "-"}
         </span>
 
         {/* Actions */}
-        <div className="flex w-20 shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="flex w-28 shrink-0 items-center justify-end gap-0.5">
           <Button
             variant="ghost"
             size="icon-xs"
@@ -211,14 +209,28 @@ const StrategyRow = memo(function StrategyRow({
           >
             <Eye className="h-3.5 w-3.5" />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={onSave}
-            aria-label="保存策略"
-          >
-            <Save className="h-3.5 w-3.5" />
-          </Button>
+          {onVisualVerify && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="text-emerald-400"
+              onClick={onVisualVerify}
+              aria-label="回测"
+            >
+              <Play className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {onSave && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="text-amber-400"
+              onClick={onSave}
+              aria-label="保存"
+            >
+              <Save className="h-3.5 w-3.5" />
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon-xs"
@@ -232,20 +244,51 @@ const StrategyRow = memo(function StrategyRow({
       </div>
 
       {/* Expanded detail */}
-      {expanded && task.champion_dna && (
-        <StrategyDetail dna={task.champion_dna} task={task} onClose={onToggle} />
+      {expanded && strategy.dna && (
+        <StrategyDetail dna={strategy.dna} strategy={strategy} onClose={onToggle} />
       )}
     </div>
   );
 });
 
+function MetricValue({
+  className,
+  value,
+  positive,
+}: {
+  className: string;
+  value: string;
+  positive?: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        `${className} shrink-0 text-right font-mono text-[13px]`,
+        positive === undefined
+          ? "text-slate-500"
+          : positive
+            ? "text-emerald-400"
+            : "text-red-400"
+      )}
+    >
+      {value}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Expanded detail panel
+// ---------------------------------------------------------------------------
+
 interface StrategyDetailProps {
   dna: DNA;
-  task: EvolutionTask;
+  strategy: DiscoveredStrategy;
   onClose: () => void;
 }
 
-function StrategyDetail({ dna, task, onClose }: StrategyDetailProps) {
+function StrategyDetail({ dna, strategy, onClose }: StrategyDetailProps) {
+  const m = strategy.metrics;
+
   const renderCondition = useCallback(
     (gene: { indicator: string; params?: Record<string, unknown>; condition: { type: string; value?: number } }) => {
       const condLabel: Record<string, string> = {
@@ -361,19 +404,13 @@ function StrategyDetail({ dna, task, onClose }: StrategyDetailProps) {
             <div className="mt-1 flex flex-col gap-1 rounded-lg border border-slate-700/30 p-2">
               {entryGenes.length > 0 ? (
                 entryGenes.map((gene, gi) => (
-                  <div
-                    key={gi}
-                    className="text-xs text-slate-400"
-                  >
+                  <div key={gi} className="text-xs text-slate-400">
                     {renderCondition(gene)}
                   </div>
                 ))
               ) : (
                 dna.signal_genes.map((gene, gi) => (
-                  <div
-                    key={gi}
-                    className="text-xs text-slate-400"
-                  >
+                  <div key={gi} className="text-xs text-slate-400">
                     {renderCondition(gene)}
                   </div>
                 ))
@@ -389,10 +426,7 @@ function StrategyDetail({ dna, task, onClose }: StrategyDetailProps) {
               </span>
               <div className="mt-1 flex flex-col gap-1 rounded-lg border border-slate-700/30 p-2">
                 {exitGenes.map((gene, gi) => (
-                  <div
-                    key={gi}
-                    className="text-xs text-slate-400"
-                  >
+                  <div key={gi} className="text-xs text-slate-400">
                     {renderCondition(gene)}
                   </div>
                 ))}
@@ -423,50 +457,58 @@ function StrategyDetail({ dna, task, onClose }: StrategyDetailProps) {
         {dna.execution_genes.timeframe.toUpperCase()}
       </div>
 
-      {/* Backtest score summary */}
-      {task.champion_metrics ? (
+      {/* Metrics summary */}
+      {m ? (
         <div className="rounded-lg border border-slate-700/30 p-2">
           <div className="mb-1.5 text-xs font-medium text-slate-300">
             回测指标
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-            <MetricLine
+            <DetailMetric
               label="年化收益率"
-              value={`${(task.champion_metrics.annual_return * 100).toFixed(1)}%`}
-              score={task.champion_dimension_scores?.annual_return}
-              positive={task.champion_metrics.annual_return > 0}
+              value={formatPercent(m.annual_return)}
+              positive={m.annual_return > 0}
             />
-            <MetricLine
+            <DetailMetric
               label="夏普比率"
-              value={task.champion_metrics.sharpe_ratio.toFixed(2)}
-              score={task.champion_dimension_scores?.sharpe_ratio}
-              positive={task.champion_metrics.sharpe_ratio > 0}
+              value={m.sharpe_ratio.toFixed(2)}
+              positive={m.sharpe_ratio > 0}
             />
-            <MetricLine
+            <DetailMetric
               label="最大回撤"
-              value={`${(task.champion_metrics.max_drawdown * 100).toFixed(1)}%`}
-              score={task.champion_dimension_scores?.max_drawdown}
+              value={formatPercent(m.max_drawdown)}
               positive={false}
             />
-            <MetricLine
+            <DetailMetric
               label="胜率"
-              value={`${(task.champion_metrics.win_rate * 100).toFixed(1)}%`}
-              score={task.champion_dimension_scores?.win_rate}
-              positive={task.champion_metrics.win_rate > 0.5}
+              value={`${(m.win_rate * 100).toFixed(1)}%`}
+              positive={m.win_rate > 0.5}
+            />
+            <DetailMetric
+              label="交易次数"
+              value={`${m.total_trades}`}
+              positive
+            />
+            <DetailMetric
+              label="盈亏比"
+              value={m.profit_factor.toFixed(2)}
+              positive={m.profit_factor > 1}
             />
           </div>
           <div className="mt-1.5 text-[10px] text-slate-600">
-            综合评分: <span className="font-mono text-emerald-400">{(task.best_score ?? 0).toFixed(1)}</span>
+            综合评分: <span className="font-mono text-emerald-400">{strategy.score.toFixed(1)}</span>
+            {" "} / 代数: <span className="font-mono text-slate-300">G{strategy.generation}</span>
           </div>
         </div>
       ) : (
         <div className="flex items-center gap-4 text-xs text-slate-500">
           <span>
-            最优分数:{" "}
+            综合评分:{" "}
             <span className="font-mono font-semibold text-emerald-400">
-              {(task.best_score ?? 0).toFixed(1)}
+              {strategy.score.toFixed(1)}
             </span>
           </span>
+          <span>代数: G{strategy.generation}</span>
         </div>
       )}
 
@@ -485,30 +527,21 @@ function StrategyDetail({ dna, task, onClose }: StrategyDetailProps) {
   );
 }
 
-function MetricLine({
+function DetailMetric({
   label,
   value,
-  score,
   positive,
 }: {
   label: string;
   value: string;
-  score?: number;
   positive: boolean;
 }) {
   return (
     <div className="flex items-center justify-between text-xs">
       <span className="text-slate-500">{label}</span>
-      <div className="flex items-center gap-1.5">
-        <span className={positive ? "text-emerald-400" : "text-red-400"}>
-          {value}
-        </span>
-        {score != null && (
-          <span className="text-[10px] text-slate-600">
-            ({score.toFixed(1)})
-          </span>
-        )}
-      </div>
+      <span className={positive ? "text-emerald-400" : "text-red-400"}>
+        {value}
+      </span>
     </div>
   );
 }

@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import {
-  LineChart,
   Line,
   XAxis,
   YAxis,
@@ -12,49 +11,15 @@ import {
   ComposedChart,
 } from "recharts";
 import type { EvolutionHistoryRecord } from "@/types/api";
+import {
+  transformChartData,
+  type ChartDataPoint,
+  type ChartTransformResult,
+} from "@/utils/evolutionChart";
 
 interface ScoreTrendChartProps {
   records: EvolutionHistoryRecord[];
   targetScore: number;
-}
-
-interface ChartDataPoint {
-  generation: number;
-  bestScore: number;
-  avgScore: number;
-  prevBestScore?: number;
-  isChampionChange?: boolean;
-  stagnationCount?: number;
-  avgTrades?: number;
-  diversity?: number;
-}
-
-function parseDiagnostics(top3Summary?: string): {
-  avgTrades?: number;
-  diversity?: number;
-} {
-  if (!top3Summary) return {};
-  try {
-    const match = top3Summary.match(/diag=(\{.*\})/);
-    if (match) {
-      const raw = JSON.parse(match[1]) as Record<string, unknown>;
-      // Map snake_case -> camelCase
-      const avgTrades =
-        typeof raw.avg_trades === "number" ? raw.avg_trades : undefined;
-      // diversity: was float, now may be {genotype, signal, score}
-      const rawDiv = raw.diversity;
-      const diversity =
-        typeof rawDiv === "number"
-          ? rawDiv
-          : typeof rawDiv === "object" && rawDiv !== null
-            ? (rawDiv as Record<string, unknown>).genotype as number
-            : undefined;
-      return { avgTrades, diversity };
-    }
-  } catch {
-    // ignore parse errors
-  }
-  return {};
 }
 
 function CustomTooltip({
@@ -78,8 +43,13 @@ function CustomTooltip({
     : null;
 
   return (
-    <div className="rounded-lg border border-slate-700/50 bg-[#0d1117]/95 px-3 py-2 text-xs min-w-[140px]">
-      <p className="mb-1.5 font-medium text-slate-300">第 {label} 代</p>
+    <div className="rounded-lg border border-slate-700/50 bg-[#0d1117]/95 px-3 py-2 text-xs min-w-[160px]">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="font-medium text-slate-300">第 {label} 代</span>
+        {dataPoint.population > 1 && (
+          <span className="text-slate-500">P{dataPoint.population}</span>
+        )}
+      </div>
 
       {/* Best score with delta */}
       <p className="text-amber-400">
@@ -90,6 +60,13 @@ function CustomTooltip({
           </span>
         )}
       </p>
+
+      {/* Cumulative best */}
+      {dataPoint.cumulativeBest !== dataPoint.bestScore && (
+        <p className="text-emerald-500/70">
+          累计最佳: {dataPoint.cumulativeBest.toFixed(1)}
+        </p>
+      )}
 
       {/* Avg score */}
       <p className="text-purple-400/70">
@@ -116,15 +93,22 @@ function CustomTooltip({
         </p>
       )}
 
-      {/* Stagnation */}
-      {dataPoint.stagnationCount != null && dataPoint.stagnationCount > 0 && (
+      {/* Stagnation (within current population) */}
+      {dataPoint.stagnationCount > 0 && (
         <p className="text-orange-400/70">
           停滞: {dataPoint.stagnationCount} 代未突破
         </p>
       )}
 
+      {/* Population boundary indicator */}
+      {dataPoint.isPopulationBoundary && (
+        <p className="mt-1 border-t border-slate-700/30 pt-1 text-cyan-400/80 font-medium">
+          新种群开始
+        </p>
+      )}
+
       {/* Breakthrough indicator */}
-      {dataPoint.isChampionChange && (
+      {dataPoint.isChampionChange && !dataPoint.isPopulationBoundary && (
         <p className="mt-1 border-t border-slate-700/30 pt-1 text-emerald-400 font-medium">
           最优记录刷新
         </p>
@@ -137,46 +121,10 @@ export function ScoreTrendChart({
   records,
   targetScore,
 }: ScoreTrendChartProps) {
-  const { data, championChanges } = useMemo(() => {
-    const chartData: ChartDataPoint[] = records.map((r) => {
-      const diag = parseDiagnostics(r.top3_summary);
-      return {
-        generation: r.generation,
-        bestScore: r.best_score,
-        avgScore: r.avg_score,
-        ...diag,
-      };
-    });
-
-    // Detect champion changes and record prevBestScore for delta
-    let prevBest = -Infinity;
-    const changes: ChartDataPoint[] = [];
-    for (const point of chartData) {
-      if (prevBest !== -Infinity) {
-        point.prevBestScore = prevBest;
-      }
-      if (point.bestScore > prevBest) {
-        point.isChampionChange = true;
-        changes.push(point);
-      }
-      prevBest = point.bestScore;
-    }
-
-    // Calculate stagnation count for each point
-    let stagnationCounter = 0;
-    let runningBest = -Infinity;
-    for (const point of chartData) {
-      if (point.bestScore > runningBest) {
-        stagnationCounter = 0;
-        runningBest = point.bestScore;
-      } else {
-        stagnationCounter++;
-      }
-      point.stagnationCount = stagnationCounter;
-    }
-
-    return { data: chartData, championChanges: changes };
-  }, [records]);
+  const { data, championChanges, boundaries, stats }: ChartTransformResult = useMemo(
+    () => transformChartData(records),
+    [records],
+  );
 
   if (data.length === 0) {
     return (
@@ -186,10 +134,14 @@ export function ScoreTrendChart({
     );
   }
 
-  // Compute summary stats
-  const maxStagnation = Math.max(...data.map((d) => d.stagnationCount ?? 0));
   const lastRecord = data[data.length - 1];
-  const totalChampionChanges = championChanges.length;
+
+  // Compute Y-axis domain to include targetScore
+  const allY = data.flatMap((d) => [d.bestScore, d.avgScore]);
+  const dataMin = Math.min(...allY);
+  const dataMax = Math.max(...allY);
+  const yMin = Math.floor(Math.min(dataMin, targetScore) / 5) * 5 - 5;
+  const yMax = Math.ceil(Math.max(dataMax, targetScore) / 5) * 5 + 5;
 
   return (
     <div>
@@ -210,7 +162,7 @@ export function ScoreTrendChart({
               tick={{ fill: "#64748b", fontSize: 11 }}
               axisLine={{ stroke: "rgba(100,116,139,0.2)" }}
               tickLine={false}
-              domain={["auto", "auto"]}
+              domain={[yMin, yMax]}
             />
             <Tooltip content={<CustomTooltip />} />
             <ReferenceLine
@@ -225,6 +177,17 @@ export function ScoreTrendChart({
                 fontSize: 10,
               }}
             />
+            {/* Population boundary vertical lines */}
+            {boundaries.map((gen) => (
+              <ReferenceLine
+                key={`boundary-${gen}`}
+                x={gen}
+                stroke="rgba(6,182,212,0.25)"
+                strokeDasharray="4 4"
+                strokeWidth={1}
+              />
+            ))}
+            {/* Per-generation best score (can drop at population boundaries) */}
             <Line
               type="monotone"
               dataKey="bestScore"
@@ -233,6 +196,16 @@ export function ScoreTrendChart({
               dot={false}
               activeDot={{ r: 4, fill: "#eab308" }}
               name="bestScore"
+            />
+            {/* Cumulative best (never decreases) */}
+            <Line
+              type="monotone"
+              dataKey="cumulativeBest"
+              stroke="rgba(34,197,94,0.5)"
+              strokeWidth={1}
+              strokeDasharray="2 3"
+              dot={false}
+              name="cumulativeBest"
             />
             <Line
               type="monotone"
@@ -256,11 +229,15 @@ export function ScoreTrendChart({
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      {/* Legend + stats */}
+      {/* Legend */}
       <div className="mt-1 flex items-center justify-center gap-4 text-[10px] text-slate-600">
         <span className="flex items-center gap-1">
           <span className="inline-block h-0.5 w-4 bg-amber-400" />
           最优分数
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-0.5 w-4 border-t border-dashed border-emerald-400/50" />
+          累计最佳
         </span>
         <span className="flex items-center gap-1">
           <span className="inline-block h-0.5 w-4 border-t border-dashed border-purple-400/40" />
@@ -275,13 +252,13 @@ export function ScoreTrendChart({
           最优更新
         </span>
       </div>
-      {/* Summary stats bar */}
+      {/* Summary stats */}
       <div className="mt-2 flex items-center justify-center gap-4 text-[10px]">
         <span className="text-slate-500">
-          最优刷新 {totalChampionChanges} 次
+          最优刷新 {stats.totalChampionChanges} 次
         </span>
-        <span className={maxStagnation > 10 ? "text-orange-400" : "text-slate-500"}>
-          最长停滞 {maxStagnation} 代
+        <span className={stats.maxStagnation > 10 ? "text-orange-400" : "text-slate-500"}>
+          最长停滞 {stats.maxStagnation} 代
         </span>
         {lastRecord?.diversity != null && typeof lastRecord.diversity === "number" && (
           <span className={
@@ -292,6 +269,11 @@ export function ScoreTrendChart({
                 : "text-red-400/70"
           }>
             当前多样性 {(lastRecord.diversity * 100).toFixed(0)}%
+          </span>
+        )}
+        {stats.populationCount > 1 && (
+          <span className="text-cyan-400/70">
+            {stats.populationCount} 个种群
           </span>
         )}
       </div>

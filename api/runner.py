@@ -239,7 +239,7 @@ class EvolutionRunner(threading.Thread):
                     }
 
             # Save history record with diagnostics
-            top3_summary = f"best={best_score:.1f}"
+            top3_summary = f"best={best_score:.1f}|pop={self._population_count + 1}"
             if gen_diag:
                 top3_summary += f"|diag={json.dumps(gen_diag)}"
             save_history(self.db_path, task_id, global_gen, best_score, avg_score, top3_summary)

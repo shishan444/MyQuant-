@@ -154,6 +154,7 @@ def _dna_from_template(
     direction: str = "long",
 ) -> StrategyDNA:
     """Create a StrategyDNA from a classic strategy template."""
+    actual_direction = random.choice(["long", "short"]) if direction == "mixed" else direction
     signals = []
     for g in template["genes"]:
         signals.append(SignalGene(
@@ -171,7 +172,7 @@ def _dna_from_template(
         execution_genes=ExecutionGenes(timeframe=timeframe, symbol=symbol),
         risk_genes=RiskGenes(
             stop_loss=0.05, take_profit=None, position_size=0.3,
-            leverage=leverage, direction=direction,
+            leverage=leverage, direction=actual_direction,
         ),
     )
     return dna
@@ -252,6 +253,9 @@ def create_random_dna(
         profiled: If True, use indicator profiles for guided generation.
                   If False, generate completely random signals (free exploration).
     """
+    # "mixed" is a task-level constraint, resolve to actual gene value
+    actual_direction = random.choice(["long", "short"]) if direction == "mixed" else direction
+
     available_indicators = list(indicator_pool) if indicator_pool else list(INDICATOR_REGISTRY.keys())
     trigger_indicators = [
         name for name in available_indicators
@@ -306,7 +310,7 @@ def create_random_dna(
         execution_genes=ExecutionGenes(timeframe=timeframe, symbol=symbol),
         risk_genes=RiskGenes(stop_loss=stop_loss, take_profit=take_profit,
                              position_size=position_size, leverage=leverage,
-                             direction=direction),
+                             direction=actual_direction),
     )
 
     # Validate and retry if needed
@@ -321,7 +325,7 @@ def create_random_dna(
             ],
             logic_genes=LogicGenes(entry_logic="AND", exit_logic="OR"),
             risk_genes=RiskGenes(stop_loss=0.05, position_size=0.3,
-                                 leverage=leverage, direction=direction),
+                                 leverage=leverage, direction=actual_direction),
             execution_genes=ExecutionGenes(timeframe=timeframe, symbol=symbol),
         )
 

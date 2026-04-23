@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from MyQuant.core.persistence.db import (
+from core.persistence.db import (
     get_task,
     init_db,
     list_all_tasks,
@@ -26,7 +26,7 @@ from MyQuant.core.persistence.db import (
     save_task,
     update_task,
 )
-from MyQuant.api.db_ext import (
+from api.db_ext import (
     delete_dataset,
     delete_strategy,
     get_dataset,
@@ -64,7 +64,7 @@ def _sample_strategy_data(**overrides: Any) -> Dict[str, Any]:
     base = {
         "strategy_id": "strat-001",
         "name": "RSI Reversal",
-        "dna_json": json.dumps({"signal_genes": []}),
+        "dna_json": json.dumps({"signal_genes": [{"indicator": "RSI", "params": {"period": 14}, "role": "entry_trigger", "condition": {"type": "lt", "threshold": 30}}]}),
         "source": "manual",
         "source_task_id": None,
         "symbol": "BTCUSDT",
@@ -204,7 +204,7 @@ class TestBackwardCompatibility:
     """Existing core db.py operations must still work after migration."""
 
     def test_save_and_get_task_still_works(self, initialized_db: Path) -> None:
-        from MyQuant.core.strategy.dna import StrategyDNA
+        from core.strategy.dna import StrategyDNA
 
         dna = StrategyDNA()
         save_task(
@@ -221,7 +221,7 @@ class TestBackwardCompatibility:
         assert task["task_id"] == "compat-001"
 
     def test_update_task_still_works(self, initialized_db: Path) -> None:
-        from MyQuant.core.strategy.dna import StrategyDNA
+        from core.strategy.dna import StrategyDNA
 
         dna = StrategyDNA()
         save_task(initialized_db, "compat-002", 80.0, "profit_first",
@@ -232,7 +232,7 @@ class TestBackwardCompatibility:
         assert task["status"] == "completed"
 
     def test_list_all_tasks_still_works(self, initialized_db: Path) -> None:
-        from MyQuant.core.strategy.dna import StrategyDNA
+        from core.strategy.dna import StrategyDNA
 
         dna = StrategyDNA()
         for i in range(3):
@@ -242,7 +242,7 @@ class TestBackwardCompatibility:
         assert len(tasks) == 3
 
     def test_save_history_still_works(self, initialized_db: Path) -> None:
-        from MyQuant.core.persistence.db import save_history, get_history
+        from core.persistence.db import save_history, get_history
 
         save_history(initialized_db, "task-hist", 1, 75.0, 60.0,
                      json.dumps([]))
@@ -251,7 +251,7 @@ class TestBackwardCompatibility:
 
     def test_existing_db_can_be_migrated(self, db_path: Path) -> None:
         """A database initialized with old init_db should be migratable."""
-        from MyQuant.core.strategy.dna import StrategyDNA
+        from core.strategy.dna import StrategyDNA
 
         # First, init with old schema and add data
         init_db(db_path)
@@ -296,9 +296,11 @@ class TestStrategyCRUD:
         assert result is None
 
     def test_list_strategies_basic(self, initialized_db: Path) -> None:
-        for i in range(3):
+        indicators = [("RSI", 14), ("EMA", 20), ("MACD", 12)]
+        for i, (ind, per) in enumerate(indicators):
+            dna = json.dumps({"signal_genes": [{"indicator": ind, "params": {"period": per}, "role": "entry_trigger", "condition": {"type": "lt", "threshold": 30}}]})
             save_strategy(initialized_db, **_sample_strategy_data(
-                strategy_id=f"strat-{i}", name=f"Strategy {i}",
+                strategy_id=f"strat-{i}", name=f"Strategy {i}", dna_json=dna,
             ))
         results = list_strategies(initialized_db)
         assert len(results) == 3
@@ -315,40 +317,48 @@ class TestStrategyCRUD:
         assert results[0]["strategy_id"] == "btc-1"
 
     def test_list_strategies_filter_by_source(self, initialized_db: Path) -> None:
+        dna_manual = json.dumps({"signal_genes": [{"indicator": "RSI", "params": {"period": 14}, "role": "entry_trigger", "condition": {"type": "lt", "threshold": 30}}]})
+        dna_evo = json.dumps({"signal_genes": [{"indicator": "EMA", "params": {"period": 20}, "role": "entry_trigger", "condition": {"type": "price_above"}}]})
         save_strategy(initialized_db, **_sample_strategy_data(
-            strategy_id="s-manual", source="manual",
+            strategy_id="s-manual", source="manual", dna_json=dna_manual,
         ))
         save_strategy(initialized_db, **_sample_strategy_data(
-            strategy_id="s-evo", source="evolution",
+            strategy_id="s-evo", source="evolution", dna_json=dna_evo,
         ))
         results = list_strategies(initialized_db, source="evolution")
         assert len(results) == 1
         assert results[0]["strategy_id"] == "s-evo"
 
     def test_list_strategies_sort_by_best_score_desc(self, initialized_db: Path) -> None:
+        dna_low = json.dumps({"signal_genes": [{"indicator": "RSI", "params": {"period": 14}, "role": "entry_trigger", "condition": {"type": "lt", "threshold": 30}}]})
+        dna_high = json.dumps({"signal_genes": [{"indicator": "EMA", "params": {"period": 20}, "role": "entry_trigger", "condition": {"type": "price_above"}}]})
         save_strategy(initialized_db, **_sample_strategy_data(
-            strategy_id="low", best_score=50.0,
+            strategy_id="low", best_score=50.0, dna_json=dna_low,
         ))
         save_strategy(initialized_db, **_sample_strategy_data(
-            strategy_id="high", best_score=90.0,
+            strategy_id="high", best_score=90.0, dna_json=dna_high,
         ))
         results = list_strategies(initialized_db, sort_by="best_score", sort_order="desc")
         assert results[0]["strategy_id"] == "high"
 
     def test_list_strategies_sort_by_created_at_asc(self, initialized_db: Path) -> None:
+        dna_first = json.dumps({"signal_genes": [{"indicator": "RSI", "params": {"period": 14}, "role": "entry_trigger", "condition": {"type": "lt", "threshold": 30}}]})
+        dna_second = json.dumps({"signal_genes": [{"indicator": "EMA", "params": {"period": 20}, "role": "entry_trigger", "condition": {"type": "price_above"}}]})
         save_strategy(initialized_db, **_sample_strategy_data(
-            strategy_id="first",
+            strategy_id="first", dna_json=dna_first,
         ))
         save_strategy(initialized_db, **_sample_strategy_data(
-            strategy_id="second",
+            strategy_id="second", dna_json=dna_second,
         ))
         results = list_strategies(initialized_db, sort_by="created_at", sort_order="asc")
         assert results[0]["strategy_id"] == "first"
 
     def test_list_strategies_with_limit(self, initialized_db: Path) -> None:
-        for i in range(5):
+        indicators = [("RSI", 14), ("EMA", 20), ("MACD", 12), ("SMA", 50), ("BB", 20)]
+        for i, (ind, per) in enumerate(indicators):
+            dna = json.dumps({"signal_genes": [{"indicator": ind, "params": {"period": per}, "role": "entry_trigger", "condition": {"type": "lt", "threshold": 30}}]})
             save_strategy(initialized_db, **_sample_strategy_data(
-                strategy_id=f"strat-{i}",
+                strategy_id=f"strat-{i}", dna_json=dna,
             ))
         results = list_strategies(initialized_db, limit=3)
         assert len(results) == 3
@@ -637,7 +647,7 @@ class TestEvolutionTaskExtended:
 
     def test_old_task_data_preserved_after_migration(self, db_path: Path) -> None:
         """Tasks created before migration should have all data intact."""
-        from MyQuant.core.strategy.dna import StrategyDNA
+        from core.strategy.dna import StrategyDNA
 
         # Init with old schema and create a task
         init_db(db_path)

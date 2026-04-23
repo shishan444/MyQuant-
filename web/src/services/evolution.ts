@@ -81,7 +81,7 @@ export async function getTaskStrategies(taskId: string): Promise<{
 
 export async function getDiscoveredStrategies(
   taskId: string,
-  params?: { min_score?: number }
+  params?: { min_score?: number; limit?: number }
 ): Promise<DiscoveredStrategy[]> {
   const { data } = await api.get(`/api/evolution/tasks/${taskId}/discovered-strategies`, { params });
   return data;

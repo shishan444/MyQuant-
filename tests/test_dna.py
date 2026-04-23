@@ -43,13 +43,17 @@ class TestSignalRole:
     """SignalRole enum tests."""
 
     def test_all_roles_defined(self):
-        assert len(SignalRole) == 4
+        assert len(SignalRole) == 8
 
     def test_role_values(self):
         assert SignalRole.ENTRY_TRIGGER.value == "entry_trigger"
         assert SignalRole.ENTRY_GUARD.value == "entry_guard"
         assert SignalRole.EXIT_TRIGGER.value == "exit_trigger"
         assert SignalRole.EXIT_GUARD.value == "exit_guard"
+        assert SignalRole.ADD_TRIGGER.value == "add_trigger"
+        assert SignalRole.ADD_GUARD.value == "add_guard"
+        assert SignalRole.REDUCE_TRIGGER.value == "reduce_trigger"
+        assert SignalRole.REDUCE_GUARD.value == "reduce_guard"
 
 
 class TestSignalGene:

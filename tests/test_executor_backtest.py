@@ -3,7 +3,7 @@ import pytest
 import pandas as pd
 import numpy as np
 
-from MyQuant.core.strategy.dna import (
+from core.strategy.dna import (
     ConditionType,
     SignalRole,
     SignalGene,
@@ -12,10 +12,10 @@ from MyQuant.core.strategy.dna import (
     RiskGenes,
     StrategyDNA,
 )
-from MyQuant.core.strategy.validator import validate_dna, ValidationResult
-from MyQuant.core.strategy.executor import evaluate_condition, combine_signals, dna_to_signals
-from MyQuant.core.backtest.engine import BacktestEngine, BacktestResult
-from MyQuant.core.features.indicators import compute_all_indicators
+from core.strategy.validator import validate_dna, ValidationResult
+from core.strategy.executor import evaluate_condition, combine_signals, dna_to_signals
+from core.backtest.engine import BacktestEngine, BacktestResult
+from core.features.indicators import compute_all_indicators
 
 
 # ---------------------------------------------------------------------------

@@ -6,8 +6,8 @@ Extracted from indicators.py to keep file sizes within the 800-line limit.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -22,6 +22,7 @@ class ParamDef:
     max: float
     default: float
     step: float
+    candidates: Optional[List[float]] = None
 
     def clamp(self, value: float) -> float:
         """Clamp value to valid range, rounded to step boundary."""
@@ -48,7 +49,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
     # == trend (6) ==
     "EMA": IndicatorDef(
         category="trend",
-        params={"period": ParamDef("int", 5, 200, 50, 5)},
+        params={"period": ParamDef("int", 5, 200, 50, 5, candidates=[7, 15, 20, 30, 60, 90])},
         output_fields=["ema"],
         supported_conditions=["price_above", "price_below", "cross_above", "cross_below",
                               "cross_above_series", "cross_below_series"],
@@ -257,6 +258,78 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["psar"],
         supported_conditions=["price_above", "price_below"],
         guard_only=True,
+    ),
+
+    # == pattern (10) ==
+    "BearishEngulfing": IndicatorDef(
+        category="pattern",
+        params={},
+        output_fields=["pattern_bearish_engulfing"],
+        supported_conditions=["eq"],
+        guard_only=False,
+    ),
+    "EveningStar": IndicatorDef(
+        category="pattern",
+        params={},
+        output_fields=["pattern_evening_star"],
+        supported_conditions=["eq"],
+        guard_only=False,
+    ),
+    "ThreeBlackCrows": IndicatorDef(
+        category="pattern",
+        params={},
+        output_fields=["pattern_3blackcrows"],
+        supported_conditions=["eq"],
+        guard_only=False,
+    ),
+    "ShootingStar": IndicatorDef(
+        category="pattern",
+        params={},
+        output_fields=["pattern_shooting_star"],
+        supported_conditions=["eq"],
+        guard_only=False,
+    ),
+    "ThreeWhiteSoldiers": IndicatorDef(
+        category="pattern",
+        params={},
+        output_fields=["pattern_3whitesoldiers"],
+        supported_conditions=["eq"],
+        guard_only=False,
+    ),
+    "MorningStar": IndicatorDef(
+        category="pattern",
+        params={},
+        output_fields=["pattern_morning_star"],
+        supported_conditions=["eq"],
+        guard_only=False,
+    ),
+    "BullishReversal": IndicatorDef(
+        category="pattern",
+        params={},
+        output_fields=["pattern_bullish_reversal"],
+        supported_conditions=["eq"],
+        guard_only=False,
+    ),
+    "BearishReversal": IndicatorDef(
+        category="pattern",
+        params={},
+        output_fields=["pattern_bearish_reversal"],
+        supported_conditions=["eq"],
+        guard_only=False,
+    ),
+    "BullishDivergence": IndicatorDef(
+        category="pattern",
+        params={},
+        output_fields=["pattern_bullish_divergence"],
+        supported_conditions=["eq"],
+        guard_only=False,
+    ),
+    "BearishDivergence": IndicatorDef(
+        category="pattern",
+        params={},
+        output_fields=["pattern_bearish_divergence"],
+        supported_conditions=["eq"],
+        guard_only=False,
     ),
 
     # == structure (1) ==

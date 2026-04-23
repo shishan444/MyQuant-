@@ -8,12 +8,12 @@ import pytest
 import pandas as pd
 import numpy as np
 
-from MyQuant.core.strategy.dna import (
+from core.strategy.dna import (
     SignalRole, SignalGene, LogicGenes, ExecutionGenes, RiskGenes, StrategyDNA,
 )
-from MyQuant.core.strategy.validator import validate_dna
-from MyQuant.core.features.indicators import compute_all_indicators
-from MyQuant.core.backtest.engine import BacktestEngine
+from core.strategy.validator import validate_dna
+from core.features.indicators import compute_all_indicators
+from core.backtest.engine import BacktestEngine
 
 
 @pytest.fixture

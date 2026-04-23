@@ -22,6 +22,19 @@ if [ -f .myquant_api.pid ]; then
     rm -f .myquant_api.pid
 fi
 
+# 读取并杀死前端进程
+if [ -f .myquant_web.pid ]; then
+    WEB_PID=$(cat .myquant_web.pid)
+    if ps -p $WEB_PID > /dev/null 2>&1; then
+        kill $WEB_PID 2>/dev/null
+        # 子进程可能还在，给一点时间
+        sleep 1
+        kill -9 $WEB_PID 2>/dev/null
+        log_info "STOP" "Frontend dev server stopped" "pid=$WEB_PID"
+    fi
+    rm -f .myquant_web.pid
+fi
+
 # 清理旧的 PID 文件
 rm -f .myquant.pid
 

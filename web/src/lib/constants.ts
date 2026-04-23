@@ -91,6 +91,14 @@ export const INDICATOR_GROUPS = [
     label: "趋势强度",
     items: ["ADX", "PSAR"],
   },
+  {
+    label: "形态",
+    items: [
+      "BearishEngulfing", "EveningStar", "ThreeBlackCrows", "ShootingStar",
+      "ThreeWhiteSoldiers", "MorningStar", "BullishReversal", "BearishReversal",
+      "BullishDivergence", "BearishDivergence",
+    ],
+  },
 ];
 
 export const INDICATOR_FLAT_LIST = [
@@ -141,6 +149,16 @@ export const INDICATOR_LABELS: Record<string, string> = {
   VolumeProfile: "VP(成交量分布)",
   ADX: "ADX(平均趋向)",
   PSAR: "PSAR(抛物线指标)",
+  BearishEngulfing: "看跌吞没",
+  EveningStar: "黄昏之星",
+  ThreeBlackCrows: "三只乌鸦",
+  ShootingStar: "流星锤",
+  ThreeWhiteSoldiers: "三白兵",
+  MorningStar: "黎明之星",
+  BullishReversal: "阳转反转",
+  BearishReversal: "阴转反转",
+  BullishDivergence: "底背离",
+  BearishDivergence: "顶背离",
 };
 
 // ---------------------------------------------------------------------------

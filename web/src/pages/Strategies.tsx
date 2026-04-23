@@ -45,7 +45,7 @@ export function Strategies() {
   );
   const deleteMutation = useDeleteStrategy();
 
-  const allStrategies: Strategy[] = data?.strategies ?? [];
+  const allStrategies: Strategy[] = data?.items ?? [];
 
   const filteredStrategies = useMemo(() => {
     let result = allStrategies;
