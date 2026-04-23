@@ -476,7 +476,13 @@ class EvolutionRunner(threading.Thread):
                         from core.backtest.walk_forward import WalkForwardValidator
                         template_name = task_row.get("score_template", "profit_first")
                         wf = WalkForwardValidator(template_name=template_name)
-                        wf_result = wf.validate(champion, _enhanced_df)
+                        # Pass raw OHLCV data (without indicators) so each WF window
+                        # recomputes indicators independently, eliminating look-ahead bias
+                        _raw_cols = ["open", "high", "low", "close", "volume"]
+                        _raw_wf_df = _enhanced_df[[
+                            c for c in _raw_cols if c in _enhanced_df.columns
+                        ]].copy()
+                        wf_result = wf.validate(champion, _enhanced_df, raw_df=_raw_wf_df)
                         if wf_result["wf_score"] > 0:
                             _wf_metrics = (champion_rec.metrics or {}).copy()
                             _wf_metrics["wf_score"] = wf_result["wf_score"]

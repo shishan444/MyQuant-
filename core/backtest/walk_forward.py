@@ -60,6 +60,7 @@ class WalkForwardValidator:
         dna: StrategyDNA,
         enhanced_df: pd.DataFrame,
         val_months: Optional[List[str]] = None,
+        raw_df: Optional[pd.DataFrame] = None,
     ) -> Dict:
         """Run Walk-Forward validation on a strategy.
 
@@ -68,6 +69,9 @@ class WalkForwardValidator:
             enhanced_df: DataFrame with OHLCV + indicator columns.
             val_months: Pre-generated validation months (for shared validation).
                         If None, generates random months.
+            raw_df: Raw OHLCV data without indicators. If provided, indicators
+                    are recomputed per window to eliminate look-ahead bias.
+                    Falls back to enhanced_df if None (backward compatible).
 
         Returns:
             Dict with wf_score, n_rounds, rounds (list of WFRound details).
@@ -127,13 +131,35 @@ class WalkForwardValidator:
             val_start = month_starts[val_idx]
             val_end = val_start + pd.DateOffset(months=1)
 
-            # Get train data
-            train_mask = (df_index >= train_start) & (df_index < train_end)
-            train_df = enhanced_df[train_mask]
+            if raw_df is not None:
+                # Recompute indicators per window from raw data
+                # Include warmup bars (30 bars before window start) for indicator calc
+                warmup_bars = 30
+                raw_index = raw_df.index
+                train_data_start = train_start - pd.Timedelta(hours=warmup_bars * 4)
+                val_data_start = val_start - pd.Timedelta(hours=warmup_bars * 4)
 
-            # Get val data
-            val_mask = (df_index >= val_start) & (df_index < val_end)
-            val_df = enhanced_df[val_mask]
+                # Train window with warmup
+                train_raw_mask = (raw_index >= train_data_start) & (raw_index < train_end)
+                train_raw = raw_df[train_raw_mask].copy()
+                train_df = self._recompute_indicators(train_raw, dna)
+                # Trim warmup bars
+                if len(train_df) > warmup_bars:
+                    train_df = train_df.iloc[warmup_bars:]
+
+                # Val window with warmup
+                val_raw_mask = (raw_index >= val_data_start) & (raw_index < val_end)
+                val_raw = raw_df[val_raw_mask].copy()
+                val_df = self._recompute_indicators(val_raw, dna)
+                if len(val_df) > warmup_bars:
+                    val_df = val_df.iloc[warmup_bars:]
+            else:
+                # Legacy: use pre-computed enhanced_df (backward compatible)
+                train_mask = (df_index >= train_start) & (df_index < train_end)
+                train_df = enhanced_df[train_mask]
+
+                val_mask = (df_index >= val_start) & (df_index < val_end)
+                val_df = enhanced_df[val_mask]
 
             if len(train_df) < 20 or len(val_df) < 5:
                 continue
@@ -174,3 +200,36 @@ class WalkForwardValidator:
             "n_rounds": len(rounds),
             "rounds": rounds,
         }
+
+    def _recompute_indicators(
+        self, raw_df: pd.DataFrame, dna: StrategyDNA,
+    ) -> pd.DataFrame:
+        """Recompute indicators for a data window from raw OHLCV.
+
+        Uses the strategy's signal genes to determine which indicators
+        to compute, avoiding look-ahead from globally precomputed data.
+        """
+        from core.features.indicators import _compute_indicator
+
+        df = raw_df.copy()
+        genes = list(dna.signal_genes)
+        if dna.layers:
+            for layer in dna.layers:
+                genes = genes + layer.signal_genes
+
+        computed = set()
+        for gene in genes:
+            key = (gene.indicator, tuple(sorted(gene.params.items())))
+            if key in computed:
+                continue
+            computed.add(key)
+            try:
+                result = _compute_indicator(df, gene.indicator, gene.params)
+                # _compute_indicator returns a new DataFrame; merge indicator columns
+                new_cols = [c for c in result.columns if c not in df.columns]
+                for col in new_cols:
+                    df[col] = result[col]
+            except Exception:
+                pass
+
+        return df
