@@ -250,14 +250,14 @@ class TestMutateRiskDirection:
         for _ in range(100):
             mutated = mutate_risk(dna)
             if mutated.risk_genes.direction != dna.risk_genes.direction:
-                assert mutated.risk_genes.direction == "short"
+                assert mutated.risk_genes.direction in ("short", "mixed")
                 return
 
     def test_direction_values_valid(self):
         dna = _make_dna()
         for _ in range(50):
             dna = mutate_risk(dna)
-            assert dna.risk_genes.direction in ("long", "short")
+            assert dna.risk_genes.direction in ("long", "short", "mixed")
 
 
 class TestPopulationInit:

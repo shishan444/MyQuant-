@@ -79,8 +79,8 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
     if not (1 <= risk.leverage <= 10):
         errors.append(f"Leverage {risk.leverage} out of range [1, 10]")
 
-    if risk.direction not in ("long", "short"):
-        errors.append(f"Direction must be 'long' or 'short', got '{risk.direction}'")
+    if risk.direction not in ("long", "short", "mixed"):
+        errors.append(f"Direction must be 'long', 'short', or 'mixed', got '{risk.direction}'")
 
     return ValidationResult(is_valid=len(errors) == 0, errors=errors)
 

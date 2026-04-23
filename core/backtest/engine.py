@@ -113,7 +113,8 @@ class BacktestEngine:
         high = enhanced_df["high"]
         low = enhanced_df["low"]
 
-        direction_map = {"long": 0, "short": 1}
+        direction_map = {"long": 0, "short": 1, "mixed": 2}
+        direction_val = direction_map.get(dna.risk_genes.direction, 0)
         size = dna.risk_genes.position_size * dna.risk_genes.leverage
 
         # Combine entries and adds for vectorbt (accumulate=True for adds)
@@ -123,6 +124,17 @@ class BacktestEngine:
 
         # Reduce signals become additional exits
         all_exits = exits | reduces
+
+        # Mixed direction with SizeType.Percent causes position reversal error
+        # Use amount-based sizing for mixed: convert % of capital to share count
+        if direction_val == 2:
+            avg_price = float(close.iloc[len(close) // 2]) if len(close) > 0 else 1.0
+            size_amount = (self.init_cash * size) / avg_price
+            stype = "amount"
+            sz = size_amount
+        else:
+            stype = "percent"
+            sz = size
 
         portfolio_kwargs = dict(
             close=close,
@@ -136,10 +148,10 @@ class BacktestEngine:
             slippage=self.slippage,
             sl_stop=dna.risk_genes.stop_loss,
             tp_stop=dna.risk_genes.take_profit,
-            size=size,
-            size_type="percent",
+            size=sz,
+            size_type=stype,
             accumulate=accumulate,
-            direction=direction_map.get(dna.risk_genes.direction, 0),
+            direction=direction_val,
         )
 
         return vbt.Portfolio.from_signals(**portfolio_kwargs), int(adds.sum()), int(reduces.sum())
