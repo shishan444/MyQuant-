@@ -139,13 +139,13 @@ class TestTouchBounce:
 
     def test_support_bounce(self):
         df = _make_df(20)
-        # Force a support bounce: low near line, close above, next close higher
+        # Force a support bounce: low near line, close above, current close > previous close
         line_val = 30000
         df["line"] = line_val
+        df.loc[df.index[9], "close"] = line_val + 50   # previous close lower
         df.loc[df.index[10], "low"] = line_val + 5
-        df.loc[df.index[10], "close"] = line_val + 100
+        df.loc[df.index[10], "close"] = line_val + 100  # current close higher than prev
         df.loc[df.index[10], "high"] = line_val + 200
-        df.loc[df.index[11], "close"] = line_val + 200
 
         condition = {
             "type": "touch_bounce",
@@ -160,10 +160,10 @@ class TestTouchBounce:
         df = _make_df(20)
         line_val = 30000
         df["line"] = line_val
+        df.loc[df.index[9], "close"] = line_val - 50   # previous close higher
         df.loc[df.index[10], "high"] = line_val - 5
-        df.loc[df.index[10], "close"] = line_val - 100
+        df.loc[df.index[10], "close"] = line_val - 100  # current close lower than prev
         df.loc[df.index[10], "low"] = line_val - 200
-        df.loc[df.index[11], "close"] = line_val - 200
 
         condition = {
             "type": "touch_bounce",

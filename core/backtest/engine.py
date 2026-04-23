@@ -101,10 +101,12 @@ class BacktestEngine:
         else:
             sig_set = dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
 
-        entries = sig_set.entries
-        exits = sig_set.exits
-        adds = sig_set.adds
-        reduces = sig_set.reduces
+        # Delay all signals by 1 bar to prevent look-ahead bias
+        # Signal computed on close[T] can only execute on open[T+1]
+        entries = sig_set.entries.shift(1).fillna(False).astype(bool)
+        exits = sig_set.exits.shift(1).fillna(False).astype(bool)
+        adds = sig_set.adds.shift(1).fillna(False).astype(bool)
+        reduces = sig_set.reduces.shift(1).fillna(False).astype(bool)
 
         close = enhanced_df["close"]
         open_ = enhanced_df["open"]

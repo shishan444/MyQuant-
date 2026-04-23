@@ -160,17 +160,17 @@ def _eval_touch_bounce(
     high = df["high"]
     line = indicator_series
 
-    # Proximity check
+    # Proximity check using only past/current data (no shift(-1))
     if direction == "support":
         proximity = (low - line).abs() <= line.abs() * proximity_pct
         above_line = close_series > line
-        next_close_up = close_series.shift(-1) > close_series
-        result = proximity & above_line & next_close_up
+        bounce_up = close_series > close_series.shift(1)  # current close > previous close
+        result = proximity & above_line & bounce_up
     else:
         proximity = (high - line).abs() <= line.abs() * proximity_pct
         below_line = close_series < line
-        next_close_down = close_series.shift(-1) < close_series
-        result = proximity & below_line & next_close_down
+        bounce_down = close_series < close_series.shift(1)  # current close < previous close
+        result = proximity & below_line & bounce_down
 
     return result.fillna(False)
 
