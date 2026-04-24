@@ -178,6 +178,10 @@ def mutate_add_layer(dna: StrategyDNA, candidate_timeframes: list | None = None)
     if candidate_timeframes is None:
         candidate_timeframes = _STANDARD_TIMEFRAMES
 
+    # Hard limit: max 3 layers
+    if dna.layers and len(dna.layers) >= 3:
+        return dna
+
     existing = set(dna.timeframes)
     candidates = [tf for tf in candidate_timeframes if tf not in existing]
     if not candidates:

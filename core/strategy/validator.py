@@ -46,6 +46,10 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
 
     # Also check layers for MTF strategies
     if dna.layers:
+        if len(dna.layers) > 3:
+            errors.append(
+                f"MTF strategy supports max 3 layers, got {len(dna.layers)}"
+            )
         has_execution = False
         for layer in dna.layers:
             layer_entry = [

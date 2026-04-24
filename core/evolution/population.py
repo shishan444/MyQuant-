@@ -171,7 +171,7 @@ def _dna_from_template(
     # Build MTF layers if timeframe_pool has multiple timeframes
     mtf_layers = None
     if timeframe_pool and len(timeframe_pool) > 1:
-        other_tfs = [tf for tf in timeframe_pool if tf != timeframe]
+        other_tfs = [tf for tf in timeframe_pool if tf != timeframe][:2]
         if other_tfs:
             mtf_layers = [TimeframeLayer(
                 timeframe=timeframe,
@@ -348,7 +348,7 @@ def create_random_dna(
 
     # Generate MTF layers: include execution TF layer + all other TFs
     if timeframe_pool and len(timeframe_pool) > 1:
-        other_tfs = [tf for tf in timeframe_pool if tf != timeframe]
+        other_tfs = [tf for tf in timeframe_pool if tf != timeframe][:2]
         if other_tfs:
             layers = [TimeframeLayer(
                 timeframe=timeframe,
