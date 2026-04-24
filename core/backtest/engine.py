@@ -40,8 +40,17 @@ class BacktestResult:
 
 def _apply_funding_costs(
     equity_curve: pd.Series, leverage: int, timeframe: str,
+    trades_df: Optional[pd.DataFrame] = None,
 ) -> tuple[pd.Series, float]:
-    """Deduct leveraged funding costs; return adjusted curve and total cost."""
+    """Deduct leveraged funding costs only while position is open.
+
+    Args:
+        equity_curve: Portfolio equity over time.
+        leverage: Position leverage.
+        timeframe: Bar timeframe string.
+        trades_df: Trade records with 'Entry Timestamp' and 'Exit Timestamp'.
+                   If None, costs are deducted for all bars (legacy behavior).
+    """
     if leverage <= 1:
         return equity_curve, 0.0
 
@@ -50,16 +59,37 @@ def _apply_funding_costs(
         "1m": 1/60, "5m": 5/60, "15m": 0.25, "30m": 0.5,
         "1h": 1, "4h": 4, "1d": 24, "3d": 72,
     }.get(timeframe, 4)
-    periods_per_bar = math.ceil(hours_per_bar / 8)
+    # Proportional periods instead of ceil to avoid overcharging
+    periods_per_bar = hours_per_bar / 8.0
     borrowed_ratio = (leverage - 1) / leverage
     cost_rate = RATE_PER_8H * periods_per_bar * borrowed_ratio
+
+    # Build position mask: True when position is open
+    position_mask = np.zeros(len(equity_curve), dtype=bool)
+    if trades_df is not None and len(trades_df) > 0:
+        for _, trade in trades_df.iterrows():
+            entry_ts = trade.get("Entry Timestamp")
+            exit_ts = trade.get("Exit Timestamp")
+            if entry_ts is None:
+                continue
+            if pd.isna(exit_ts) or exit_ts is None:
+                # Open trade: position open from entry to end
+                mask_slice = equity_curve.index >= entry_ts
+            else:
+                mask_slice = (equity_curve.index >= entry_ts) & (equity_curve.index <= exit_ts)
+            position_mask |= np.asarray(mask_slice)
+    elif trades_df is None:
+        # Legacy: no trades_df passed, deduct for all bars
+        position_mask[:] = True
+    # else: trades_df provided but empty → no funding costs (correct)
 
     adjusted = equity_curve.values.astype(np.float64).copy()
     total_cost = 0.0
     for i in range(1, len(adjusted)):
-        cost = adjusted[i - 1] * cost_rate
-        total_cost += cost
-        adjusted[i] -= cost
+        if position_mask[i]:
+            cost = adjusted[i - 1] * cost_rate
+            total_cost += cost
+            adjusted[i] -= cost
     return pd.Series(adjusted, index=equity_curve.index), total_cost
 
 
@@ -318,8 +348,10 @@ class BacktestEngine:
 
         # Funding costs for leveraged positions (post-processing)
         timeframe = dna.execution_genes.timeframe
+        trades_for_funding = portfolio.trades.records_readable if hasattr(portfolio.trades, "records_readable") else None
         equity_curve, total_funding_cost = _apply_funding_costs(
             equity_curve, dna.risk_genes.leverage, timeframe,
+            trades_df=trades_for_funding,
         )
 
         total_trades_val = portfolio.trades.count()

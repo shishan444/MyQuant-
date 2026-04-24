@@ -139,14 +139,14 @@ class TestFundingCostCalculation:
     def test_4h_2x_funding_cost(self):
         curve = pd.Series([100000.0, 101000.0, 102000.0])
         adjusted, cost = _apply_funding_costs(curve, 2, "4h")
-        # 4h: periods_per_bar = ceil(4/8) = 1
+        # 4h: periods_per_bar = 4/8 = 0.5 (proportional, not ceil)
         # borrowed_ratio = 1/2 = 0.5
-        # cost_rate = 0.001 * 1 * 0.5 = 0.0005
+        # cost_rate = 0.001 * 0.5 * 0.5 = 0.00025
         assert cost > 0
-        # Bar 1 cost: 100000 * 0.0005 = 50
-        # Bar 2 cost: (101000 - 50) * 0.0005 = 50.475
-        # total ≈ 100.475
-        expected_bar1 = 100000 * 0.0005
+        # Bar 1 cost: 100000 * 0.00025 = 25
+        # Bar 2 cost: (101000 - 25) * 0.00025 ≈ 25.244
+        # total ≈ 50.244
+        expected_bar1 = 100000 * 0.00025
         assert abs(adjusted.iloc[1] - (101000 - expected_bar1)) < 0.01
         assert cost > expected_bar1
 
