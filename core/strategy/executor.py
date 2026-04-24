@@ -604,11 +604,15 @@ def dna_to_signal_set(
 
         # Combine signals
         if has_any_role:
-            # Role-aware combination: trend as gate, execution as trigger
+            # Role-aware combination: respect cross_layer_logic
+            logic = dna.cross_layer_logic or "AND"
             if trend_entries and exec_entries:
                 trend_gate = combine_signals(trend_entries, "AND")
                 exec_trigger = combine_signals(exec_entries, "OR")
-                combined_entries = trend_gate & exec_trigger
+                if logic == "OR":
+                    combined_entries = trend_gate | exec_trigger
+                else:
+                    combined_entries = trend_gate & exec_trigger
             elif exec_entries:
                 combined_entries = combine_signals(exec_entries, "OR")
             elif trend_entries:
