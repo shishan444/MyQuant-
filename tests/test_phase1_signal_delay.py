@@ -91,7 +91,7 @@ def test_entries_delayed_by_1_bar():
 
     # After engine delay, entries should be at 11, 21, 31
     engine = BacktestEngine(init_cash=100000)
-    pf, add_c, red_c = engine._build_portfolio(dna, df)
+    pf, add_c, red_c, _ = engine._build_portfolio(dna, df)
 
     # Build delayed signals manually to check
     delayed_entries = sig_set.entries.shift(1).fillna(False).astype(bool)

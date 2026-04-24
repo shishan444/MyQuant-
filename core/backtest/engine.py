@@ -315,7 +315,7 @@ class BacktestEngine:
             freq=None,
         )
 
-        return pf, int(adds.sum()), int(reduces.sum())
+        return pf, int(adds.sum()), int(reduces.sum()), sig_set.degraded_layers
 
     def run(
         self,
@@ -325,25 +325,16 @@ class BacktestEngine:
         signal_set=None,
     ) -> BacktestResult:
         """Run backtest for a single strategy DNA."""
-        # Extract degraded_layers before building portfolio
-        degraded = 0
-        if signal_set is not None:
-            degraded = getattr(signal_set, "degraded_layers", 0)
-        elif dna.is_mtf and dfs_by_timeframe is not None:
-            from core.strategy.executor import dna_to_signal_set as _dts
-            _sig = _dts(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
-            degraded = getattr(_sig, "degraded_layers", 0)
-
         build_result = self._build_portfolio(
             dna, enhanced_df,
             dfs_by_timeframe=dfs_by_timeframe,
             signal_set=signal_set,
         )
         if isinstance(build_result, tuple):
-            portfolio, add_count, reduce_count = build_result
+            portfolio, add_count, reduce_count, degraded = build_result
         else:
             portfolio = build_result
-            add_count, reduce_count = 0, 0
+            add_count, reduce_count, degraded = 0, 0, 0
 
         equity_curve = portfolio.value()
         if isinstance(equity_curve, pd.DataFrame):
