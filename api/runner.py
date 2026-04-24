@@ -148,17 +148,7 @@ class EvolutionRunner(threading.Thread):
             except (json.JSONDecodeError, Exception):
                 tf_pool = None
 
-        engine = EvolutionEngine(
-            target_score=target_score,
-            template_name=template,
-            population_size=pop_size,
-            max_generations=max_gens,
-            leverage=leverage,
-            direction=direction,
-            timeframe_pool=tf_pool,
-        )
-
-        # Load market data once for all evaluations (saves ~1.8s per individual)
+        # Load market data first, then create engine with actually loaded TFs
         from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
 
         _symbol = task_row["symbol"]
@@ -180,6 +170,19 @@ class EvolutionRunner(threading.Thread):
                 self.data_dir, _symbol, _timeframe, _enhanced_df,
                 set(tf_pool), _data_start, _data_end,
             )
+
+        # Use actually loaded TFs for evolution, not raw tf_pool
+        _loaded_tfs = list(_dfs_by_timeframe.keys()) if _dfs_by_timeframe else [_timeframe]
+
+        engine = EvolutionEngine(
+            target_score=target_score,
+            template_name=template,
+            population_size=pop_size,
+            max_generations=max_gens,
+            leverage=leverage,
+            direction=direction,
+            timeframe_pool=_loaded_tfs,
+        )
 
         # Build a simple evaluate_fn that scores a DNA
         # NOTE: direction is fixed to the task's original direction (e.g. "mixed").
