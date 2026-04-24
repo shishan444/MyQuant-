@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import pandas as pd
 
 from core.strategy.dna import StrategyDNA, SignalRole
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -493,16 +496,29 @@ def _resample_pulse(
     signal: pd.Series,
     target_index: pd.DatetimeIndex,
 ) -> pd.Series:
-    """Resample pulse signal to target index without forward-fill.
+    """Resample pulse signal to target index using time-window aggregation.
 
-    Execution layer signals are single-bar triggers: True only on the
-    bar where the signal fires, not carried forward.
+    Execution layer signals are single-bar triggers. Instead of exact
+    timestamp matching (which loses most signals), we aggregate: for each
+    target bar, if any source bar within its time window is True, the
+    target bar is True.
     """
     if signal.empty or len(target_index) == 0:
         return pd.Series(False, index=target_index)
 
-    reindexed = signal.reindex(target_index, fill_value=False)
-    return reindexed.fillna(False).astype(bool)
+    result = pd.Series(False, index=target_index)
+
+    # Build target bar boundaries for window membership
+    for i in range(len(target_index)):
+        bar_start = target_index[i]
+        bar_end = target_index[i + 1] if i + 1 < len(target_index) else bar_start + pd.Timedelta(days=1)
+
+        # Check if any source signal falls within this target bar's window
+        mask = (signal.index >= bar_start) & (signal.index < bar_end)
+        if signal[mask].any():
+            result.iloc[i] = True
+
+    return result.astype(bool)
 
 
 def dna_to_signals(
@@ -545,6 +561,11 @@ def dna_to_signal_set(
         for layer in dna.layers:
             layer_df = dfs_by_timeframe.get(layer.timeframe)
             if layer_df is None:
+                logger.warning(
+                    "MTF layer timeframe %r data not found in dfs_by_timeframe, "
+                    "skipping layer. Available: %s",
+                    layer.timeframe, list(dfs_by_timeframe.keys()),
+                )
                 continue
 
             sig = evaluate_layer(layer, layer_df)
@@ -605,6 +626,9 @@ def dna_to_signal_set(
                 combined_entries = pd.Series(False, index=enhanced_df.index)
 
             combined_exits = combine_signals(exec_exits, "OR") if exec_exits else pd.Series(False, index=enhanced_df.index)
+            if trend_exits:
+                trend_exit_signal = combine_signals(trend_exits, "OR")
+                combined_exits = combined_exits | trend_exit_signal
             combined_adds = combine_signals(exec_adds, "OR") if exec_adds else pd.Series(False, index=enhanced_df.index)
             combined_reduces = combine_signals(exec_reduces, "OR") if exec_reduces else pd.Series(False, index=enhanced_df.index)
         else:
