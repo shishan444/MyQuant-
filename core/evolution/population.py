@@ -411,6 +411,7 @@ def create_random_mtf_layer(
             entry_logic=random.choice(["AND", "OR"]),
             exit_logic=random.choice(["AND", "OR"]),
         ),
+        role=random.choice(["trend", "execution", "execution"]),
     )
 
 

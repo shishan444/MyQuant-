@@ -67,10 +67,19 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
         if not has_execution:
             errors.append("MTF strategy needs at least one execution layer")
 
-    # Validate condition structures
+    # Validate condition structures for top-level genes
     for i, gene in enumerate(dna.signal_genes):
         cond_errors = _validate_condition_structure(gene.condition, i)
         errors.extend(cond_errors)
+
+    # Validate condition structures for layer genes
+    if dna.layers:
+        for layer in dna.layers:
+            for i, gene in enumerate(layer.signal_genes):
+                cond_errors = _validate_condition_structure(
+                    gene.condition, i, prefix=f"Layer {layer.timeframe} gene {i}"
+                )
+                errors.extend(cond_errors)
 
     # Risk genes validation
     risk = dna.risk_genes
@@ -92,27 +101,30 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
     return ValidationResult(is_valid=len(errors) == 0, errors=errors)
 
 
-def _validate_condition_structure(condition: dict, gene_idx: int) -> List[str]:
+def _validate_condition_structure(
+    condition: dict, gene_idx: int, prefix: str = "",
+) -> List[str]:
     """Validate structure of a condition dict for new condition types."""
     errors: List[str] = []
+    label = prefix if prefix else f"Gene {gene_idx}"
     cond_type = condition.get("type", "")
 
     if cond_type in ("cross_above_series", "cross_below_series"):
         if "target_indicator" not in condition:
-            errors.append(f"Gene {gene_idx}: {cond_type} requires 'target_indicator'")
+            errors.append(f"{label}: {cond_type} requires 'target_indicator'")
     elif cond_type in ("lookback_any", "lookback_all"):
         if "window" not in condition:
-            errors.append(f"Gene {gene_idx}: {cond_type} requires 'window'")
+            errors.append(f"{label}: {cond_type} requires 'window'")
         if "inner" not in condition:
-            errors.append(f"Gene {gene_idx}: {cond_type} requires 'inner' condition")
+            errors.append(f"{label}: {cond_type} requires 'inner' condition")
     elif cond_type == "touch_bounce":
         if "direction" not in condition:
-            errors.append(f"Gene {gene_idx}: touch_bounce requires 'direction'")
+            errors.append(f"{label}: touch_bounce requires 'direction'")
     elif cond_type == "role_reversal":
         if "role" not in condition:
-            errors.append(f"Gene {gene_idx}: role_reversal requires 'role'")
+            errors.append(f"{label}: role_reversal requires 'role'")
     elif cond_type == "wick_touch":
         if "direction" not in condition:
-            errors.append(f"Gene {gene_idx}: wick_touch requires 'direction'")
+            errors.append(f"{label}: wick_touch requires 'direction'")
 
     return errors
