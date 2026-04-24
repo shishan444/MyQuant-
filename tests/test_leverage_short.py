@@ -170,8 +170,9 @@ class TestLiquidationCheck:
         assert result.liquidated is False
 
     def test_liquidation_triggered_with_high_leverage(self):
-        """10x leverage in a severe crash should trigger liquidation."""
-        dna = _make_dna(leverage=10, direction="long")
+        """10x leverage in a severe crash should trigger liquidation.
+        SL is disabled so liquidation is the only exit mechanism."""
+        dna = _make_dna(leverage=10, direction="long", stop_loss=0.0)
         n = 100
         dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
         close = np.linspace(100, 5, n)

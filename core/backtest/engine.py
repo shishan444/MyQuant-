@@ -80,15 +80,17 @@ def pre_sim_func_nb(c):
 def order_func_nb(c, entry_price, is_liquidated,
                   entries, exits, adds, reduces,
                   direction_val, size_pct, leverage,
-                  sl_stop, tp_stop, fee, slippage):
+                  sl_stop, tp_stop, fee, slippage,
+                  high_arr, low_arr):
     """Per-bar order callback with real-time SL/TP and liquidation.
 
     Args via lifecycle chain:
         entry_price, is_liquidated: mutable state from pre_sim_func_nb
 
-    Args via broadcast_named_args + order_args:
-        entries, exits, adds, reduces: 2D bool arrays
+    Args via order_args:
+        entries, exits, adds, reduces: 2D float64 arrays
         direction_val, size_pct, ...: scalar float64 params
+        high_arr, low_arr: 2D float64 arrays for intrabar SL/TP
     """
     i = c.i
     col = c.col
@@ -97,7 +99,7 @@ def order_func_nb(c, entry_price, is_liquidated,
     if is_liquidated[col] > 0.5:
         if c.position_now != 0.0:
             return vbt_nb.order_nb(
-                size=np.float64(abs(c.position_now)),
+                size=np.float64(-c.position_now),
                 size_type=np.int64(0),
                 fees=fee,
                 slippage=slippage,
@@ -106,48 +108,75 @@ def order_func_nb(c, entry_price, is_liquidated,
 
     current_price = c.close[i, col]
 
-    # Stop-Loss / Take-Profit check
-    if c.position_now != 0.0 and entry_price[col] > 0.0:
-        if c.position_now > 0.0:
-            pnl_pct = (current_price - entry_price[col]) / entry_price[col]
-        else:
-            pnl_pct = (entry_price[col] - current_price) / entry_price[col]
-
-        if sl_stop > 0.0 and pnl_pct <= -sl_stop:
-            entry_price[col] = 0.0
-            return vbt_nb.order_nb(
-                size=np.float64(abs(c.position_now)),
-                size_type=np.int64(0),
-                fees=fee,
-                slippage=slippage,
-            )
-        if tp_stop > 0.0 and pnl_pct >= tp_stop:
-            entry_price[col] = 0.0
-            return vbt_nb.order_nb(
-                size=np.float64(abs(c.position_now)),
-                size_type=np.int64(0),
-                fees=fee,
-                slippage=slippage,
-            )
-
-    # Liquidation check (for leveraged positions)
+    # Liquidation check BEFORE SL/TP (for leveraged positions)
     if leverage > 1.0 and c.position_now != 0.0:
         maintenance = c.init_cash[0] * (1.0 - 0.9 / leverage)
         if c.value_now < maintenance:
             is_liquidated[col] = 1.0
             entry_price[col] = 0.0
             return vbt_nb.order_nb(
-                size=np.float64(abs(c.position_now)),
+                size=np.float64(-c.position_now),
                 size_type=np.int64(0),
                 fees=fee,
                 slippage=slippage,
             )
 
+    # Stop-Loss / Take-Profit check using HIGH/LOW
+    if c.position_now != 0.0 and entry_price[col] > 0.0:
+        bar_high = high_arr[i, col]
+        bar_low = low_arr[i, col]
+        ep = entry_price[col]
+
+        if c.position_now > 0.0:
+            # Long position
+            sl_level = ep * (1.0 - sl_stop) if sl_stop > 0.0 else 0.0
+            tp_level = ep * (1.0 + tp_stop) if tp_stop > 0.0 else 0.0
+            # SL: bar's LOW touches SL level
+            if sl_stop > 0.0 and bar_low <= sl_level:
+                entry_price[col] = 0.0
+                return vbt_nb.order_nb(
+                    size=np.float64(-c.position_now),
+                    size_type=np.int64(0),
+                    fees=fee,
+                    slippage=slippage,
+                )
+            # TP: bar's HIGH touches TP level
+            if tp_stop > 0.0 and bar_high >= tp_level:
+                entry_price[col] = 0.0
+                return vbt_nb.order_nb(
+                    size=np.float64(-c.position_now),
+                    size_type=np.int64(0),
+                    fees=fee,
+                    slippage=slippage,
+                )
+        else:
+            # Short position
+            sl_level = ep * (1.0 + sl_stop) if sl_stop > 0.0 else 0.0
+            tp_level = ep * (1.0 - tp_stop) if tp_stop > 0.0 else 0.0
+            # SL: bar's HIGH touches SL level
+            if sl_stop > 0.0 and bar_high >= sl_level:
+                entry_price[col] = 0.0
+                return vbt_nb.order_nb(
+                    size=np.float64(-c.position_now),
+                    size_type=np.int64(0),
+                    fees=fee,
+                    slippage=slippage,
+                )
+            # TP: bar's LOW touches TP level
+            if tp_stop > 0.0 and bar_low <= tp_level:
+                entry_price[col] = 0.0
+                return vbt_nb.order_nb(
+                    size=np.float64(-c.position_now),
+                    size_type=np.int64(0),
+                    fees=fee,
+                    slippage=slippage,
+                )
+
     # Exit signal
     if exits[i, col] > 0.5 and c.position_now != 0.0:
         entry_price[col] = 0.0
         return vbt_nb.order_nb(
-            size=np.float64(abs(c.position_now)),
+            size=np.float64(-c.position_now),
             size_type=np.int64(0),
             fees=fee,
             slippage=slippage,
@@ -164,11 +193,12 @@ def order_func_nb(c, entry_price, is_liquidated,
             slippage=slippage,
         )
 
-    # Reduce signal (partial exit)
+    # Reduce signal (partial exit) - reduce position by percentage
     if reduces[i, col] > 0.5 and c.position_now != 0.0:
+        reduce_amount = c.position_now * size_pct
         return vbt_nb.order_nb(
-            size=np.float64(size_pct),
-            size_type=np.int64(2),  # Percent of position
+            size=np.float64(-reduce_amount),
+            size_type=np.int64(0),
             fees=fee,
             slippage=slippage,
         )
@@ -215,6 +245,8 @@ class BacktestEngine:
         reduces = sig_set.reduces.shift(1).fillna(False).astype(bool)
 
         close = enhanced_df["close"]
+        high = enhanced_df["high"]
+        low = enhanced_df["low"]
 
         direction_map = {"long": 0, "short": 1, "mixed": 2}
         direction_val = direction_map.get(dna.risk_genes.direction, 0)
@@ -228,6 +260,8 @@ class BacktestEngine:
         exits_2d = exits.values.astype(np.float64).reshape(-1, 1)
         adds_2d = adds.values.astype(np.float64).reshape(-1, 1)
         reduces_2d = reduces.values.astype(np.float64).reshape(-1, 1)
+        high_2d = high.values.astype(np.float64).reshape(-1, 1)
+        low_2d = low.values.astype(np.float64).reshape(-1, 1)
 
         pf = vbt.Portfolio.from_order_func(
             close,
@@ -243,6 +277,8 @@ class BacktestEngine:
             np.float64(tp_stop),
             np.float64(self.fee),
             np.float64(self.slippage),
+            high_2d,
+            low_2d,
             pre_sim_func_nb=pre_sim_func_nb,
             init_cash=self.init_cash,
             freq=None,
