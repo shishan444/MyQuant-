@@ -152,6 +152,7 @@ def _dna_from_template(
     symbol: str = "BTCUSDT",
     leverage: int = 1,
     direction: str = "long",
+    timeframe_pool: list | None = None,
 ) -> StrategyDNA:
     """Create a StrategyDNA from a classic strategy template."""
     actual_direction = random.choice(["long", "short"]) if direction == "mixed" else direction
@@ -166,6 +167,20 @@ def _dna_from_template(
         ))
 
     logic = template["logic"]
+
+    # Build MTF layers if timeframe_pool has multiple timeframes
+    mtf_layers = None
+    if timeframe_pool and len(timeframe_pool) > 1:
+        other_tfs = [tf for tf in timeframe_pool if tf != timeframe]
+        if other_tfs:
+            mtf_layers = [TimeframeLayer(
+                timeframe=timeframe,
+                signal_genes=list(signals),
+                logic_genes=LogicGenes(**logic),
+            )]
+            for tf in other_tfs:
+                mtf_layers.append(create_random_mtf_layer(tf, symbol))
+
     dna = StrategyDNA(
         signal_genes=signals,
         logic_genes=LogicGenes(**logic),
@@ -174,7 +189,9 @@ def _dna_from_template(
             stop_loss=0.05, take_profit=None, position_size=0.3,
             leverage=leverage, direction=actual_direction,
         ),
+        layers=mtf_layers,
     )
+
     return dna
 
 
@@ -329,11 +346,20 @@ def create_random_dna(
             execution_genes=ExecutionGenes(timeframe=timeframe, symbol=symbol),
         )
 
-    # Generate MTF layers for ALL non-execution timeframes in the pool
+    # Generate MTF layers: include execution TF layer + all other TFs
     if timeframe_pool and len(timeframe_pool) > 1:
         other_tfs = [tf for tf in timeframe_pool if tf != timeframe]
         if other_tfs:
-            layers = [create_random_mtf_layer(tf, symbol) for tf in other_tfs]
+            layers = [TimeframeLayer(
+                timeframe=timeframe,
+                signal_genes=list(dna.signal_genes),
+                logic_genes=LogicGenes(
+                    entry_logic=dna.logic_genes.entry_logic,
+                    exit_logic=dna.logic_genes.exit_logic,
+                ),
+            )]
+            for tf in other_tfs:
+                layers.append(create_random_mtf_layer(tf, symbol))
             dna.layers = layers
             dna._layers_explicit = True
             dna.cross_layer_logic = random.choice(["AND", "OR"])
@@ -353,11 +379,12 @@ def create_random_mtf_layer(
     all_indicators = list(INDICATOR_REGISTRY.keys())
 
     signals = []
+    ind = random.choice(trigger_indicators)
     signals.append(SignalGene(
-        indicator=random.choice(trigger_indicators),
-        params=_random_params(random.choice(trigger_indicators)),
+        indicator=ind,
+        params=_random_params(ind),
         role=SignalRole.ENTRY_TRIGGER,
-        condition=_random_condition(random.choice(trigger_indicators)),
+        condition=_random_condition(ind),
     ))
 
     if random.random() < 0.5:
@@ -369,11 +396,12 @@ def create_random_mtf_layer(
             condition=_random_condition(ind),
         ))
 
+    ind = random.choice(trigger_indicators)
     signals.append(SignalGene(
-        indicator=random.choice(trigger_indicators),
-        params=_random_params(random.choice(trigger_indicators)),
+        indicator=ind,
+        params=_random_params(ind),
         role=SignalRole.EXIT_TRIGGER,
-        condition=_random_condition(random.choice(trigger_indicators)),
+        condition=_random_condition(ind),
     ))
 
     return TimeframeLayer(
@@ -438,7 +466,7 @@ def init_population(
     elif STRATEGY_TEMPLATES:
         # Use a random classic template as seed
         template = random.choice(STRATEGY_TEMPLATES)
-        population.append(_dna_from_template(template, timeframe, symbol, leverage, direction))
+        population.append(_dna_from_template(template, timeframe, symbol, leverage, direction, timeframe_pool))
     else:
         population.append(create_random_dna(timeframe, symbol,
                                             leverage=leverage, direction=direction,
@@ -463,7 +491,7 @@ def init_population(
     for _ in range(n_template):
         if len(population) < size:
             template = random.choice(STRATEGY_TEMPLATES)
-            seed = _dna_from_template(template, timeframe, symbol, leverage, direction)
+            seed = _dna_from_template(template, timeframe, symbol, leverage, direction, timeframe_pool)
             parent = random.choice(population[:min(len(population), 3)])
             mut_func = random.choice(mutation_funcs)
             try:

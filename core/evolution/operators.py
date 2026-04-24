@@ -9,6 +9,7 @@ Mutation types:
 from __future__ import annotations
 
 import copy
+import itertools
 import random
 import uuid
 from typing import Optional
@@ -256,7 +257,10 @@ def mutate_layer_timeframe(dna: StrategyDNA, candidate_timeframes: list | None =
 
     idx = random.choice(changeable)
     current_tf = layers[idx]["timeframe"]
-    alternatives = [tf for tf in candidate_timeframes if tf != current_tf and tf != exec_tf]
+    # Exclude current TF, exec TF, and timeframes used by sibling layers
+    sibling_tfs = {layers[j]["timeframe"] for j in range(len(layers)) if j != idx}
+    alternatives = [tf for tf in candidate_timeframes
+                    if tf != current_tf and tf != exec_tf and tf not in sibling_tfs]
     if not alternatives:
         return dna
 
@@ -629,7 +633,27 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
         # Both have layers: cross corresponding layers
         from core.strategy.dna import TimeframeLayer, LogicGenes
         child_layers = []
-        for la, lb in zip(parent_a.layers, parent_b.layers):
+        for la, lb in itertools.zip_longest(parent_a.layers, parent_b.layers):
+            # Handle case where one parent has more layers than the other
+            if lb is None:
+                # Parent a has extra layer, copy it
+                child_layers.append(TimeframeLayer(
+                    timeframe=la.timeframe,
+                    signal_genes=list(la.signal_genes),
+                    logic_genes=la.logic_genes,
+                    role=la.role,
+                ))
+                continue
+            if la is None:
+                # Parent b has extra layer, copy it
+                child_layers.append(TimeframeLayer(
+                    timeframe=lb.timeframe,
+                    signal_genes=list(lb.signal_genes),
+                    logic_genes=lb.logic_genes,
+                    role=lb.role,
+                ))
+                continue
+
             # Same timeframe position: take entry from one, exit from other
             layer_entry_a = [g for g in la.signal_genes
                              if g.role in (SignalRole.ENTRY_TRIGGER, SignalRole.ENTRY_GUARD)]
@@ -643,10 +667,13 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
             if not layer_signals:
                 layer_signals = list(la.signal_genes)
             layer_logic = random.choice([la.logic_genes, lb.logic_genes])
+            # Inherit role from random parent
+            layer_role = random.choice([la.role, lb.role])
             child_layers.append(TimeframeLayer(
                 timeframe=la.timeframe,
                 signal_genes=layer_signals,
                 logic_genes=layer_logic,
+                role=layer_role,
             ))
         child_cross_logic = random.choice(
             [parent_a.cross_layer_logic, parent_b.cross_layer_logic]
