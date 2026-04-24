@@ -248,6 +248,15 @@ def order_func_nb(c, entry_price, is_liquidated,
 
     # Add signal (add to position)
     if adds[i, col] > 0.5 and c.position_now != 0.0:
+        old_pos = abs(c.position_now)
+        old_ep = entry_price[col]
+        # Estimate add shares based on current portfolio value and price
+        add_value = c.value_now * size_pct
+        add_shares = add_value / current_price
+        # Update entry_price to weighted average
+        if old_pos + add_shares > 0.0:
+            new_ep = (old_ep * old_pos + current_price * add_shares) / (old_pos + add_shares)
+            entry_price[col] = new_ep
         return vbt_nb.order_nb(
             size=np.float64(size_pct),
             size_type=np.int64(2),  # Percent
