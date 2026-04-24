@@ -180,14 +180,21 @@ class WalkForwardValidator:
             if len(train_df) < 20 or len(val_df) < 5:
                 continue
 
-            # Slice MTF data for this window if available
-            window_dfs = self._slice_mtf_data(
-                dfs_by_timeframe, train_start, train_end, enhanced_df.index,
-            ) if dfs_by_timeframe else None
+            # Slice MTF data for train and val windows separately
+            if dfs_by_timeframe:
+                train_mtf = self._slice_mtf_data(
+                    dfs_by_timeframe, train_start, train_end, enhanced_df.index,
+                )
+                val_mtf = self._slice_mtf_data(
+                    dfs_by_timeframe, val_start, val_end, enhanced_df.index,
+                )
+            else:
+                train_mtf = None
+                val_mtf = None
 
-            # Run backtests with MTF data
-            train_result = engine.run(dna, train_df, dfs_by_timeframe=window_dfs)
-            val_result = engine.run(dna, val_df, dfs_by_timeframe=window_dfs)
+            # Run backtests with window-specific MTF data
+            train_result = engine.run(dna, train_df, dfs_by_timeframe=train_mtf)
+            val_result = engine.run(dna, val_df, dfs_by_timeframe=val_mtf)
 
             # Compute scores
             train_metrics = compute_metrics(train_result.equity_curve,
