@@ -415,8 +415,11 @@ def compare_strategies(
             # Load MTF data if strategy uses multiple timeframes
             dfs_by_timeframe = None
             if dna.is_mtf:
+                needed_tfs = {layer.timeframe for layer in dna.layers}
+                needed_tfs.add(timeframe)
                 dfs_by_timeframe = load_mtf_data(
-                    data_dir, dna, enhanced_df,
+                    data_dir, symbol, timeframe, enhanced_df,
+                    needed_tfs,
                     data_start=payload.data_start,
                     data_end=payload.data_end,
                 )

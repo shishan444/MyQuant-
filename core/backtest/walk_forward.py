@@ -18,6 +18,12 @@ from core.backtest.engine import BacktestEngine, BacktestResult
 from core.scoring.metrics import compute_metrics
 from core.scoring.scorer import score_strategy
 
+# Timeframe string -> hours per bar
+_TF_HOURS: dict[str, float] = {
+    "1m": 1 / 60, "5m": 5 / 60, "15m": 15 / 60, "30m": 30 / 60,
+    "1h": 1, "4h": 4, "1d": 24, "3d": 72,
+}
+
 
 @dataclass
 class WFRound:
@@ -61,6 +67,8 @@ class WalkForwardValidator:
         enhanced_df: pd.DataFrame,
         val_months: Optional[List[str]] = None,
         raw_df: Optional[pd.DataFrame] = None,
+        dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None,
+        data_dir: Optional[object] = None,
     ) -> Dict:
         """Run Walk-Forward validation on a strategy.
 
@@ -72,6 +80,10 @@ class WalkForwardValidator:
             raw_df: Raw OHLCV data without indicators. If provided, indicators
                     are recomputed per window to eliminate look-ahead bias.
                     Falls back to enhanced_df if None (backward compatible).
+            dfs_by_timeframe: MTF data dict mapping timeframe -> DataFrame.
+                              If provided, MTF strategies will use per-timeframe
+                              data for evaluation within each WF window.
+            data_dir: Reserved for future MTF per-window data loading.
 
         Returns:
             Dict with wf_score, n_rounds, rounds (list of WFRound details).
@@ -92,6 +104,9 @@ class WalkForwardValidator:
         if len(month_starts) < self.train_months + 1:
             # Not enough data for WF
             return {"wf_score": 0.0, "n_rounds": 0, "rounds": []}
+
+        # Determine bar frequency from dna for dynamic warmup calculation
+        bar_hours = _TF_HOURS.get(dna.execution_genes.timeframe, 4)
 
         # Generate training windows
         rounds: List[Dict] = []
@@ -133,11 +148,12 @@ class WalkForwardValidator:
 
             if raw_df is not None:
                 # Recompute indicators per window from raw data
-                # Include warmup bars (30 bars before window start) for indicator calc
+                # Include warmup bars before window start for indicator calc
                 warmup_bars = 30
+                warmup_delta = pd.Timedelta(hours=warmup_bars * bar_hours)
                 raw_index = raw_df.index
-                train_data_start = train_start - pd.Timedelta(hours=warmup_bars * 4)
-                val_data_start = val_start - pd.Timedelta(hours=warmup_bars * 4)
+                train_data_start = train_start - warmup_delta
+                val_data_start = val_start - warmup_delta
 
                 # Train window with warmup
                 train_raw_mask = (raw_index >= train_data_start) & (raw_index < train_end)
@@ -164,9 +180,14 @@ class WalkForwardValidator:
             if len(train_df) < 20 or len(val_df) < 5:
                 continue
 
-            # Run backtests
-            train_result = engine.run(dna, train_df)
-            val_result = engine.run(dna, val_df)
+            # Slice MTF data for this window if available
+            window_dfs = self._slice_mtf_data(
+                dfs_by_timeframe, train_start, train_end, enhanced_df.index,
+            ) if dfs_by_timeframe else None
+
+            # Run backtests with MTF data
+            train_result = engine.run(dna, train_df, dfs_by_timeframe=window_dfs)
+            val_result = engine.run(dna, val_df, dfs_by_timeframe=window_dfs)
 
             # Compute scores
             train_metrics = compute_metrics(train_result.equity_curve,
@@ -200,6 +221,34 @@ class WalkForwardValidator:
             "n_rounds": len(rounds),
             "rounds": rounds,
         }
+
+    def _slice_mtf_data(
+        self,
+        dfs_by_timeframe: Dict[str, pd.DataFrame],
+        window_start: pd.Timestamp,
+        window_end: pd.Timestamp,
+        exec_index: pd.DatetimeIndex,
+    ) -> Dict[str, pd.DataFrame]:
+        """Slice each timeframe's DataFrame to the WF window.
+
+        For the execution timeframe, the caller already slices enhanced_df
+        (or recomputes from raw_df), so we only slice higher-timeframe data.
+        """
+        result = {}
+        for tf, tf_df in dfs_by_timeframe.items():
+            if tf_df is None or len(tf_df) == 0:
+                continue
+            # Include some data before window_start for indicator warmup
+            tf_index = tf_df.index
+            if not isinstance(tf_index, pd.DatetimeIndex):
+                continue
+            # Use a generous lookback for higher TF data
+            tf_start = window_start - pd.Timedelta(days=7)
+            mask = (tf_index >= tf_start) & (tf_index < window_end)
+            sliced = tf_df[mask]
+            if len(sliced) > 0:
+                result[tf] = sliced
+        return result
 
     def _recompute_indicators(
         self, raw_df: pd.DataFrame, dna: StrategyDNA,

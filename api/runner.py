@@ -482,7 +482,10 @@ class EvolutionRunner(threading.Thread):
                         _raw_wf_df = _enhanced_df[[
                             c for c in _raw_cols if c in _enhanced_df.columns
                         ]].copy()
-                        wf_result = wf.validate(champion, _enhanced_df, raw_df=_raw_wf_df)
+                        wf_result = wf.validate(
+                            champion, _enhanced_df, raw_df=_raw_wf_df,
+                            dfs_by_timeframe=_dfs_by_timeframe,
+                        )
                         if wf_result["wf_score"] > 0:
                             _wf_metrics = (champion_rec.metrics or {}).copy()
                             _wf_metrics["wf_score"] = wf_result["wf_score"]
