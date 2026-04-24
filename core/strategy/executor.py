@@ -20,7 +20,6 @@ class SignalSet:
     exits: pd.Series       # close position signals
     adds: pd.Series        # add to position signals
     reduces: pd.Series     # reduce position signals
-    trend_direction: pd.Series  # trend direction (+1 long, -1 short, 0 neutral)
     degraded_layers: int = 0    # number of MTF layers skipped due to missing data
 
 
@@ -409,7 +408,7 @@ def evaluate_layer(
 ) -> SignalSet:
     """Evaluate a single TimeframeLayer on a pre-computed DataFrame.
 
-    Returns SignalSet with entries, exits, adds, reduces, trend_direction.
+    Returns SignalSet with entries, exits, adds, reduces.
     """
     close = df["close"]
     entry_triggers, entry_guards = [], []
@@ -462,22 +461,11 @@ def evaluate_layer(
     both = entries & exits
     entries = entries & ~both
 
-    # Simple trend direction: +1 if close > EMA(50), -1 if below
-    trend_cols = [c for c in df.columns if c.startswith("ema_")]
-    if trend_cols:
-        ema_col = df[trend_cols[0]]
-        trend_direction = pd.Series(0, index=df.index)
-        trend_direction[close > ema_col] = 1
-        trend_direction[close < ema_col] = -1
-    else:
-        trend_direction = pd.Series(0, index=df.index)
-
     return SignalSet(
         entries=entries,
         exits=exits,
         adds=adds,
         reduces=reduces,
-        trend_direction=trend_direction,
     )
 
 
@@ -642,7 +630,6 @@ def dna_to_signal_set(
                     exits=pd.Series(False, index=enhanced_df.index),
                     adds=pd.Series(False, index=enhanced_df.index),
                     reduces=pd.Series(False, index=enhanced_df.index),
-                    trend_direction=pd.Series(0, index=enhanced_df.index),
                     degraded_layers=degraded_count,
                 )
             combined_entries = combine_signals(all_layer_entries, dna.cross_layer_logic)
@@ -653,21 +640,11 @@ def dna_to_signal_set(
         both = combined_entries & combined_exits
         combined_entries = combined_entries & ~both
 
-        # Trend direction from shortest timeframe
-        trend_cols = [c for c in enhanced_df.columns if c.startswith("ema_")]
-        if trend_cols:
-            trend_direction = pd.Series(0, index=enhanced_df.index)
-            trend_direction[enhanced_df["close"] > enhanced_df[trend_cols[0]]] = 1
-            trend_direction[enhanced_df["close"] < enhanced_df[trend_cols[0]]] = -1
-        else:
-            trend_direction = pd.Series(0, index=enhanced_df.index)
-
         return SignalSet(
             entries=combined_entries,
             exits=combined_exits,
             adds=combined_adds,
             reduces=combined_reduces,
-            trend_direction=trend_direction,
             degraded_layers=degraded_count,
         )
 
@@ -722,19 +699,9 @@ def dna_to_signal_set(
     both = entries & exits
     entries = entries & ~both
 
-    # Trend direction
-    trend_cols = [c for c in enhanced_df.columns if c.startswith("ema_")]
-    if trend_cols:
-        trend_direction = pd.Series(0, index=enhanced_df.index)
-        trend_direction[close > enhanced_df[trend_cols[0]]] = 1
-        trend_direction[close < enhanced_df[trend_cols[0]]] = -1
-    else:
-        trend_direction = pd.Series(0, index=enhanced_df.index)
-
     return SignalSet(
         entries=entries,
         exits=exits,
         adds=adds,
         reduces=reduces,
-        trend_direction=trend_direction,
     )

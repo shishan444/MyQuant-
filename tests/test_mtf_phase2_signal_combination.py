@@ -366,7 +366,6 @@ def test_mtf_signal_set_with_roles_produces_valid_signals():
     assert isinstance(sig_set.exits, pd.Series)
     assert isinstance(sig_set.adds, pd.Series)
     assert isinstance(sig_set.reduces, pd.Series)
-    assert isinstance(sig_set.trend_direction, pd.Series)
     assert len(sig_set.entries) == len(enhanced_df)
 
 

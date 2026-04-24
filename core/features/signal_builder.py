@@ -176,19 +176,9 @@ def build_signal_set(
     both = entries & exits
     entries = entries & ~both
 
-    # Trend direction
-    trend_cols = [c for c in enhanced_df.columns if c.startswith("ema_")]
-    if trend_cols:
-        trend_direction = pd.Series(0, index=enhanced_df.index)
-        trend_direction[close > enhanced_df[trend_cols[0]]] = 1
-        trend_direction[close < enhanced_df[trend_cols[0]]] = -1
-    else:
-        trend_direction = pd.Series(0, index=enhanced_df.index)
-
     return SignalSet(
         entries=entries,
         exits=exits,
         adds=adds,
         reduces=reduces,
-        trend_direction=trend_direction,
     )
