@@ -21,6 +21,7 @@ class SignalSet:
     adds: pd.Series        # add to position signals
     reduces: pd.Series     # reduce position signals
     trend_direction: pd.Series  # trend direction (+1 long, -1 short, 0 neutral)
+    degraded_layers: int = 0    # number of MTF layers skipped due to missing data
 
 
 def evaluate_condition(
@@ -558,14 +559,16 @@ def dna_to_signal_set(
 
         has_any_role = any(layer.role is not None for layer in dna.layers)
 
+        degraded_count = 0
         for layer in dna.layers:
             layer_df = dfs_by_timeframe.get(layer.timeframe)
             if layer_df is None:
-                logger.warning(
+                logger.error(
                     "MTF layer timeframe %r data not found in dfs_by_timeframe, "
                     "skipping layer. Available: %s",
                     layer.timeframe, list(dfs_by_timeframe.keys()),
                 )
+                degraded_count += 1
                 continue
 
             sig = evaluate_layer(layer, layer_df)
@@ -640,6 +643,7 @@ def dna_to_signal_set(
                     adds=pd.Series(False, index=enhanced_df.index),
                     reduces=pd.Series(False, index=enhanced_df.index),
                     trend_direction=pd.Series(0, index=enhanced_df.index),
+                    degraded_layers=degraded_count,
                 )
             combined_entries = combine_signals(all_layer_entries, dna.cross_layer_logic)
             combined_exits = combine_signals(all_layer_exits, dna.cross_layer_logic)
@@ -664,6 +668,7 @@ def dna_to_signal_set(
             adds=combined_adds,
             reduces=combined_reduces,
             trend_direction=trend_direction,
+            degraded_layers=degraded_count,
         )
 
     # Single-timeframe mode

@@ -36,6 +36,7 @@ class BacktestResult:
     add_count: int = 0
     reduce_count: int = 0
     metrics_dict: dict | None = None
+    degraded_layers: int = 0
 
 
 def _apply_funding_costs(
@@ -324,6 +325,15 @@ class BacktestEngine:
         signal_set=None,
     ) -> BacktestResult:
         """Run backtest for a single strategy DNA."""
+        # Extract degraded_layers before building portfolio
+        degraded = 0
+        if signal_set is not None:
+            degraded = getattr(signal_set, "degraded_layers", 0)
+        elif dna.is_mtf and dfs_by_timeframe is not None:
+            from core.strategy.executor import dna_to_signal_set as _dts
+            _sig = _dts(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+            degraded = getattr(_sig, "degraded_layers", 0)
+
         build_result = self._build_portfolio(
             dna, enhanced_df,
             dfs_by_timeframe=dfs_by_timeframe,
@@ -416,6 +426,7 @@ class BacktestEngine:
             add_count=add_count,
             reduce_count=reduce_count,
             metrics_dict=metrics,
+            degraded_layers=degraded,
         )
 
     def run_with_portfolio(
