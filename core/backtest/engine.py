@@ -112,7 +112,7 @@ def order_func_nb(c, entry_price, is_liquidated,
                   entries, exits, adds, reduces,
                   direction_val, size_pct, leverage,
                   sl_stop, tp_stop, fee, slippage,
-                  high_arr, low_arr):
+                  high_arr, low_arr, direction_signal):
     """Per-bar order callback with real-time SL/TP and liquidation.
 
     Args via lifecycle chain:
@@ -122,6 +122,7 @@ def order_func_nb(c, entry_price, is_liquidated,
         entries, exits, adds, reduces: 2D float64 arrays
         direction_val, size_pct, ...: scalar float64 params
         high_arr, low_arr: 2D float64 arrays for intrabar SL/TP
+        direction_signal: 2D float64 array, +1=long, -1=short (for mixed mode)
     """
     i = c.i
     col = c.col
@@ -216,10 +217,21 @@ def order_func_nb(c, entry_price, is_liquidated,
     # Entry signal
     if entries[i, col] > 0.5 and c.position_now == 0.0:
         entry_price[col] = current_price
+        # For mixed mode: use direction_signal to determine trade side
+        dir_sign = direction_signal[i, col]
+        if direction_val < 1.5:  # long(0) or short(1) - fixed direction
+            dir_sign = 1.0  # size is always positive; direction_val controls side
+            actual_direction = direction_val
+        else:  # mixed(2) - direction from signal
+            if dir_sign > 0.0:
+                actual_direction = 0.0  # long
+            else:
+                actual_direction = 1.0  # short
+            dir_sign = 1.0  # size positive, direction controls side
         return vbt_nb.order_nb(
-            size=np.float64(size_pct),
+            size=np.float64(size_pct * dir_sign),
             size_type=np.int64(2),  # Percent
-            direction=np.int64(int(direction_val)),
+            direction=np.int64(int(actual_direction)),
             fees=fee,
             slippage=slippage,
         )
@@ -294,6 +306,12 @@ class BacktestEngine:
         high_2d = high.values.astype(np.float64).reshape(-1, 1)
         low_2d = low.values.astype(np.float64).reshape(-1, 1)
 
+        # Build direction signal for mixed mode
+        if sig_set.entry_direction is not None:
+            direction_signal_2d = sig_set.entry_direction.values.astype(np.float64).reshape(-1, 1)
+        else:
+            direction_signal_2d = np.ones_like(entries_2d)
+
         pf = vbt.Portfolio.from_order_func(
             close,
             order_func_nb,
@@ -310,6 +328,7 @@ class BacktestEngine:
             np.float64(self.slippage),
             high_2d,
             low_2d,
+            direction_signal_2d,
             pre_sim_func_nb=pre_sim_func_nb,
             init_cash=self.init_cash,
             freq=None,

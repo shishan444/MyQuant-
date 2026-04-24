@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 from core.strategy.dna import StrategyDNA, SignalRole
@@ -21,6 +22,7 @@ class SignalSet:
     adds: pd.Series        # add to position signals
     reduces: pd.Series     # reduce position signals
     degraded_layers: int = 0    # number of MTF layers skipped due to missing data
+    entry_direction: pd.Series | None = None  # +1 long, -1 short (for mixed direction)
 
 
 def evaluate_condition(
@@ -545,6 +547,9 @@ def dna_to_signal_set(
         all_layer_adds = []
         all_layer_reduces = []
 
+        # Track trend direction for mixed strategies
+        trend_direction_series = []
+
         has_any_role = any(layer.role is not None for layer in dna.layers)
 
         degraded_count = 0
@@ -595,6 +600,28 @@ def dna_to_signal_set(
                 # Trend layers: forward-filled state signals
                 trend_entries.append(resampled_entries)
                 trend_exits.append(resampled_exits)
+
+                # Determine direction from trend layer's condition types
+                entry_triggers = [g for g in layer.signal_genes
+                                  if g.role == SignalRole.ENTRY_TRIGGER]
+                direction = pd.Series(1.0, index=enhanced_df.index)
+                for gene in entry_triggers:
+                    cond_type = gene.condition.get("type", "")
+                    if cond_type == "price_above":
+                        # price_above=True -> close > indicator -> bullish -> +1
+                        direction = pd.Series(
+                            np.where(resampled_entries, 1.0, -1.0),
+                            index=enhanced_df.index,
+                        )
+                        break
+                    elif cond_type == "price_below":
+                        # price_below=True -> close < indicator -> bearish -> -1
+                        direction = pd.Series(
+                            np.where(resampled_entries, -1.0, 1.0),
+                            index=enhanced_df.index,
+                        )
+                        break
+                trend_direction_series.append(direction)
             else:
                 # Execution layers (default): pulse signals (no ffill)
                 exec_entries.append(pulse_entries)
@@ -644,12 +671,19 @@ def dna_to_signal_set(
         both = combined_entries & combined_exits
         combined_entries = combined_entries & ~both
 
+        # Build entry_direction from trend layers (for mixed direction support)
+        entry_direction = None
+        if has_any_role and trend_direction_series:
+            # Combine trend directions: use first trend layer's direction
+            entry_direction = trend_direction_series[0]
+
         return SignalSet(
             entries=combined_entries,
             exits=combined_exits,
             adds=combined_adds,
             reduces=combined_reduces,
             degraded_layers=degraded_count,
+            entry_direction=entry_direction,
         )
 
     # Single-timeframe mode
