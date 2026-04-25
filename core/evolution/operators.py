@@ -15,7 +15,7 @@ import uuid
 from typing import Optional
 
 from core.strategy.dna import (
-    SignalRole, SignalGene, StrategyDNA,
+    SignalRole, SignalGene, StrategyDNA, derive_role,
 )
 from core.strategy.validator import validate_dna
 from core.features.indicators import INDICATOR_REGISTRY, get_interchangeable
@@ -198,6 +198,7 @@ def mutate_add_layer(dna: StrategyDNA, candidate_timeframes: list | None = None)
         "timeframe": new_tf,
         "signal_genes": [sg.to_dict() for sg in seed_dna.signal_genes],
         "logic_genes": seed_dna.logic_genes.to_dict(),
+        "role": derive_role(new_tf),
     }
 
     data = dna.to_dict()
@@ -289,6 +290,50 @@ def mutate_cross_logic(dna: StrategyDNA) -> StrategyDNA:
     data["strategy_id"] = _new_id()
     data["parent_ids"] = [dna.strategy_id]
     data["mutation_ops"] = list(dna.mutation_ops) + ["cross_logic"]
+    data["generation"] = dna.generation + 1
+    return StrategyDNA.from_dict(data)
+
+
+def mutate_mtf_mode(dna: StrategyDNA) -> StrategyDNA:
+    """Cycle through MTF mode options."""
+    if not dna.is_mtf:
+        return dna
+
+    modes = [None, "direction", "confluence", "direction+confluence"]
+    current_idx = modes.index(dna.mtf_mode) if dna.mtf_mode in modes else 0
+    new_idx = (current_idx + random.randint(1, len(modes) - 1)) % len(modes)
+
+    data = dna.to_dict()
+    data["mtf_mode"] = modes[new_idx]
+    data["strategy_id"] = _new_id()
+    data["parent_ids"] = [dna.strategy_id]
+    data["mutation_ops"] = list(dna.mutation_ops) + ["mtf_mode"]
+    data["generation"] = dna.generation + 1
+    return StrategyDNA.from_dict(data)
+
+
+def mutate_confluence_threshold(dna: StrategyDNA) -> StrategyDNA:
+    """Mutate confluence_threshold within [0.1, 0.9] using polynomial mutation."""
+    data = dna.to_dict()
+    current = data.get("confluence_threshold", 0.3)
+    new_val = _polynomial_mutation(current, 0.1, 0.9, eta=20.0)
+    data["confluence_threshold"] = round(new_val, 3)
+    data["strategy_id"] = _new_id()
+    data["parent_ids"] = [dna.strategy_id]
+    data["mutation_ops"] = list(dna.mutation_ops) + ["confluence_threshold"]
+    data["generation"] = dna.generation + 1
+    return StrategyDNA.from_dict(data)
+
+
+def mutate_proximity_mult(dna: StrategyDNA) -> StrategyDNA:
+    """Mutate proximity_mult within [0.5, 3.0] using polynomial mutation."""
+    data = dna.to_dict()
+    current = data.get("proximity_mult", 1.5)
+    new_val = _polynomial_mutation(current, 0.5, 3.0, eta=20.0)
+    data["proximity_mult"] = round(new_val, 3)
+    data["strategy_id"] = _new_id()
+    data["parent_ids"] = [dna.strategy_id]
+    data["mutation_ops"] = list(dna.mutation_ops) + ["proximity_mult"]
     data["generation"] = dna.generation + 1
     return StrategyDNA.from_dict(data)
 
@@ -699,5 +744,8 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
         generation=max(parent_a.generation, parent_b.generation) + 1,
         layers=child_layers,
         cross_layer_logic=child_cross_logic,
+        mtf_mode=random.choice([parent_a.mtf_mode, parent_b.mtf_mode]),
+        confluence_threshold=random.choice([parent_a.confluence_threshold, parent_b.confluence_threshold]),
+        proximity_mult=random.choice([parent_a.proximity_mult, parent_b.proximity_mult]),
     )
     return child
