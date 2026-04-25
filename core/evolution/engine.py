@@ -12,6 +12,7 @@ from core.evolution.operators import (
     mutate_cross_logic,
     mutate_add_signal, mutate_remove_signal,
     mutate_add_layer, mutate_remove_layer, mutate_layer_timeframe,
+    mutate_mtf_mode, mutate_confluence_threshold, mutate_proximity_mult,
 )
 from core.evolution.population import init_population, create_random_dna
 from core.evolution.diversity import (
@@ -343,6 +344,12 @@ class EvolutionEngine:
                 mut_weights.append(3)
                 mutation_pool.append(mutate_cross_logic)
                 mut_weights.append(10)
+                mutation_pool.append(mutate_mtf_mode)
+                mut_weights.append(3)
+                mutation_pool.append(mutate_confluence_threshold)
+                mut_weights.append(3)
+                mutation_pool.append(mutate_proximity_mult)
+                mut_weights.append(3)
 
             # --- Crossover + Mutation ---
             children = []
