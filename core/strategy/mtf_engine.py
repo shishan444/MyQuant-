@@ -531,6 +531,24 @@ def synthesize_cross_layer(
         momentum_confluence = pd.Series(momentum_confs, index=exec_index)
         # Use momentum confluence as fallback
         confluence_score = momentum_confluence
+    elif confluence_score.eq(0.0).all() and len(non_exec_momenta) == 1:
+        # Single non-exec layer with momentum only:
+        # Use momentum strength as confluence proxy.
+        mom_series = non_exec_momenta[0].values[:n]
+        mom_abs_max = np.nanmax(np.abs(mom_series))
+        if mom_abs_max > 0:
+            single_mom_confs = np.zeros(n)
+            normalized = np.abs(mom_series) / mom_abs_max
+            for bar_idx in range(n):
+                if np.isnan(mom_series[bar_idx]):
+                    continue
+                if dna.risk_genes.direction == "long" and mom_series[bar_idx] > 0:
+                    single_mom_confs[bar_idx] = normalized[bar_idx] * 0.5
+                elif dna.risk_genes.direction == "short" and mom_series[bar_idx] < 0:
+                    single_mom_confs[bar_idx] = normalized[bar_idx] * 0.5
+                elif dna.risk_genes.direction == "mixed" and mom_series[bar_idx] != 0:
+                    single_mom_confs[bar_idx] = normalized[bar_idx] * 0.3
+            confluence_score = pd.Series(single_mom_confs, index=exec_index)
 
     return MTFSynthesis(
         direction_score=direction_score,
