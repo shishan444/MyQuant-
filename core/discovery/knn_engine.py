@@ -172,7 +172,7 @@ class SimilarCaseEngine:
                       if (direction == "UP" and r > 0) or
                       (direction == "DOWN" and r < 0) or
                       direction == "FLAT")
-        accuracy = round(correct / len(returns), 4) if returns else 0.0
+        accuracy = round(correct / len(returns), 4) if len(returns) > 0 else 0.0
 
         return PredictionResult(
             predicted_direction=direction,
