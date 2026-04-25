@@ -2,93 +2,92 @@
 
 ## 定位
 
-`core/discovery/` 用决策树和 KNN 从历史数据中发现指标状态与价格方向之间的映射关系。是前端"数据管理"页面中模式发现和相似案例功能的后端支撑。
+`core/discovery/` 用决策树和 KNN 从历史数据中发现指标状态与价格方向的映射关系。非主链路模块，是前端"数据管理"页面中模式发现和相似案例功能的后端支撑。
 
-## 文件职责
+## 文件清单
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `tree_engine.py` | 132 | 决策树规则发现引擎：标签生成→特征编码→交叉验证→训练→规则提取 |
-| `rule_extractor.py` | 102 | 从训练好的决策树中提取可解释的交易规则 |
-| `knn_engine.py` | 188 | KNN 相似案例检索引擎：构建近邻索引→查找相似→预测方向 |
-| `feature_encoder.py` | 110 | 指标列→归一化特征向量（MinMaxScaler，16-20 维） |
-| `label_generator.py` | 62 | 从未来价格变动生成分类标签（UP/DOWN/FLAT）+ 回归目标 |
-| `stat_validator.py` | 161 | 统计验证：Wilson 置信区间、条件概率表、规则提升度 |
+| `feature_encoder.py` | 110 | 特征选择 + MinMaxScaler 归一化 |
+| `tree_engine.py` | 132 | 决策树规则发现引擎 |
+| `knn_engine.py` | 188 | KNN 相似案例检索 |
+| `label_generator.py` | 62 | 前向收益标签生成 |
+| `rule_extractor.py` | 102 | 决策树 -> 可解释规则 |
+| `stat_validator.py` | 161 | Wilson 置信区间 + 规则提升验证 |
 
-## 决策树发现 (tree_engine.py)
+## 关键链路
 
-```
-FeatureEncoder.fit_transform(df) → 归一化特征矩阵
-  ↓
-generate_labels(df, horizon) → UP/DOWN/FLAT 标签
-  ↓
-TimeSeriesSplit(3) 交叉验证
-  ↓
-DecisionTreeClassifier(max_depth=5) 训练
-  ↓
-extract_rules(tree) → Top 10 RuleItem (置信度 * 提升度排序)
-  ↓
-DiscoveryResult { rules, feature_importance, cv_score }
-```
-
-只保留 UP/DOWN 样本做二分类。最少需要 `min_samples_leaf * 3` 个样本。
-
-### 规则提取 (rule_extractor.py)
-
-遍历决策树每个叶节点，构建根到叶的完整条件链。每条规则包含：
-- 条件序列（特征名 + 阈值）
-- 置信度（叶节点中正例比例）
-- 样本数
-- 提升度（lift > 1.2 才保留，即优于随机基线）
-
-## KNN 引擎 (knn_engine.py)
+### 决策树管道
 
 ```
-fit(df): 特征编码 → 保存未来收益/高/低数据 → NearestNeighbors 索引
-  ↓
-find_similar(current_state, k): 查询 k 个最近邻 → 返回 SimilarCase[]
-  ↓
-predict(current_state, k): 多数投票 → PredictionResult { direction, confidence, range }
+tree_engine.py:44 PatternDiscoveryEngine.discover(df)
+  L55  generate_labels(df, horizon=12) -> UP/DOWN/FLAT
+  L58  encoder.fit_transform(df) -> ~20维特征矩阵
+  L75-94  TimeSeriesSplit(n_splits=3) 3折交叉验证
+  L97-109  DecisionTreeClassifier(max_depth=5, min_samples_leaf=50)
+           仅 UP/DOWN 样本训练（排除 FLAT）
+  L114  extract_rules(clf, feature_names, max_rules=10)
 ```
 
-预测逻辑：UP 邻居 >= 60% → UP，<= 40% → DOWN，其余 FLAT。置信度 = 偏离 50/50 的程度。
-
-## 特征编码 (feature_encoder.py)
-
-从 DataFrame 中选择 ~16 个代表性指标列（RSI、EMA、MACD、BB、ATR、RVOL、ADX、Stochastic、CCI、MFI、pattern），用 `MinMaxScaler` 归一化到 [0,1]。每个类别取第一个匹配列，上限 20 维。找不到特征时回退到零数组。
-
-## 标签生成 (label_generator.py)
-
-根据未来 `horizon` 根 K 线的价格变动生成标签：
-- UP: 未来收盘涨幅 > threshold
-- DOWN: 未来收盘跌幅 > threshold
-- FLAT: 中间
-
-同时生成回归目标：future_close_pct、future_high_pct、future_low_pct。
-
-## 统计验证 (stat_validator.py)
-
-- `wilson_confidence()`: Wilson 得分置信区间（适合小样本比例）
-- `discretize_indicator()`: 指标值分箱（RSI 用 30/50/70，BB 用 0.2/0.5/0.8 等）
-- `build_conditional_prob_table()`: 条件概率表
-- `validate_rule_lift()`: 规则提升度计算（至少 10 个样本）
-
-## 数据流
+### KNN 管道
 
 ```
-前端请求
-  ├─ POST /api/discovery/patterns → tree_engine.discover() → 规则列表
-  ├─ POST /api/discovery/similar → knn_engine.find_similar() → 相似案例
-  └─ POST /api/discovery/predict → knn_engine.predict() → 价格预测
+knn_engine.py:60 SimilarCaseEngine.fit(df)
+  L67  encoder.fit_transform(df) 构建特征矩阵
+  L79-83  预计算 future_returns/highs/lows
+  L86-95  NearestNeighbors(n_neighbors=50, metric="euclidean")
+
+knn_engine.py:134 predict(current_features)
+  L159-165  方向判断: >60% positive=UP, <40%=DOWN
+  置信度 = |positive_pct - 0.5| * 2
 ```
 
-## 涉及文件
+## 关键机制
 
-| 文件 | 核心内容 |
-|------|---------|
-| `core/discovery/tree_engine.py` | 决策树发现引擎 |
-| `core/discovery/rule_extractor.py` | 决策树规则提取 |
-| `core/discovery/knn_engine.py` | KNN 相似案例 + 预测 |
-| `core/discovery/feature_encoder.py` | 指标→特征向量编码 |
-| `core/discovery/label_generator.py` | 未来收益标签生成 |
-| `core/discovery/stat_validator.py` | 统计验证工具 |
+### 特征选择 (feature_encoder.py:47-109)
+
+按类别选最多 20 个指标列: RSI(1), EMA(最多3), MACD histogram(1), BB pct+bandwidth(2), ATR(1), RVOL(1), ADX(1), Stoch(1), CCI(1), MFI(1), Pattern(最多4)。MinMaxScaler 归一化到 [0,1]。
+
+### 标签生成 (label_generator.py:13)
+
+前向收益: >1% -> UP, <-1% -> DOWN, 其余 -> FLAT。
+
+### Wilson 置信区间 (stat_validator.py:18)
+
+小样本比例的稳健置信区间。z=1.96 (95%)。用于条件概率表。
+
+### 规则提升 (stat_validator.py:112)
+
+lift = P(target|conditions) / P(target)。> 1.2 表示比随机好 20%。最少 10 个匹配样本。
+
+## 接口定义
+
+| 函数 | 说明 |
+|------|------|
+| `PatternDiscoveryEngine.discover(df, target) -> DiscoveryResult` | 决策树发现 |
+| `SimilarCaseEngine.fit(df) -> self` | KNN 拟合 |
+| `SimilarCaseEngine.predict(features) -> PredictionResult` | KNN 预测 |
+| `generate_labels(df, horizon, up_thresh, down_thresh) -> DataFrame` | 标签生成 |
+| `extract_rules(clf, feature_names, max_rules) -> List[RuleItem]` | 规则提取 |
+| `wilson_confidence(successes, total, z) -> (low, high)` | Wilson 区间 |
+| `validate_rule_lift(df, conditions, target) -> float` | 提升验证 |
+
+## 关键参数
+
+| 参数 | 默认值 | 设计意图 |
+|------|--------|---------|
+| max_depth | 5 | 限制树深保持可解释性 |
+| min_samples_leaf | 50 | 防止过拟合稀疏模式 |
+| horizon | 12 | 前向周期 (4h K线=2天) |
+| up_threshold | 0.01 | UP 标签最小 1% 收益 |
+| lift filter | 1.2 | 比随机好 20% |
+| n_neighbors | 50 | KNN 邻居数 |
+| direction threshold | 0.6/0.4 | UP/DOWN 判定边界 |
+
+## 约定与规则
+
+- **仅二分类**: 决策树只训练 UP/DOWN（排除 FLAT）
+- **时间序列 CV**: TimeSeriesSplit 防止未来数据泄漏
+- **MinMaxScaler**: 统一 [0,1] 归一化
+- **规则条件格式**: `{feature, operator: "le"|"gt", threshold}`
+- **KNN 邻居上限**: predict() 最多返回 20 个 similar_cases

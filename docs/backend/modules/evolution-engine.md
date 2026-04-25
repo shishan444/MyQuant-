@@ -2,298 +2,141 @@
 
 ## 定位
 
-`core/evolution/` 实现了完整的遗传算法框架，负责策略的自动发现和优化。尽管技术栈里列了 deap，但实际代码**完全手写**——没有 deap 的 import。所有选择、交叉、变异算子都是独立实现。
+`core/evolution/` 实现完整的手写遗传算法框架，自动搜索最优交易策略。核心循环: 初始化种群 -> [评价 -> 选择 -> 交叉 -> 变异 -> 多样性维护] x N 代 -> 返回 Champion。
 
-## 文件职责
+## 文件清单
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `engine.py` | 414 | 主进化循环：评估→选择→交叉→变异→早停→自适应控制、MTF 算子注册 |
-| `operators.py` | 751 | 6 种基础变异 + 7 种 MTF 变异 + 交叉算子 + 条件生成器 |
-| `population.py` | 555 | 种群初始化、7 种经典策略模板、随机 DNA 生成、MTF 层生成 |
-| `diversity.py` | 381 | 多样性度量（基因型/表型/评分距离）、适应度共享、MTF 层感知签名 |
-| `champion.py` | 74 | 线程安全的冠军追踪器（Hall-of-Fame 模式） |
-| `lineage.py` | 40 | 变异历史记录与格式化 |
-| `__init__.py` | 空 | 无导出 |
+| `engine.py` | 415 | 主循环 + 早停 + 自适应变异 + 模板偏置 |
+| `operators.py` | 752 | 6 种变异 + 7 种 MTF 变异 + 交叉 + 条件生成 |
+| `population.py` | 556 | 种群初始化 + 7 个经典模板 + 随机 DNA 生成 |
+| `diversity.py` | 382 | 多层次多样性度量 + 适应度共享 + 新鲜血液 |
+| `champion.py` | 74 | 线程安全的 Hall-of-Fame 追踪器 |
+| `lineage.py` | 40 | 变异历史记录 |
 
-## 主循环: EvolutionEngine.evolve()
+## 关键链路
+
+### 进化主循环 (EvolutionEngine.evolve, engine.py:191)
 
 ```
-初始化种群 (init_population, 40/40/20 比例)
-  ↓
-逐代循环:
-  ├─ 强制任务约束 (leverage, direction)
-  ├─ 全量评估 [(ind, score), ...]
-  ├─ 排序 + 记录 history
-  ├─ 追踪 champion + stagnation_count
-  ├─ 自适应变异记录 (1/5 rule)
-  ├─ 早停检查 (4 个条件)
-  │
-  ├─ 精英保留: top elite_ratio (min 2)
-  ├─ 锦标赛选择: tournsize=3, 选 n_children*2 个父代
-  ├─ 交叉 + 变异:
-  │   ├─ crossover(p1, p2) → child
-  │   ├─ n_mutations 次 random.choices(mutation_pool)
-  │   └─ 失败时回退到 create_random_dna
-  ├─ 新鲜血液: 3-5 个随机个体
-  ├─ 多样性维护: 替换重复个体
-  └─ 截断到 population_size
+evolve(ancestor, evaluate_fn, on_generation, extra_ancestors, exclude_signatures)
+  L211-217  init_population(population_size, ancestor, ...)
+    L465-466  ancestor 作为第一个个体
+    L485-527  40% 模板变异 + 40% 随机DNA + 20% 自由探索
+    L530-553  exclude_signatures 去重
+  L232  for gen in 1..max_generations:
+    L234-238  强制约束 leverage/direction
+    L241-242  scored = [(ind, evaluate_fn(ind))] sorted by score
+    L269  EarlyStopChecker.check(best_score, gen)
+      -> target_reached / stagnation(15代) / decline / max_generations
+    L283-284  Elite 保留 (top elite_ratio, min 2)
+    L288  Tournament selection (tournsize=3)
+    L291-302  变异权重根据停滞代数调整
+    L305-322  1/5 rule 自适应变异 boost
+    L325-331  模板感知偏置叠加
+    L358-376  Crossover + Mutation
+    L387-393  新鲜血液注入 (3-5 随机个体)
+    L396-400  check_and_maintain_diversity()
+    L405  population[:population_size] 截断
 ```
 
-### 每代种群构成
+### 交叉 (crossover, operators.py:648)
 
-假设 population_size=15，elite_ratio=0.15：
+```
+L660-664  entry 从 parent_a, exit 从 parent_b
+L670-672  logic/risk 随机选一个 parent
+L681-729  MTF layers: 对应层逐一交叉
+  L707-717  每层: entry 从 la, exit 从 lb
+  L718-720  logic/role 随机选
+L747-749  mtf_mode/confluence/proximity 随机选
+```
 
-| 组成 | 数量 | 来源 |
+### 变异 (以 mutate_params 为例, operators.py:372)
+
+```
+L374  dna.to_dict() 深拷贝
+L381  _pick_signal_pool: 50% base, 50% 随机层
+L387-392  随机选一个有参数的 signal gene
+L403-410  优先: Profile 推荐参数
+L413-420  其次: Registry candidates (50%)
+L423-429  最后: 多项式有界变异 (DE-style)
+L432  StrategyDNA.from_dict(data) 重建
+```
+
+## 关键机制
+
+### 多项式有界变异 (_polynomial_mutation, operators.py:341-369)
+
+Deb & Goyal 1996 经典算子。eta=20 控制分布形状 -- 高 eta 小扰动(开发)，低 eta 大跳跃(探索)。
+
+### 1/5 成功规则 (_AdaptiveMutationController, engine.py:92-122)
+
+Rechenberg 自适应策略。滑动窗口(10代): success_rate > 0.3 -> boost=0.85(减变异)；< 0.15 -> boost=1.3(增变异)。
+
+### 锦标赛选择 (engine.py:125-142)
+
+tournsize=3，比截断选择更好保持多样性同时保持选择压力。
+
+### 适应度共享 (diversity.py:265-296)
+
+shared_score = raw_score / sharing_sum，邻居越多适应度打折越重。share_radius=0.3。
+
+### 变异权重动态调整
+
+| 停滞代数 | params | indicator | logic | risk | add | remove | 特点 |
+|----------|--------|-----------|-------|------|-----|--------|------|
+| <=4 | 35 | 10 | 10 | 25 | 10 | 10 | 参数微调+风控 |
+| 5-8 | 25 | 20 | 15 | 20 | 10 | 10 | 均衡 |
+| >8 | 15 | 30 | 10 | 15 | 20 | 10 | 指标替换+加信号 |
+
+### MTF 变异算子 (7 种)
+
+| 算子 | 权重 | 说明 |
 |------|------|------|
-| 精英 | max(2, int(15*0.15)) = 2 | 上代最优，原样保留 |
-| 子代 | 15 - 2 - 3 = 10 | 锦标赛选择 → 交叉 → 变异 |
-| 新鲜血液 | 3 (固定预留) + 补齐 | 完全随机 DNA |
+| add_layer | 5 | 添加 MTF 层 |
+| remove_layer | 3 | 移除非执行层 |
+| layer_timeframe | 3 | 修改层时间框架 |
+| cross_logic | 10 | 翻转跨层逻辑 |
+| mtf_mode | 3 | 切换 MTF 模式 |
+| confluence_threshold | 3 | 共振阈值变异 |
+| proximity_mult | 3 | 邻近倍数变异 |
 
-**子代产生是成对的**：从 2*n_children 个父代中，每两个做一次 crossover → mutation → 产出 1 个子代。所以 20 个父代最多产出 10 个子代。
+## 接口定义
 
-### 任务级约束
-
-每代评估前强制覆盖所有个体的 leverage 和 direction（"mixed" 模式除外）。这意味着即使变异算子修改了这些字段，下一轮评估时也会被覆盖回来。这是**任务级约束**——进化不能突破用户设定的杠杆/方向边界。
-
-### MTF 变异算子注册 (engine.py)
-
-`EvolutionEngine.__init__` 接受 `timeframe_pool` 参数。当 `len(timeframe_pool) > 1` 时，向 mutation_pool 添加 7 个 MTF 专用算子（各权重 3）：
-
-| 算子 | 作用 |
+| 函数 | 说明 |
 |------|------|
-| mutate_add_layer | 新增时间周期层 |
-| mutate_remove_layer | 删除非执行周期层 |
-| mutate_layer_timeframe | 改变层的时间周期 |
-| mutate_cross_logic | 翻转层间 AND/OR |
-| mutate_mtf_mode | 循环切换 mtf_mode |
-| mutate_confluence_threshold | 多项式变异 [0.1, 0.9] |
-| mutate_proximity_mult | 多项式变异 [0.5, 3.0] |
-
-非 MTF 策略（timeframe_pool <= 1）的 mutation_pool 不包含这些算子。
-
-## 早停: EarlyStopChecker
-
-4 个停止条件，任一满足即停：
-
-| 条件 | 参数 | 触发时机 |
-|------|------|----------|
-| target_reached | target_score=80 | best_score >= target 且 gen >= min_generations |
-| stagnation | patience=15 | 连续 15 代改进 < min_improvement(0.5) |
-| decline | decline_limit=10 | 连续 10 代 best_score 下降 |
-| max_generations | max_generations=200 | 达到最大代数 |
-
-`target_reached` 有 `min_generations=20` 的保护——即使第一代就达到目标分，也至少跑 20 代才允许停止。
-
-## 自适应变异: _AdaptiveMutationController
-
-实现了 Rechenberg 的 **1/5 成功规则**：
-
-- 滑动窗口(10 代)追踪 best_score 是否有改进
-- 成功率 > 30%: mutation_boost = 0.85（减少变异强度，精细化）
-- 成功率 < 15%: mutation_boost = 1.3（增加变异强度，跳出局部最优）
-- 其余: boost = 1.0
-
-boost 的实际作用是**调整变异次数的权重分布**：stuck 时偏向更多次变异，improving 时偏向更少次变异。不是直接放大变异幅度。
-
-## 停滞自适应的变异权重
-
-除了 1/5 rule，还有基于 `stagnation_count` 的权重表：
-
-| 停滞程度 | mut_weights [params, indicator, logic, risk, add_signal, remove_signal] | 变异次数偏好 |
-|----------|-------|------------|
-| 正常 (0-4) | [35, 10, 10, 25, 10, 10] — 偏参数+风控微调 | [1:50, 2:35, 3:15] |
-| 中等 (5-8) | [25, 20, 15, 20, 10, 10] — 均衡 | [1:25, 2:45, 3:30] |
-| 严重 (>8) | [15, 30, 10, 15, 20, 10] — 偏指标替换 | [2:30, 3:45, 4:25] |
-
-严重停滞时重点放在**替换指标**(30%)和**增删信号**(30%)——大刀阔斧地改变策略结构，而不是微调参数。
-
-### 模板叠加
-
-`_TEMPLATE_MUTATION_BIAS` 在停滞权重之上再叠加评分模板偏好：
-
-| 模板 | params | indicator | risk |
-|------|--------|-----------|------|
-| profit_first / aggressive | 1.5x | 1.2x | 0.5x |
-| steady / balanced | 1.0x | 1.0x | 1.0x |
-| risk_first / conservative | 0.7x | 0.8x | 1.8x |
-
-收益优先模式多调参数少动风控，风控优先反过来。
-
-## 变异算子 (operators.py)
-
-### 6 种基础变异
-
-| 算子 | 作用 | 关键细节 |
-|------|------|----------|
-| `mutate_params` | 随机选一个信号基因的参数做微调 | 三级优先：profile 推荐 → registry candidates → 多项式有界变异 |
-| `mutate_indicator` | 替换为同类指标 | `get_interchangeable()` 取同 category 的指标；guard_only 指标不能做 trigger |
-| `mutate_logic` | 翻转 AND/OR | 随机选 entry_logic / exit_logic / both；支持 MTF 层 |
-| `mutate_risk` | 调整风控参数 | stop_loss +/-0.005*N, position_size +/-0.05*N, take_profit 联动, direction 15% 概率循环切换 long/short/mixed |
-| `mutate_add_signal` | 添加一个 guard 信号 | 优先补缺失的 entry_guard / exit_guard |
-| `mutate_remove_signal` | 移除一个 guard 信号 | **只删 guard，不删 trigger**——保证至少有入场/出场触发 |
-
-### MTF 专用变异
-
-| 算子 | 作用 | 关键细节 |
-|------|------|----------|
-| `mutate_cross_logic` | 翻转层间 AND/OR | 翻转 dna.cross_layer_logic |
-| `mutate_add_layer` | 新增时间周期层 | 从 timeframe_pool 中选不在已有层中的 TF，role 由 derive_role() 推导 |
-| `mutate_remove_layer` | 删除非执行周期层 | 至少保留 1 层 |
-| `mutate_layer_timeframe` | 改变非执行层的时间周期 | 从 pool 中选其他 TF |
-| `mutate_mtf_mode` | 循环切换 mtf_mode | [None, "direction", "confluence", "direction+confluence"] 循环 |
-| `mutate_confluence_threshold` | 多项式变异 | 范围 [0.1, 0.9]，eta=20（集中式变异） |
-| `mutate_proximity_mult` | 多项式变异 | 范围 [0.5, 3.0]，eta=20 |
-
-`_polynomial_mutation(value, lower, upper, eta=20)` 是 Deb & Goyal (1996) 多项式有界变异，高 eta 偏向小扰动。MTF 控制参数用固定 eta=20，基础参数用默认配置。
-
-MTF 变异只在 `timeframe_pool > 1` 时被加入 mutation_pool。
-
-### _pick_signal_pool(): 变异目标选择
-
-所有作用于信号基因的变异都通过 `_pick_signal_pool()` 选择目标：50% 概率选基础 signal_genes，50% 按层平分选某个 MTF layer 的 signal_genes。这保证 MTF 策略的各层都有机会被变异。
-
-### 多项式有界变异 (_polynomial_mutation)
-
-`mutate_params` 的第三级后备，实现了 Deb & Goyal (1996) 的多项式变异：
-
-- `eta=20` 控制分布形状——高 eta 偏向小扰动（精细化），低 eta 允许大跳
-- 产生靠近当前值的小变异概率高，远离当前值的大变异概率低
-- 结果经过 `pdef.clamp()` 约束到合法参数范围并对齐到 step 边界
-
-### 条件生成: generate_random_condition()
-
-分两路：
-
-1. **Profile 引导**（`use_profile=True`）: 查 indicator_profile 的 `recommended_conditions`，按 `follow_probability` 概率跟随推荐
-2. **自由探索**: 从 registry 的 `supported_conditions` 中随机选，按条件类型生成配套字段
-
-对每种条件类型有特定的生成逻辑——RSI 的阈值从 [25,30,35,40,60,65,70,75] 中选，lookback 的窗口从 [3,5,8,10] 中选，touch_bounce 的 proximity 从 [0.005,0.01,0.02] 中选。这些硬编码的候选值体现了领域知识。
-
-## 交叉: crossover()
-
-不是均匀交叉，而是**功能分区交叉**：
-
-```
-child = 入场信号(父A) + 出场信号(父B)
-        logic_genes = random.choice([A, B])
-        risk_genes = random.choice([A, B])
-        execution_genes = A 的（子代继承父A的交易对和周期）
-```
-
-MTF 层的交叉：如果双亲都有 layers，按位置配对交叉（zip），每个对应层做同样的 entry-from-A + exit-from-B。单亲有 layers 时直接继承。`mtf_mode`、`confluence_threshold`、`proximity_mult` 从双亲中随机选一个继承。
-
-## 种群初始化 (population.py)
-
-### 7 种经典策略模板
-
-| 模板名 | 策略类型 | 入场触发 | 入场守卫 | 出场触发 | 出场守卫 |
-|--------|----------|----------|----------|----------|----------|
-| trend_ema | EMA 趋势跟随 | MACD histogram cross_above 0 | EMA(50) price_above | MACD histogram cross_below 0 | ATR(14) |
-| momentum | RSI 动量 | RSI(14) < 30 | MACD histogram cross_above | RSI(14) > 70 | BB percent > 0.8 |
-| mean_reversion | BB 均值回归 | BB percent < 0.0 | RSI(14) < 35 | BB percent > 0.8 | — |
-| trend_breakout | BB 挤压突破 | MACD histogram cross_above | BB bandwidth < 0.02 | MACD histogram cross_below | ATR(14) |
-| dual_ma_cross | 双均线交叉 | EMA(9) cross_above | EMA(21) price_above | EMA(9) cross_below | EMA(21) price_below |
-| multi_tf_trend | 多周期趋势 | EMA(50) cross_above | ADX(14) > 25 | EMA(50) cross_below | ATR(14) |
-| volatility | 波动率突破 | MACD histogram cross_above | BB bandwidth < 0.02 | MACD histogram cross_below | ATR(14) |
-
-### init_population() 的 40/40/20 比例
-
-| 比例 | 来源 | 细节 |
-|------|------|------|
-| 40% | 模板突变 | 从 STRATEGY_TEMPLATES 选一个模板生成种子，对种群前 3 名之一做一次随机变异 |
-| 40% | Profile 引导随机 | `create_random_dna(profiled=True)`，按 indicator_profile 推荐参数和条件 |
-| 20% | 自由探索 | `create_random_dna(profiled=False)`，完全随机参数和条件 |
-
-**去重**: `exclude_signatures` 参数允许排除已有的基因签名，用于连续进化时避免重复探索。去重后不足的部分用随机个体补充（最多尝试 size*3 次）。
-
-**验证失败回退**: 如果 `validate_dna()` 失败，回退到固定的 RSI(14) < 30 / RSI(14) > 70 简单策略。
-
-### MTF 层随机生成
-
-当 `timeframe_pool` 包含 >1 个时间周期时，`create_random_dna()` 和 `_dna_from_template()` 会创建 MTF 层：
-
-- `create_random_mtf_layer(timeframe, symbol)` — 生成带 role 的随机层
-  - role = `derive_role(timeframe)`，60% 概率直接使用推导值，40% 设为 "execution"
-  - 随机生成 1-2 个信号基因（entry trigger + exit trigger）
-- 最多创建 2 个额外层（执行时间周期之外）
-- `_layers_explicit = True` 确保生成的 DNA 被识别为 MTF 策略
-- direction="mixed" 在创建时被随机解析为 long 或 short
-
-## 多样性系统 (diversity.py)
-
-### 三层距离度量
-
-| 层级 | 函数 | 度量方式 |
-|------|------|----------|
-| 基因型 | `genotype_distance()` | 按角色分组对比 signal_genes 的指标名、参数差、条件类型 |
-| 表型 | `signal_distance()` | 对比 total_trades、win_rate、annual_return、max_drawdown 的差异 |
-| 评分 | `equity_distance()` | 对比 scoring 的 dimension_scores 差异 |
-
-表型和评分距离依赖 `_eval_diagnostics` 属性（由评估阶段设置），缺失时降级到基因型距离。
-
-### MTF 层感知签名
-
-`_gene_signature()` 在基因签名中包含 MTF 层结构：当 `dna.layers` 存在时，为每层追加 `L:{timeframe}:{role},{indicator}:{condition_type}...`。这使得具有不同层配置的策略产生不同的多样性签名，避免结构不同的 MTF 策略被误判为"相同"。
-
-### 适应度共享
-
-`apply_fitness_sharing()` 对距离 < share_radius(0.3) 的个体做惩罚：shared_score = raw_score / sharing_sum。距离越近的个体群，有效适应度越低。
-
-**注意**: `apply_fitness_sharing()` 在主循环 `evolve()` 中**没有被调用**。它是一个可用但未启用的机制（推断）。
-
-### 新鲜血液与多样性维护
-
-- `inject_fresh_blood()`: 每代注入 3-5 个完全随机的个体，接受 `timeframe_pool` 参数
-- `check_and_maintain_diversity()`: 当 diversity < 0.30 或某签名占 >30% 种群时，重复个体被随机新个体替换，接受 `timeframe_pool` 参数
-
-## 冠军追踪 (champion.py)
-
-`ChampionTracker` 用 `threading.Lock` 保证原子更新。score、metrics、dimension_scores 作为**不可变快照** (`ChampionRecord`) 一起更新——注释说这是为了修复"best_score 和 champion_metrics 来自不同个体"的同步 bug。
-
-分数 <= 0 的候选不会更新冠军。
-
-## 血统追踪 (lineage.py)
-
-轻量工具：`record_mutation()` 向 `dna.mutation_ops` 追加操作描述，`format_lineage()` 输出可读的血统链（ID + 代数 + 父代 + 变异序列）。
-
-**注意**: 实际变异算子（operators.py）已经自行维护 `mutation_ops`，`record_mutation()` 似乎是一个未被主流程使用的辅助函数（推断）。
-
-## 数据流
-
-```
-EvolutionEngine.evolve(ancestor, evaluate_fn)
-  ↓
-init_population(ancestor, extra_ancestors, ...)
-  ├─ 40% 模板突变个体
-  ├─ 40% Profile 引导随机个体
-  └─ 20% 自由探索个体
-  ↓
-逐代:
-  evaluate_fn(dna) → score    (由 api/runner.py 注入：回测+评分)
-  ↓
-_tournament_select → parents
-  ↓
-crossover(p1, p2) → child
-random.choices(mutation_pool) → n_mutations 次变异
-  ↓
-inject_fresh_blood(3-5 个随机个体)
-check_and_maintain_diversity(替换重复)
-  ↓
-next generation
-  ↓
-EarlyStopChecker → stop or continue
-  ↓
-返回 { champion, champion_score, history, stop_reason, total_generations }
-```
-
-## 涉及文件
-
-| 文件 | 核心内容 |
-|------|---------|
-| `core/evolution/engine.py` | 主进化循环、早停、自适应变异、模板偏好 |
-| `core/evolution/operators.py` | 6 种变异算子、交叉、条件生成、MTF 变异 |
-| `core/evolution/population.py` | 种群初始化、7 种策略模板、随机 DNA 生成 |
-| `core/evolution/diversity.py` | 多层距离度量、适应度共享、新鲜血液、多样性维护 |
-| `core/evolution/champion.py` | 线程安全冠军追踪 |
-| `core/evolution/lineage.py` | 变异历史记录 |
+| `EvolutionEngine.evolve(ancestor, evaluate_fn, ...) -> Dict` | **主入口**，返回 champion/history/stop_reason |
+| `EarlyStopChecker.check(best, gen) -> (action, reason)` | 早停检查 |
+| `mutate_params(dna) -> StrategyDNA` | 参数变异 |
+| `mutate_indicator(dna) -> StrategyDNA` | 同类指标替换 |
+| `mutate_logic(dna) -> StrategyDNA` | AND/OR 翻转 |
+| `mutate_risk(dna) -> StrategyDNA` | 风控微调 |
+| `mutate_add_signal(dna) -> StrategyDNA` | 添加 guard |
+| `mutate_remove_signal(dna) -> StrategyDNA` | 移除 guard |
+| `crossover(parent_a, parent_b) -> StrategyDNA` | 功能分区交叉 |
+| `init_population(size, ancestor, ...) -> List[StrategyDNA]` | 种群初始化 |
+| `create_random_dna(timeframe, ...) -> StrategyDNA` | 随机 DNA |
+| `compute_diversity(population) -> float` | 基因型多样性 |
+| `check_and_maintain_diversity(pop, ...) -> List[StrategyDNA]` | 多样性维护 |
+| `ChampionTracker.update(score, ...) -> bool` | 原子更新冠军 |
+
+## 关键参数
+
+| 参数 | 默认值 | 设计意图 |
+|------|--------|---------|
+| population_size | 15 | 平衡探索广度与计算成本 |
+| max_generations | 200 | 硬上限 |
+| patience | 15 | 连续15代无改善早停 |
+| elite_ratio | 0.15 | 精英保留（至少2个） |
+| target_score | 80.0 | 达标后早停 |
+| min_generations | 20 | 最少运行代数 |
+
+## 约定与规则
+
+- **变异返回新实例**: to_dict() -> 修改 -> from_dict()，永不修改原对象
+- **metadata 更新**: strategy_id(新UUID), parent_ids([原id]), mutation_ops(追加), generation(+1)
+- **只移除 guard**: mutate_remove_signal 不移除 trigger，保护 entry/exit 能力
+- **50/50 层分配**: _pick_signal_pool 在 base 和 MTF 层间均匀分配
+- **ChampionTracker 线程安全**: threading.Lock + copy.deepcopy
+- **种群去重**: exclude_signatures 支持跨批次多样性

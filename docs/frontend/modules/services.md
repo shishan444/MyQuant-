@@ -2,102 +2,64 @@
 
 ## 定位
 
-`web/src/services/` 封装所有后端 REST API 调用。共 7 个文件，1 个共享 axios 实例 + 6 个领域服务。
+`web/src/services/` 封装所有后端 REST API 调用。1 个共享 axios 实例 + 6 个领域服务。
 
-## 共享 Axios 实例 (api.ts)
+## 文件清单
 
-```typescript
-baseURL: VITE_API_BASE_URL || ""
-timeout: 30000ms  // 全局 30s
-transformRequest: FormData 去除 Content-Type, JSON 对象 JSON.stringify
-```
+| 文件 | 职责 |
+|------|------|
+| `api.ts` | Axios 实例工厂 (baseURL from env, 30s timeout) |
+| `datasets.ts` | 数据集 CRUD + CSV 导入 + OHLCV + 图表指标 |
+| `evolution.ts` | 进化任务 CRUD + 暂停/停止/恢复 + 历史 + 策略 |
+| `strategies.ts` | 策略 CRUD + 回测(60s) + 对比 |
+| `validation.ts` | 假设验证 + 规则验证 |
+| `scene.ts` | 场景类型 + 场景验证 |
+| `discovery.ts` | 模式发现 + 相似案例 + 预测 (原生 fetch，非 axios) |
 
-响应拦截器：从 `response.data.detail` 或 `error.message` 提取错误信息。
+## 关键链路
 
-## 领域服务
+### 数据适配 (evolution.ts:65)
 
-### strategies.ts (79 行)
+后端返回 `generations`，前端统一转为 `records` 兼容接口。
 
-| 函数 | 方法 | 端点 | 超时 |
-|------|------|------|------|
-| getStrategies(params?) | GET | /api/strategies | 30s |
-| getStrategy(id) | GET | /api/strategies/{id} | 30s |
-| createStrategy(payload) | POST | /api/strategies | 30s |
-| updateStrategy(id, payload) | PUT | /api/strategies/{id} | 30s |
-| deleteStrategy(id) | DELETE | /api/strategies/{id} | 30s |
-| runBacktest(payload) | POST | /api/strategies/backtest | **60s** |
-| compareStrategies(payload) | POST | /api/strategies/compare | 30s |
+### 超时设计
 
-回测接口独立 60s 超时（计算密集）。
+| 操作 | 超时 |
+|------|------|
+| 默认 | 30s |
+| CSV 单文件导入 | 120s |
+| CSV 批量导入 | 300s |
+| 回测 | 60s |
 
-### evolution.ts (95 行)
+## 关键机制
 
-| 函数 | 方法 | 端点 |
-|------|------|------|
-| getEvolutionTasks(params?) | GET | /api/evolution/tasks |
-| getEvolutionTask(id) | GET | /api/evolution/tasks/{id} |
-| createEvolutionTask(payload) | POST | /api/evolution/tasks |
-| pauseEvolutionTask(id) | POST | /api/evolution/tasks/{id}/pause |
-| stopEvolutionTask(id) | POST | /api/evolution/tasks/{id}/stop |
-| resumeEvolutionTask(id) | POST | /api/evolution/tasks/{id}/resume |
-| getEvolutionHistory(id, params?) | GET | /api/evolution/tasks/{id}/history |
-| getTaskStrategies(taskId) | GET | /api/evolution/tasks/{taskId}/strategies |
-| getDiscoveredStrategies(taskId?, params?) | GET | /api/evolution/tasks/{taskId}/discovered-strategies |
-| getAllDiscoveredStrategies(params?) | GET | /api/evolution/strategies |
+### discovery.ts 独立性
 
-`getEvolutionHistory` 内部将后端的 `generations` 字段重命名为 `records`。
+使用原生 `fetch` 而非共享 axios 实例。自行定义本地接口类型 (DiscoveryRule, SimilarCase 等)，未使用 types/api.ts。
 
-### datasets.ts (106 行)
+## 接口清单
 
-| 函数 | 方法 | 端点 | 超时 |
-|------|------|------|------|
-| getDatasets(params?) | GET | /api/data/datasets | 30s |
-| getDataset(id) | GET | /api/data/datasets/{id} | 30s |
-| importCsv(formData) | POST | /api/data/import | **120s** |
-| importCsvBatch(formData) | POST | /api/data/import-batch | **300s** |
-| deleteDataset(id) | DELETE | /api/data/datasets/{id} | 30s |
-| getOhlcv(id, params?) | GET | /api/data/datasets/{id}/ohlcv | 30s |
-| getDatasetPreview(id, params?) | GET | /api/data/datasets/{id}/preview | 30s |
-| getAvailableSources() | GET | /api/data/available-sources | 30s |
-| getOhlcvBySymbol(symbol, tf, params?) | GET | /api/data/ohlcv/{symbol}/{tf} | 30s |
-| getChartIndicators(symbol, tf, params?) | GET | /api/data/chart-indicators/{symbol}/{tf} | 30s |
+| 服务 | 端点 |
+|------|------|
+| datasets | GET/POST/DELETE datasets, GET ohlcv, GET chart-indicators, GET available-sources |
+| evolution | CRUD tasks, pause/stop/resume, GET history, GET strategies, GET discovered |
+| strategies | CRUD strategies, POST backtest, POST compare |
+| validation | POST validate, POST validate/rules |
+| scene | GET scene/types, POST validate/scene |
+| discovery | POST patterns, POST similar, POST predict |
 
-CSV 导入超时显著增加：单文件 120s，批量 300s。
+## 关键参数
 
-### discovery.ts (125 行)
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| timeout | 30000 | 全局默认 |
+| discovery.horizon | 12 | 前向周期 |
+| discovery.maxDepth | 5 | 决策树深度 |
+| discovery.nNeighbors | 50 | KNN 邻居数 |
 
-| 函数 | 方法 | 端点 |
-|------|------|------|
-| discoverPatterns(params) | POST | /api/discovery/patterns |
-| findSimilar(params) | POST | /api/discovery/similar |
-| predictRange(params) | POST | /api/discovery/predict |
+## 约定与规则
 
-注意：使用原生 `fetch()` 而非共享 axios 实例。
-
-接口定义在文件内：`DiscoveryRule`（条件/置信度/提升度）、`SimilarCase`（距离/未来收益）、`PredictResponse`（预测方向/范围/置信度）。
-
-### validation.ts (17 行)
-
-| 函数 | 方法 | 端点 |
-|------|------|------|
-| validateHypothesis(payload) | POST | /api/validate |
-| validateRules(payload) | POST | /api/validate/rules |
-
-### scene.ts (20 行)
-
-| 函数 | 方法 | 端点 |
-|------|------|------|
-| getSceneTypes() | GET | /api/scene/types |
-| verifyScene(payload) | POST | /api/validate/scene |
-
-## 涉及文件
-
-| 文件 | 行数 | 核心内容 |
-|------|------|---------|
-| `web/src/services/api.ts` | 32 | 共享 axios 实例 |
-| `web/src/services/strategies.ts` | 79 | 策略 CRUD + 回测 |
-| `web/src/services/evolution.ts` | 95 | 进化任务 CRUD + WebSocket |
-| `web/src/services/datasets.ts` | 106 | 数据集 CRUD + CSV 导入 |
-| `web/src/services/discovery.ts` | 125 | 模式发现 + 相似案例 + 预测 |
-| `web/src/services/validation.ts` | 17 | 假设/规则验证 |
-| `web/src/services/scene.ts` | 20 | 场景验证 |
+- 返回 `Promise<T>`，使用 `const { data } = await api.xxx()` 解构
+- URL kebab-case: `/api/data/import-batch`
+- 命名前缀: get/create/update/delete/run
+- discovery.ts 是唯一不用共享 axios 的服务

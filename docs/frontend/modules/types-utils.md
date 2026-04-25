@@ -2,48 +2,42 @@
 
 ## 定位
 
-`web/src/types/` (TypeScript 接口定义)、`web/src/lib/` (业务工具)、`web/src/utils/` (通用工具) 构成前端的基础设施层。
+`web/src/types/` (TypeScript 接口) + `web/src/lib/` (业务工具) + `web/src/utils/` (通用工具) 构成前端基础设施层。提供类型契约、全局常量、格式化工具和数据转换。
 
 ## 类型定义
 
 ### types/api.ts (407 行) -- 核心接口
 
-与后端 API 的类型契约，定义了 35+ 个接口：
+**DNA 结构**:
+```
+DNA
+  signal_genes: SignalGene[]
+  logic_genes: LogicGenes { entry_logic, exit_logic }
+  execution_genes: ExecutionGenes { timeframe, symbol }
+  risk_genes: RiskGenes { stop_loss, take_profit, position_size, leverage, direction }
+  layers?: TimeframeLayerModel[]
+  cross_layer_logic?: "AND" | "OR"
+```
 
-**DNA 相关**：`SignalGene`, `LogicGenes`, `ExecutionGenes`, `RiskGenes`, `TimeframeLayerModel`, `DNA`
-- `RiskGenes.direction` 接受 "long" / "short" / "mixed"
-- `SignalGene.condition.type` 支持 8 种条件类型
+**SignalGene.condition**: 8 种 (lt, gt, le, ge, cross_above, cross_below, price_above, price_below)
 
-**策略相关**：`Strategy`, `BacktestResult`, `StrategyMetrics`
-- `BacktestResult` 包含 18 个字段（result_id 到 liquidated）
-- `StrategyMetrics` 包含 11 个可选指标（annual_return 到 r_squared）
+**EvolutionTask** (30+ 字段): champion_dna, champion_metrics, continuous, population_count, strategy_threshold, exploration_efficiency
 
-**进化相关**：`EvolutionTask` (25+ 字段), `EvolutionHistoryRecord`, `GenerationUpdate`, `DiscoveredStrategy`, `EvolvedStrategy`, `MutationRecord`
-- `EvolutionTaskStatus`: union type (pending/running/paused/stopped/completed)
-- `GenerationUpdate`: WebSocket 消息类型，包含 population_diversity, champion_dna 等
+**BacktestResult**: equity_curve, signals, total_return, sharpe_ratio, dimension_scores, liquidated 等 18 字段
 
-**数据相关**：`Dataset`, `OhlcvData`, `AvailableSource`, `ChartIndicatorsResponse`
-- `Dataset.quality_status`: "complete" / "warning" / "error" / "unknown"
-
-**验证相关**：`ValidateRequest`, `ValidateResponse`, `RuleValidateRequest`, `RuleValidateResponse`
-- `ValidateResponse` 包含 match_rate, triggers, distribution, percentiles, concentration 等
-
-**分页**：`PaginatedResponse<T>`, `StrategyListResponse`, `EvolutionTaskListResponse`, `DatasetListResponse`
+**其他**: Strategy, Dataset, ValidateResponse, RuleValidateResponse, ChartIndicatorsResponse, PaginatedResponse\<T\>
 
 ### types/chart.ts (48 行)
 
-图表相关接口：`OhlcvDataPoint`, `ChartThemeConfig`, `LegendItem`, `EquitySeries`, `BollingerBandData`, `MTFIndicatorData`, `LegendGroup`
+LegendGroup, BollingerBandData, MTFIndicatorData, OhlcvDataPoint, EquitySeries
 
 ### types/scene.ts (59 行)
 
-场景验证接口：`SceneTypeInfo`, `SceneVerifyRequest`, `HorizonSummary`, `SceneTriggerDetail`, `SceneVerifyResponse`
+SceneTypeInfo, SceneVerifyRequest, HorizonSummary, SceneTriggerDetail, SceneVerifyResponse
 
 ### types/strategy.ts (42 行)
 
-实验室配置接口：`IndicatorConfig`, `LabConfig`
-- `ScoreTemplate`: "profit_first" | "steady" | "risk_first" | "custom"
-- `INDICATOR_OPTIONS`: 11 个指标选项
-- `TIMEFRAME_OPTIONS`: 6 个时间周期选项
+IndicatorConfig, LabConfig, ScoreTemplate ("profit_first"|"steady"|"risk_first"|"custom")
 
 ## 业务工具库
 
@@ -51,70 +45,59 @@
 
 | 常量 | 内容 |
 |------|------|
-| SYMBOL_OPTIONS | 4 个交易对 (BTC/ETH/BNB/SOL vs USDT) |
+| SYMBOL_OPTIONS | 4 个交易对 |
 | TIMEFRAME_POOL_OPTIONS | 8 个时间周期 |
-| TF_DURATION | 14 个周期的分钟数映射 |
+| TF_DURATION | 15 个周期->分钟映射 |
 | TF_LAYER_ROLES | 4 种 MTF 角色配置 |
-| INDICATOR_GROUPS | 6 组 ~40 个指标（含中文标签） |
+| INDICATOR_GROUPS | 6 组 37 个指标 (含中文标签) |
 | CONDITION_OPTIONS | 14 种条件类型 |
-| SCORE_TEMPLATE_LABELS | 3 个评分模板 |
-| OPTIMIZE_TARGETS | 3 个优化目标配置 |
+| SCORE_TEMPLATE_LABELS | 3 个模板 |
 | LEVERAGE_OPTIONS | 1x-10x |
-| DIRECTION_OPTIONS | long/short/mixed |
 | CHART_INDICATOR_DEFAULTS | EMA(10,20,50) + BOLL(20,2) + RSI(14) + VOL |
-| MTF_TIMEFRAME_COLORS | 5 个周期的颜色映射 |
+| MTF_TIMEFRAME_COLORS | 5 周期颜色 |
 
-工具函数：`sortTimeframesLongestFirst(tfs)`, `isActiveStatus(status)`
+工具: `sortTimeframesLongestFirst(tfs)`, `isActiveStatus(status)`
 
 ### lib/dna-generator.ts (104 行)
 
-`generateDnaFromValidation(when, then, pair, timeframe) -> DNA`
-
-从 Lab 页面的 WHEN/THEN 条件生成 DNA 结构。有损转换：将前端 ConditionInput 映射为 DNA SignalGene。`CONDITION_TYPE_MAP` 定义 13 种映射。
-
-默认参数：RSI(14), EMA(20), MACD(12,26,9)。
+`generateDnaFromValidation(when, then, pair, tf) -> DNA`。CONDITION_TYPE_MAP 12 种映射。默认参数: RSI(14), EMA(20), MACD(12,26,9)。
 
 ### lib/strategy-utils.ts (36 行)
 
-- `getStrategyType(dna)`: 返回中文分类（趋势/动量/波动率/成交量/混合）
-- `getStrategyName(dna)`: 生成展示名如 "EMA趋势 做多 4H"
+- `getStrategyType(dna)`: 中文分类 (趋势/动量/波动率/成交量/混合)
+- `getStrategyName(dna)`: "EMA趋势 做多 4H"
 
 ### lib/utils.ts (50 行)
 
-通用格式化工具：
-- `cn(...inputs)`: Tailwind merge (clsx + twMerge)
-- `formatPercent(value)`: "+5.0%" / "-3.2%"
-- `formatCurrency(value)`: "$100,000"
-- `formatNumber(value, decimals)`: 固定小数
-- `formatDuration(start, end)`: "X秒"/"X分钟"/"X小时"
-- `formatDateTime(t)`: 中文 locale 日期时间
+`cn()` (tailwind-merge), `formatPercent`, `formatCurrency`, `formatNumber`, `formatDuration`, `formatDateTime`
 
 ## 通用工具
 
 ### utils/evolutionChart.ts (183 行)
 
-进化评分图表数据转换：
+5 趟扫描: (1) 映射+解析 diagnostics (2) 种群边界 (3) 累计最优 (4) 冠军变化 (5) 停滞计数。产出 ChartTransformResult。
 
-- `parseDiagnostics(top3Summary?)`: 解析管道分隔字符串 "best=85.2|pop=2|diag={...}"
-- `transformChartData(records)`: 5 步转换
-  1. 映射原始记录 + 解析诊断
-  2. 检测种群边界（代数重置点）
-  3. 计算累计最佳分数
-  4. 追踪冠军变更（全时间最佳改进）
-  5. 计算停滞计数（在边界处重置）
+### Diagnostics 解析 (evolutionChart.ts:50)
 
-产出 `ChartTransformResult`: data points, champion changes, population boundaries, stats。
+解析 `top3_summary` 格式 "best=85.2|pop=2|diag={...}"。支持 diversity 为数字或对象。
 
-## 涉及文件
+## 关键参数
 
-| 文件 | 行数 | 核心内容 |
-|------|------|---------|
-| `web/src/types/api.ts` | 407 | 35+ API 接口定义 |
-| `web/src/types/chart.ts` | 48 | 图表类型 |
-| `web/src/types/scene.ts` | 59 | 场景验证类型 |
-| `web/src/types/strategy.ts` | 42 | 实验室配置类型 |
-| `web/src/lib/constants.ts` | 337 | 全局常量 + 枚举 |
-| `web/src/lib/dna-generator.ts` | 104 | 条件 -> DNA 转换 |
-| `web/src/lib/strategy-utils.ts` | 36 | 策略分类和命名 |
-| `web/src/lib/utils.ts` | 50 | 格式化工具 |
-| `web/src/utils/evolutionChart.ts` | 183 | 进化图表数据转换 |
+### 评分模板权重 (constants.ts:232)
+
+| 模板 | 年化 | 夏普 | 回撤 | 其他 |
+|------|------|------|------|------|
+| profit_first | 35% | 25% | 25% | 胜率15% |
+| steady | 20% | 35% | 35% | 卡玛10% |
+| risk_first | 10% | 30% | 40% | 卡玛20% |
+
+### MTF 周期颜色 (constants.ts:272)
+
+15m=蓝, 1h=绿, 4h=黄, 1d=紫, 3d=红
+
+## 约定与规则
+
+- 类型按领域划分: api.ts (snake_case 字段, 对应后端), chart.ts, scene.ts, strategy.ts (camelCase)
+- 常量 `as const` 保证类型安全
+- 工具按关注点分: lib/(全局) vs utils/(特定功能)
+- 格式化函数处理边界: formatDuration 捕获异常返回 "-"

@@ -2,144 +2,106 @@
 
 ## 定位
 
-`core/data/` 负责 OHLCV K 线数据的获取、存储和加载。是回测引擎和进化引擎的数据入口——所有数据都从这里流入系统。
+`core/data/` 管理量化交易数据的全生命周期——获取、导入、存储、加载、更新、多时间周期聚合。是所有模块的数据源。
 
-## 文件职责
+## 文件清单
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `storage.py` | 46 | Parquet 文件 CRUD：save / load / merge / get_latest_timestamp |
-| `mtf_loader.py` | 117 | 多时间周期数据加载：单周期 + 指标预计算 + MTF 扩展 + 失败日志 |
-| `fetcher.py` | 63 | 从 Binance API 拉取历史 K 线 |
-| `updater.py` | 81 | 增量更新：检查本地最新时间戳，只拉取缺失数据 |
-| `csv_importer.py` | 408 | CSV 导入：格式自动检测、时间戳精度识别、OHLCV 校验、批量导入 |
-| `__init__.py` | 空 | 无导出 |
+| `storage.py` | 46 | Parquet 读写、合并 |
+| `csv_importer.py` | 408 | CSV 导入（格式检测、解析、验证） |
+| `fetcher.py` | 63 | Binance API 数据拉取 |
+| `updater.py` | 81 | 增量更新 |
+| `mtf_loader.py` | 118 | 统一加载入口 + 多时间周期聚合 |
 
-## 存储层: storage.py
+## 关键链路
 
-极简的 Parquet 文件操作，用 pyarrow 引擎。
-
-文件命名约定: `{SYMBOL}_{TIMEFRAME}.parquet`（如 `BTCUSDT_4h.parquet`），存放在 `data/market/` 目录。这个约定被 mtf_loader、updater、csv_importer 三处共同依赖。
-
-`merge_parquet()` 的去重策略: `pd.concat` → `index.duplicated(keep="last")` → `sort_index`。新数据覆盖旧数据的同时间戳行。
-
-## 数据加载: mtf_loader.py
-
-### 文件查找: find_parquet()
-
-直接路径拼接 `{data_dir}/{symbol}_{timeframe}.parquet`，找不到时尝试别名：
-
-| 时间周期 | 别名 |
-|----------|------|
-| 1h | 60m |
-| 1d | 1D |
-
-其余周期没有别名。symbol 名会经过 `re.sub(r"[^A-Za-z0-9]", "", symbol)` 清洗——去掉所有非字母数字字符。
-
-### load_and_prepare_df(): 单周期加载
+### CSV 单文件导入
 
 ```
-find_parquet(data_dir, symbol, timeframe)
-  ↓ load_parquet
-  ↓ 按 data_start/data_end 切片
-  ↓ 检查 min_bars (默认 50)
-  ↓
-compute_all_indicators(df)  ← B3 模块，全量 56 种指标预计算
-  ↓
-返回 enhanced_df (100+ 列)
+csv_importer.py:249 import_csv(path, data_dir, symbol, interval, mode)
+  L269-273  自动检测 symbol/interval（从文件名），不足则抛异常
+  L276-279  read_csv(path) 读取并标准化 + validate_ohlcv(df) 验证
+  L281-282  dataset_id = {symbol}_{interval}，确定 parquet 路径
+  L285-287  detect_format() 检测格式和时间戳精度
+  L290-298  根据 mode: REPLACE/MERGE/NEW 选择写入策略
 ```
 
-这个函数被回测 API 和进化 runner 调用，是系统的数据主入口。
+格式检测 (detect_format, L86-122): 第一行检查列名 -> GENERIC_OHLCV；12列数字 -> BINANCE_OFFICIAL。
 
-### load_mtf_data(): MTF 扩展加载
-
-在已有执行周期 DataFrame 的基础上，加载 DNA 需要的其他时间周期数据。每个额外周期都独立做一次 `compute_all_indicators()`。
-
-返回 `Dict[str, pd.DataFrame]`（key = 时间周期），**始终包含执行周期本身**。即使没有额外周期成功加载，也返回至少含执行周期的 dict（不会返回 None）。
-
-**失败日志**: 加载异常被 `except Exception as e` 捕获，通过 `logging.warning("Failed to load MTF data for %s: %s", tf, e)` 记录警告后 continue。MTF 策略的部分时间周期数据缺失不会中断流程，只是缺失周期的信号无法计算。
-
-## Binance 数据拉取: fetcher.py
-
-封装 `binance.client.Client.get_historical_klines()`，返回标准化 DataFrame（DatetimeIndex UTC, columns: OHLCV + trades）。
-
-默认拉取 2 年历史。不需要 API key 就能用（Binance 公开端点）。
-
-## 增量更新: updater.py
+### 多时间周期数据加载
 
 ```
-get_latest_timestamp(path)
-  ↓
-  ├─ None → 全量拉取 (history_years 年)
-  └─ 有值 → 从 latest_ts 开始增量拉取
-  ↓
-merge (concat + dedup + sort)
-  ↓
-save_parquet
+mtf_loader.py:41 load_and_prepare_df(data_dir, symbol, timeframe, ...)
+  L56-58  符号清洗 + find_parquet 查找文件（支持别名）
+  L61     load_parquet 读取原始 OHLCV
+  L62-63  检查最小数据量 (50 bars)
+  L65-70  日期范围切片
+  L72     compute_all_indicators(df) -- 调用 B3 模块预计算
+
+mtf_loader.py:75 load_mtf_data(data_dir, symbol, exec_timeframe, enhanced_df, needed_tfs)
+  L93  初始化 {exec_timeframe: enhanced_df}
+  L95-115  遍历额外时间周期，逐个加载 + 计算指标
+  L117  返回 Dict[str, pd.DataFrame]
 ```
 
-`update_market_data()` 是前端"数据管理"页面的"更新数据"按钮的后端实现。
+文件查找 (find_parquet, L28-38): 先尝试主路径，失败则遍历 `_TF_ALIASES` 别名列表。
 
-## CSV 导入: csv_importer.py
-
-### 格式自动检测
-
-| 格式 | 判定条件 |
-|------|----------|
-| BINANCE_OFFICIAL | 无 header，12 列，第一列是数字 |
-| GENERIC_OHLCV | 有 header，列名可识别 |
-
-### 时间戳精度
-
-13 位 → 毫秒 (ms)，16 位 → 微秒 (us)。小于 10 位抛异常。
-
-### 文件名解析
-
-正则 `{SYMBOL}-{INTERVAL}-*.csv`（如 `BTCUSDT-4h-2025-01.csv`）。symbol 和 interval 可以显式传入覆盖自动检测。
-
-### OHLCV 校验
-
-导入前自动校验: NaN 检查、high >= max(O,C,L)、low <= min(O,C,H)、volume >= 0。校验失败直接抛 ValueError。
-
-### 导入模式
-
-| 模式 | 行为 |
-|------|------|
-| MERGE | 与已有 Parquet 合并（去重） |
-| REPLACE | 覆盖已有 Parquet |
-| NEW | 文件不存在时创建，等价于 REPLACE |
-
-### 批量导入
-
-`import_csv_batch()` 读取多个 CSV，concat → dedup → sort → 写入单个 Parquet。从第一个文件检测 metadata。
-
-## 数据流
+### 增量更新
 
 ```
-外部数据源:
-  ├─ Binance API (fetcher.py) → update_market_data(updater.py) → Parquet
-  ├─ CSV 文件 (csv_importer.py) → Parquet
-  └─ 直接 Parquet 文件
-      ↓
-storage.load_parquet()
-      ↓
-mtf_loader.load_and_prepare_df()
-  ├─ find_parquet → 文件查找（含别名）
-  ├─ load_parquet → 读取
-  ├─ 日期切片 + min_bars 检查
-  └─ compute_all_indicators → 全量指标预计算
-      ↓
-enhanced_df → 回测引擎 / 进化引擎
-      ↓
-(可选) load_mtf_data() → 额外周期 enhanced_df
+updater.py:18 update_market_data(symbol, interval, data_dir, history_years)
+  L45  get_latest_timestamp(path) 检查本地最新数据
+  L47-57  无本地数据 -> 全量拉取 (history_years 年)
+  L60-67  有本地数据 -> 从最新时间增量拉取
+  L74-79  合并、去重、排序、保存
 ```
 
-## 涉及文件
+## 关键机制
 
-| 文件 | 核心内容 |
-|------|---------|
-| `core/data/storage.py` | Parquet CRUD |
-| `core/data/mtf_loader.py` | 单周期 + MTF 数据加载与指标预计算 |
-| `core/data/fetcher.py` | Binance K 线拉取 |
-| `core/data/updater.py` | 增量更新 |
-| `core/data/csv_importer.py` | CSV 导入（格式检测、校验、批量） |
+### OHLCV 数据验证 (csv_importer.py:161-193)
+
+四重检查：(1) NaN 值 (2) high >= max(open,close,low) (3) low <= min(open,close,high) (4) 负成交量。向量化检查。
+
+### Parquet 合并策略 (storage.py:31-45)
+
+`merge_parquet`: concat + `duplicated(keep="last")` + sort_index + save。新数据优先。
+
+### 时间戳精度检测 (csv_importer.py:127-141)
+
+10位以下 -> 错误；10-13位 -> 毫秒；14-16位 -> 微秒。
+
+## 接口定义
+
+| 函数 | 签名 | 位置 |
+|------|------|------|
+| `save_parquet` | `(df, path) -> None` | storage.py:10 |
+| `load_parquet` | `(path) -> DataFrame` | storage.py:16 |
+| `get_latest_timestamp` | `(path) -> Timestamp or None` | storage.py:21 |
+| `merge_parquet` | `(new_df, path) -> None` | storage.py:31 |
+| `import_csv` | `(path, data_dir, ...) -> CsvImportResult` | csv_importer.py:249 |
+| `import_csv_batch` | `(paths, data_dir, ...) -> CsvImportResult` | csv_importer.py:316 |
+| `detect_format` | `(path) -> ImportFormat` | csv_importer.py:86 |
+| `validate_ohlcv` | `(df) -> list[str]` | csv_importer.py:161 |
+| `fetch_klines` | `(symbol, interval, ...) -> DataFrame` | fetcher.py:9 |
+| `update_market_data` | `(symbol, interval, ...) -> DataFrame` | updater.py:18 |
+| `find_parquet` | `(data_dir, symbol, tf) -> Path or None` | mtf_loader.py:28 |
+| `load_and_prepare_df` | `(data_dir, symbol, tf, ...) -> DataFrame or None` | mtf_loader.py:41 |
+| `load_mtf_data` | `(data_dir, symbol, exec_tf, ...) -> Dict[str, DataFrame]` | mtf_loader.py:75 |
+
+## 关键参数
+
+| 参数 | 位置 | 默认值 | 设计意图 |
+|------|------|--------|---------|
+| `min_bars` | mtf_loader.py:47 | 50 | 最小有效数据条数，避免指标计算不稳定 |
+| `history_years` | updater.py:22 | 2 | 首次全量拉取的年数 |
+| `mode` | csv_importer.py:36 | MERGE | MERGE=合并去重, REPLACE=覆盖, NEW=新文件 |
+| `_TF_ALIASES` | mtf_loader.py:16-25 | -- | 时间周期别名 (1h=[1h,60m], 1d=[1d,1D]) |
+
+## 约定与规则
+
+- **Parquet 命名**: `{SYMBOL}_{TIMEFRAME}.parquet`
+- **DataFrame 格式**: DatetimeIndex(UTC) + 列 `open, high, low, close, volume`
+- **符号清洗**: `re.sub(r"[^A-Za-z0-9]", "", symbol)`
+- **存储引擎**: pyarrow
+- **数据验证**: 导入前强制 OHLCV 验证，不通过则 ValueError

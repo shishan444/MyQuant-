@@ -2,109 +2,90 @@
 
 ## 定位
 
-`web/src/components/charts/` 基于 TradingView lightweight-charts 构建的金融图表系统。KlineChart 是核心编排器，管理主图（K 线 + 指标叠加）和副图（RSI/成交量/MACD/KDJ）的双图表实例生命周期。AnnotationLayer 提供用户绘图能力。
+`web/src/components/charts/` 基于 TradingView lightweight-charts 构建金融图表系统。KlineChart 是核心，管理主图(K线+指标)和副图(RSI/成交量/MACD/KDJ)的双实例生命周期。AnnotationLayer 提供用户绘图。
 
-## 文件职责
+## 文件清单
 
-| 文件 | 行数 | 职责 |
-|------|------|------|
-| `KlineChart.tsx` | 921 | 核心图表编排器：双图表实例 + 指标/信号/标注系列管理 + forwardRef 暴露控制 |
-| `AnnotationLayer.tsx` | 193 | 透明 Canvas 叠加层：水平线和矩形框绘图工具 |
-| `ChartEmbeddedLegend.tsx` | 67 | 分组可折叠图例（十字线联动实时值 + 系列可见性切换） |
-| `ChartLegend.tsx` | 46 | 扁平图例（旧版，当前未使用） |
-| `ChartToolbar.tsx` | 48 | 缩放/全屏/重置工具栏（纯展示） |
-| `core/useChartSync.ts` | 55 | 主图/副图可见范围双向同步 hook |
-| `core/chartThemes.ts` | 77 | 暗色主题配置 + 语义颜色常量 |
+| 文件 | 职责 |
+|------|------|
+| `KlineChart.tsx` | 核心图表 (~917 行), forwardRef 暴露命令式 API |
+| `core/useChartSync.ts` | 主图/子图时间轴同步 |
+| `core/chartThemes.ts` | 暗色主题配置 |
+| `AnnotationLayer.tsx` | Canvas 注释层 (水平线+矩形) |
+| `ChartEmbeddedLegend.tsx` | 分组折叠式图例 |
+| `ChartToolbar.tsx` | 缩放/全屏工具栏 |
 
-## 架构分层
+## 关键链路
+
+### 图表创建 (useLayoutEffect, KlineChart.tsx:304)
 
 ```
-┌─────────────────────────────────────────┐
-│  KlineChart (forwardRef, 921 行)         │
-│  ┌─────────────────────────────────────┐│
-│  │ ChartToolbar (absolute top-right)   ││
-│  │ ChartEmbeddedLegend (absolute top-left) │
-│  │                                     ││
-│  │ ┌─────────────────┐ ┌────────────┐ ││
-│  │ │  主图 (flex-3)   │ │ 副图 (flex-1)│ ││
-│  │ │  K 线 + EMA/BOLL │ │ RSI/Vol/MACD│ ││
-│  │ │  + 信号标注      │ │ /KDJ       │ ││
-│  │ └─────────────────┘ └────────────┘ ││
-│  │        useChartSync 双向同步         ││
-│  └─────────────────────────────────────┘│
-└─────────────────────────────────────────┘
-
-┌─────────────────────────────────────────┐
-│  AnnotationLayer (独立组件, 外层使用)     │
-│  Canvas overlay on chartContainer       │
-│  Props: chartApi + candleSeries         │
-└─────────────────────────────────────────┘
+createChart(mainRef, DARK_CHART_THEME)          -- 主图 78% 高度
+addSeries(CandlestickSeries)                      -- K 线
+ResizeObserver 监听尺寸变化
+subscribeCrosshairMove 更新图例数值
+useChartSync 同步主图/子图时间轴
 ```
 
-## KlineChart 核心实现
+### 数据更新 (useEffect, KlineChart.tsx:410)
 
-### forwardRef 暴露接口
+单个 useEffect 处理所有数据: candle, indicators, BOLL, volume, MTF, signals, triggers。使用 `initialFitDoneRef` 确保仅首次 fit。
 
-```typescript
-interface KlineChartHandle {
-  scrollToTime(time: number): void;
-  zoomIn(): void;
-  zoomOut(): void;
-  resetView(): void;
-}
-```
+### 子图数据 (KlineChart.tsx:672-832)
 
-父组件（BacktestModePanel、Lab、SceneModePanel）通过 ref 调用这些方法控制图表。
+| 子图类型 | 内容 |
+|---------|------|
+| volume | HistogramSeries + 绿红色柱 |
+| macd | histogram + macd 线 + signal 线 |
+| rsi | 主线 + 70/30 参考线 |
+| kdj | K/D/J 三线 + 80/20 参考线 |
 
-### 数据输入 Props
+## 关键机制
 
-| Prop | 类型 | 用途 |
-|------|------|------|
-| data | `CandleData[]` | OHLCV K 线数据 |
-| indicators | `IndicatorData[]` | 指标线（EMA 等） |
-| signals | `SignalData[]` | 买卖信号标注 |
-| triggers | `TriggerMarker[]` | 触发器标注（场景验证用） |
-| bollData | `IndicatorData[]` | 布林带数据 |
-| volumeData | `IndicatorData[]` | 成交量柱状图 |
-| macdData | `IndicatorData[]` | MACD 副图数据 |
-| kdjData | `IndicatorData[]` | KDJ 副图数据 |
-| mtfIndicators | 按时间周期分组 | 多周期指标叠加 |
-| subChartType | `"volume" \| "macd" \| "rsi" \| "kdj"` | 副图类型切换 |
+### 时间轴同步 (useChartSync.ts:14)
 
-### 双图表实例
+`syncing` ref 防双向订阅无限循环。`subscribeVisibleLogicalRangeChange` 双向绑定。
 
-`useLayoutEffect` 创建两个独立的 lightweight-charts 实例：
-- **主图**: K 线 + 指标叠加（EMA/BOLL/MTF 指标）+ 信号标注
-- **副图**: 根据 `subChartType` 显示 RSI/成交量/MACD/KDJ
+### 暗色主题 (chartThemes.ts:9)
 
-`useChartSync` 通过 `subscribeVisibleLogicalRangeChange` 实现双向滚动/缩放同步，用 `syncing` ref 防止循环更新。
+半透明深色 `rgba(13,17,23,0.8)`，点状网格。颜色: 上涨 #00C853, 下跌 #FF1744。
 
-### 触发器标注
+### 注释层 (AnnotationLayer.tsx:24)
 
-触发器标注（场景验证用）放在一条偏移线系列上，位于 K 线高点上方 1.2%。每种子类型有特定颜色：double_top = 琥珀色，head_shoulders_top = 紫色，triple_top = 蓝色等。
+Canvas 叠加层，支持水平线和矩形框。`subscribeVisibleLogicalRangeChange` 平移/缩放时重绘。鼠标: mousedown 起点, mouseup 完成绘制。
 
-### 状态依赖
+### 图例 (ChartEmbeddedLegend.tsx:12)
 
-唯一的 store 依赖是 `useChartSettings()`（来自 `@/stores/chart-settings`），控制 EMA 列表和 BOLL 开关。图例的系列可见性由 `ChartEmbeddedLegend` 的 `onToggle` 回调在组件内部管理。
+分组折叠式，`onToggle` 控制可见性 (设 `color: "transparent"`)。显示实时十字光标数值。
 
-## AnnotationLayer
+### 价格范围控制 (KlineChart.tsx:637)
 
-独立于 KlineChart 的透明 Canvas 叠加层。接收父页面传入的 `chartApi` 和 `candleSeries` 引用。
+首次加载计算 tight range + 8% margin。autoScale 禁用，用户自由缩放。
 
-| 工具 | 操作 | 渲染 |
-|------|------|------|
-| line | 单击放置 | 琥珀色虚线 + 价格标签 |
-| box | 拖拽绘制 | 紫色虚线矩形 + 半透明填充 |
+## 接口定义
 
-Canvas 尺寸 DPR 感知。通过 `subscribeVisibleLogicalRangeChange` 订阅图表平移/缩放事件触发重绘。`activeTool` 控制 pointer-events：有工具激活时接收鼠标事件，否则穿透到下层图表。
+| 接口 | 说明 |
+|------|------|
+| KlineChartProps | data, indicators?, signals?, triggers?, height?=450, bollData?, volumeData?, mtfIndicators?, subChartType?, macdData?, kdjData? |
+| KlineChartHandle | scrollToTime(time), zoomIn(), zoomOut(), resetView() |
+| Annotation | id, type("line"|"box"), price?, timeStart?, timeEnd?, priceEnd?, label? |
+| CandleData/IndicatorData/SignalData | 核心数据类型 |
 
-## 涉及文件
+## 关键参数
 
-| 文件 | 核心内容 |
-|------|---------|
-| `components/charts/KlineChart.tsx` | 双图表编排器，forwardRef，系列生命周期管理 |
-| `components/charts/AnnotationLayer.tsx` | Canvas 绘图覆盖层 |
-| `components/charts/ChartEmbeddedLegend.tsx` | 分组图例 + 可见性控制 |
-| `components/charts/ChartToolbar.tsx` | 缩放/全屏控件 |
-| `components/charts/core/chartThemes.ts` | 暗色主题 + 颜色常量 |
-| `components/charts/core/useChartSync.ts` | 主图/副图范围同步 |
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| 主图高度 | 78% | |
+| 子图高度 | 22% | |
+| 默认总高度 | 450px | |
+| 价格范围 margin | 8% | |
+| 触发点偏移 | 1.012x | 高点上方 1.2% |
+| 缩放 | 放大 0.8x, 缩小 1.25x | |
+
+## 约定与规则
+
+- forwardRef + useImperativeHandle 暴露控制方法
+- 系列引用存 useRef: indicatorSeriesRefs, bollSeriesRefs 等
+- 数据更新先清除旧系列再创建新系列
+- 时间转换 toTime: 兼容带/不带 T 的 ISO 字符串
+- initialFitDoneRef 防重复 fitContent

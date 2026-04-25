@@ -26,3 +26,4 @@
 - [2026-04-25] [doc-rebuild] D4: 更新 backtest-engine.md（双向交易、from_order_func）和 data-storage.md（mtf_loader 日志）
 - [2026-04-25] [doc-rebuild] D5: 新增前端 4 模块文档（pages-routes/services/state-management/types-utils）
 - [2026-04-25] [doc-rebuild] D6: 更新 backend/architecture.md 和 INDEX.md，全量文档更新完成
+- [2026-04-25] [doc-rebuild] D7: 全量深层文档重写 -- 19 个模块文档补充 6 维度（逻辑/链路/机制/接口/参数/约定），基于源码逐行分析

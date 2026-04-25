@@ -2,92 +2,78 @@
 
 ## 定位
 
-`core/persistence/` 是进化引擎的 SQLite 持久化层，支持 checkpoint-resume（中断恢复）和历史评分追踪。注意：策略/回测结果/数据集的 CRUD 在 `api/db_ext.py`，不在本模块。
+`core/persistence/` 是进化引擎的 SQLite 持久化层，支持 checkpoint-resume（中断恢复）和历史评分追踪。注意: 策略/回测结果/数据集的 CRUD 在 `api/db_ext.py`，不在本模块。
 
-## 文件职责
+## 文件清单
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `db.py` | 272 | SQLite 操作：3 张表的 CRUD + WAL 模式 |
-| `checkpoint.py` | 90 | 进化 checkpoint 保存与恢复 |
-| `__init__.py` | 空 | 无导出 |
+| `db.py` | 272 | 3 张表 CRUD (evolution_task/generation_snapshot/evolution_history) |
+| `checkpoint.py` | 90 | 高级保存/恢复接口 |
 
-## 三张表
+## 关键链路
 
-### evolution_task
-
-每行一个进化任务，核心字段：
-
-| 字段 | 类型 | 含义 |
-|------|------|------|
-| task_id | TEXT PK | UUID |
-| status | TEXT | pending/running/paused/stopped/completed |
-| target_score | REAL | 目标分数 |
-| symbol / timeframe | TEXT | 交易对和周期 |
-| initial_dna | TEXT (JSON) | 初始 DNA |
-| champion_dna | TEXT (JSON) | 冠军 DNA |
-| stop_reason | TEXT | 停止原因 |
-| current_generation | INTEGER | 当前代数 |
-| best_score | REAL | 最佳分数 |
-| leverage / direction | INT/TEXT | 任务约束 |
-| continuous | INTEGER | 是否连续进化 |
-| strategy_threshold | REAL | 自动提取阈值 |
-
-### generation_snapshot
-
-每代一个快照，用于 checkpoint-resume：
-
-| 字段 | 类型 | 含义 |
-|------|------|------|
-| task_id + generation | 复合 PK | 任务 + 代数 |
-| population_json | TEXT (JSON) | 完整种群序列化 |
-| best_dna | TEXT (JSON) | 本代最佳 DNA |
-| best_score / avg_score | REAL | 分数 |
-
-### evolution_history
-
-轻量历史记录，用于 UI 图表：
-
-| 字段 | 类型 | 含义 |
-|------|------|------|
-| task_id + generation | 复合 PK | 任务 + 代数 |
-| best_score / avg_score | REAL | 分数 |
-| top3_summary | TEXT | 诊断信息 JSON |
-
-## 连接模式
-
-所有连接使用 WAL (Write-Ahead Logging) 模式支持并发读。短连接模式：每次操作 open → execute → close。
-
-## Checkpoint 机制
+### 保存代 (checkpoint.py:14)
 
 ```
-save_generation() (checkpoint.py)
-  ├─ save_snapshot() → 完整种群写入 generation_snapshot
-  └─ save_history() → 分数写入 evolution_history
-
-resume_evolution() (checkpoint.py)
-  ├─ get_task(status='running')
-  ├─ get_latest_snapshot()
-  └─ 反序列化 population + best_dna → 返回恢复状态
+save_generation(db_path, task_id, generation, best_score, avg_score, best_dna, population)
+  L31-41  save_snapshot(): 序列化 population 为 JSON -> INSERT OR REPLACE
+  L43-51  save_history(): 创建 top3_summary JSON -> INSERT OR REPLACE
 ```
 
-只恢复 status="running" 的任务。
-
-## 数据流
+### 恢复进化 (checkpoint.py:54)
 
 ```
-api/runner.py (EvolutionRunner)
-  ├─ 创建任务 → save_task() [db.py]
-  ├─ 每代回调 → save_generation() [checkpoint.py]
-  │                → save_snapshot() + save_history() [db.py]
-  ├─ 更新状态 → update_task() [db.py]
-  ├─ 读取历史 → get_history() [db.py] → 前端图表
-  └─ 恢复进化 → resume_evolution() [checkpoint.py]
+resume_evolution(db_path, task_id)
+  L67  get_task(): 验证任务存在且 status=="running"
+  L71  get_latest_snapshot(): 获取 generation 降序第一行
+  L76  反序列化 population_json -> [StrategyDNA.from_dict(d)]
+  L79  反序列化 best_dna -> StrategyDNA.from_json()
 ```
 
-## 涉及文件
+## 关键机制
 
-| 文件 | 核心内容 |
-|------|---------|
-| `core/persistence/db.py` | SQLite 3 张表 CRUD |
-| `core/persistence/checkpoint.py` | 进化 checkpoint 保存与恢复 |
+### SQLite WAL 模式 (db.py:25)
+
+允许并发读写。进化引擎长时间运行时 API 可同时读取进度。
+
+### 双写策略 (checkpoint.py:14-51)
+
+每代写入两个表: `generation_snapshot`(完整种群，用于恢复) + `evolution_history`(轻量记录，用于 UI 图表)。分离后图表查询无需解析大型种群 JSON。
+
+### INSERT OR REPLACE
+
+相同 (task_id, generation) 键静默覆盖。简化重试逻辑，但无法检测重复保存。
+
+## 接口定义
+
+| 函数 | 说明 |
+|------|------|
+| `init_db(db_path)` | 初始化 3 张表 + 迁移 |
+| `save_task(db_path, task_id, ...)` | 保存任务 |
+| `update_task(db_path, task_id, status, champion_dna, ...)` | 更新任务 |
+| `get_task(db_path, task_id) -> Dict` | 获取任务 |
+| `get_running_task(db_path) -> Dict` | 获取运行中任务 |
+| `save_snapshot(db_path, task_id, gen, ...)` | 保存种群快照 |
+| `get_latest_snapshot(db_path, task_id) -> Dict` | 获取最新快照 |
+| `save_history(db_path, task_id, gen, ...)` | 保存历史记录 |
+| `get_history(db_path, task_id) -> List[Dict]` | 获取历史列表 |
+| `list_all_tasks(db_path, status, limit, offset)` | 分页任务列表 |
+| `save_generation(db_path, task_id, gen, ...)` | 高级: 保存一代 |
+| `resume_evolution(db_path, task_id) -> Dict` | 高级: 恢复进化 |
+
+## 关键参数
+
+| 参数 | 默认值 | 设计意图 |
+|------|--------|---------|
+| journal_mode | WAL | 并发读写 |
+| limit (list) | 50 | 分页大小 |
+
+## 约定与规则
+
+- **每操作连接**: 每个函数开新连接，无连接池（单用户桌面工具够用）
+- **UTC 时间戳**: `_now()` 返回 UTC ISO 格式
+- **row_factory**: sqlite3.Row 返回类字典行
+- **复合主键**: (task_id, generation) 保证每代一条记录
+- **静默迁移**: ALTER TABLE 捕获"列已存在"异常
+- **JSON 列**: population_json, initial_dna, champion_dna 等存储为 JSON 字符串，SQLite 不验证结构
