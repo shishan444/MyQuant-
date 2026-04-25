@@ -2,13 +2,13 @@
 
 ## 定位
 
-`core/backtest/` 负责把 DNA 信号变成可量化的交易成绩。核心是 vectorbt `Portfolio.from_signals()` 的封装，叠加杠杆资金费率扣除和爆仓检查。Walk-Forward 验证器在此基础上做滑动窗口交叉验证，给进化引擎提供抗过拟合评分。
+`core/backtest/` 负责把 DNA 信号变成可量化的交易成绩。核心是 vectorbt `Portfolio.from_order_func()` 的封装，支持双向交易（long/short/mixed）、杠杆资金费率扣除和爆仓检查。Walk-Forward 验证器在此基础上做滑动窗口交叉验证，给进化引擎提供抗过拟合评分。
 
 ## 文件职责
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `engine.py` | 270 | vectorbt 封装：信号→Portfolio→BacktestResult，含资金费率和爆仓逻辑 |
+| `engine.py` | 499 | vectorbt 封装：信号→Portfolio→BacktestResult，含双向交易、资金费率和爆仓逻辑 |
 | `walk_forward.py` | 177 | Walk-Forward 交叉验证：滑动训练窗口 + 随机样本外月份 |
 | `__init__.py` | 空 | 无导出 |
 
@@ -32,6 +32,7 @@
 | trade_returns | np.ndarray/None | 逐笔收益率数组 |
 | bars_per_year | int | 按时间周期换算的年 K 线数 |
 | add_count / reduce_count | int | 加仓/减仓信号触发次数 |
+| degraded_layers | int | MTF 层因数据缺失被跳过的数量 |
 | metrics_dict | dict/None | `compute_metrics()` 的完整输出 |
 
 **关键区分**: `win_rate` 来自 `compute_metrics()`（可能基于权益变化推算），`trade_win_rate` 直接从 vectorbt 的逐笔 PnL 计算（`pnl > 0` 的比例）。当 `trade_win_rate` 可用时，它比 `win_rate` 更准确。
@@ -50,9 +51,37 @@ BacktestEngine(init_cash=100000, fee=0.001, slippage=0.0005)
 
 ### _build_portfolio(): 信号→Portfolio 的映射
 
-这是 vectorbt 参数组装的核心。关键映射逻辑：
+使用 `Portfolio.from_order_func()` 替代 `from_signals()`，通过自定义 `order_func_nb` (Numba JIT) 实现实时风控（止损/止盈/加仓/减仓/爆仓）。
 
-**方向**: `long → 0, short → 1`（vectorbt 的 direction 编码）
+**方向映射**:
+
+| dna.direction | direction_val | 行为 |
+|---------------|--------------|------|
+| "long" | 0 | 只做多 |
+| "short" | 1 | 只做空 |
+| "mixed" | 2 | 由 direction_signal 逐 bar 决定 |
+
+mixed 模式下 `direction_signal` 从 `SignalSet.entry_direction` 构建（+1=做多, -1=做空），延迟 1 bar 防止前瞻偏差。
+
+### order_func_nb: Numba JIT 交易执行函数
+
+核心交易执行逻辑，在 vectorbt 的每 bar 循环中被调用：
+
+**入场逻辑**：
+- 检查信号类型（entry/add/reduce/exit）
+- long 模式：entry 信号触发做多
+- short 模式：entry 信号触发做空
+- mixed 模式：根据 direction_signal 决定做多或做空
+
+**止损/止盈**（由 vectorbt 的 `sl_stop`/`tp_stop` 参数驱动）：
+- 做多止损：bar_low <= entry_price * (1 - sl_stop) 时触发
+- 做多止盈：bar_high >= entry_price * (1 + tp_stop) 时触发
+- 做空止损：bar_high >= entry_price * (1 + sl_stop) 时触发
+- 做空止盈：bar_low <= entry_price * (1 - tp_stop) 时触发
+
+**加仓**：add 信号触发时以混合均价（blended average）更新入场价。
+
+**信号延迟**：entry/exit/add/reduce 信号均延迟 1 bar（`shift(1)`），防止前瞻偏差。
 
 **仓位大小**: `position_size * leverage`，类型为 `"percent"`。例如 position_size=0.5, leverage=3 → vectorbt 每次开仓用 150% 资金。
 
@@ -119,7 +148,17 @@ BacktestResult(...)
 
 ### run_with_portfolio()
 
-同时返回 `BacktestResult` 和 vectorbt `Portfolio` 对象。但注意：**它调用了两次 `_build_portfolio()`**——`run()` 内部调一次，自己外层又调一次（`run_with_portfolio` line 263 + `run` 内部 line 163）。这意味着对于同一个 DNA，信号计算和 portfolio 构建被重复执行了一遍。用 `run_with_portfolio` 时性能有不必要的翻倍开销（推断，因为 `run()` 没有缓存 portfolio）。
+同时返回 `BacktestResult` 和 vectorbt `Portfolio` 对象的元组。当需要直接操作 Portfolio 对象（如可视化）时使用。
+
+### run() 方法
+
+接受 `StrategyDNA`、`enhanced_df` 和可选的 `dfs_by_timeframe`：
+
+1. 调用 `dna_to_signal_set()` 获取 SignalSet
+2. 调用 `_build_portfolio()` 构建 vectorbt Portfolio
+3. 获取权益曲线并应用资金费率调整
+4. 检查爆仓
+5. 构建并返回 BacktestResult
 
 ## WalkForwardValidator
 
@@ -152,6 +191,8 @@ wf_score = mean(combined_scores)
 
 **共享验证月份**: `val_months` 参数允许外部传入预生成的验证月份列表。进化引擎同一代的所有个体共享相同的验证月份，保证比较公平。如果不传，每个窗口独立随机选验证月。
 
+**MTF 支持**: Walk-Forward 的每个窗口切片会独立加载对应时间段的 MTF 数据，避免跨窗口数据泄漏。
+
 **最少数据要求**: 训练集 < 20 条或验证集 < 5 条的窗口被跳过。总月份数 < train_months + 1 时直接返回零分。
 
 **评分依赖**: Walk-Forward 直接调用 `score_strategy()`（B7 评分系统）和 `compute_metrics()`（B7 指标计算），不是独立算分。
@@ -159,11 +200,12 @@ wf_score = mean(combined_scores)
 ## 数据流
 
 ```
-StrategyDNA + Enhanced DataFrame (OHLCV + 100+ 指标列)
+StrategyDNA + Enhanced DataFrame (OHLCV + 100+ 指标列) + dfs_by_timeframe (MTF)
     ↓
-executor.dna_to_signal_set() → SignalSet { entries, exits, adds, reduces, trend_direction }
+executor.dna_to_signal_set() / mtf_engine.run_mtf_engine()
+  → SignalSet { entries, exits, adds, reduces, entry_direction, mtf_diagnostics }
     ↓
-BacktestEngine._build_portfolio() → vectorbt Portfolio
+BacktestEngine._build_portfolio() → vectorbt Portfolio (from_order_func)
     ↓
 portfolio.value() → 原始权益曲线
     ↓

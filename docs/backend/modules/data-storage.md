@@ -9,7 +9,7 @@
 | 文件 | 行数 | 职责 |
 |------|------|------|
 | `storage.py` | 46 | Parquet 文件 CRUD：save / load / merge / get_latest_timestamp |
-| `mtf_loader.py` | 115 | 多时间周期数据加载：单周期 + 指标预计算 + MTF 扩展 |
+| `mtf_loader.py` | 117 | 多时间周期数据加载：单周期 + 指标预计算 + MTF 扩展 + 失败日志 |
 | `fetcher.py` | 63 | 从 Binance API 拉取历史 K 线 |
 | `updater.py` | 81 | 增量更新：检查本地最新时间戳，只拉取缺失数据 |
 | `csv_importer.py` | 408 | CSV 导入：格式自动检测、时间戳精度识别、OHLCV 校验、批量导入 |
@@ -55,9 +55,9 @@ compute_all_indicators(df)  ← B3 模块，全量 56 种指标预计算
 
 在已有执行周期 DataFrame 的基础上，加载 DNA 需要的其他时间周期数据。每个额外周期都独立做一次 `compute_all_indicators()`。
 
-返回 `Dict[str, pd.DataFrame]`（key = 时间周期）。如果只成功加载了执行周期本身（没有额外周期），返回 None。
+返回 `Dict[str, pd.DataFrame]`（key = 时间周期），**始终包含执行周期本身**。即使没有额外周期成功加载，也返回至少含执行周期的 dict（不会返回 None）。
 
-**静默失败**: 加载异常被 `except Exception: continue` 跳过。MTF 策略的部分时间周期数据缺失不会报错，只是缺失周期的信号无法计算。
+**失败日志**: 加载异常被 `except Exception as e` 捕获，通过 `logging.warning("Failed to load MTF data for %s: %s", tf, e)` 记录警告后 continue。MTF 策略的部分时间周期数据缺失不会中断流程，只是缺失周期的信号无法计算。
 
 ## Binance 数据拉取: fetcher.py
 
