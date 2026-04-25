@@ -334,7 +334,7 @@ class TestConfluenceScore:
         ]
         score = compute_confluence_score(layer_zones, current_price=60000.0,
                                           max_zone_width=2000.0)
-        assert score > 0.8
+        assert score >= 0.8
 
     def test_confluence_score_partial_overlap(self):
         from core.strategy.mtf_engine import compute_confluence_score

@@ -23,6 +23,7 @@ class SignalSet:
     reduces: pd.Series     # reduce position signals
     degraded_layers: int = 0    # number of MTF layers skipped due to missing data
     entry_direction: pd.Series | None = None  # +1 long, -1 short (for mixed direction)
+    mtf_diagnostics: dict | None = None  # MTF engine diagnostic scores
 
 
 def evaluate_condition(
