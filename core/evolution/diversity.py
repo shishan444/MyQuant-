@@ -28,6 +28,14 @@ def _gene_signature(dna: StrategyDNA) -> str:
         parts.append(f"{gene.indicator}({param_summary}):{cond_type}:{gene.role.value}")
     parts.append(f"lev:{dna.risk_genes.leverage}")
     parts.append(f"dir:{dna.risk_genes.direction}")
+    # Include MTF layer structure for diversity (M3 fix)
+    if dna.layers:
+        for layer in dna.layers:
+            layer_parts = [f"L:{layer.timeframe}:{layer.role or 'execution'}"]
+            for g in sorted(layer.signal_genes, key=lambda x: x.role.value):
+                g_cond = g.condition.get("type", "?") if g.condition else "?"
+                layer_parts.append(f"{g.indicator}:{g_cond}")
+            parts.append(",".join(layer_parts))
     return "|".join(parts)
 
 

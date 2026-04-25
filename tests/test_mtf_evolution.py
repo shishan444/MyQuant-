@@ -303,3 +303,128 @@ class TestC2MutationOperatorRegistration:
             "mutate_confluence_threshold should be referenced in engine.py"
         assert "mutate_proximity_mult" in source, \
             "mutate_proximity_mult should be referenced in engine.py"
+
+
+class TestM3DiversitySignatureWithLayers:
+    """M3: _gene_signature should include layer structure so that MTF
+    strategies with different layers are not treated as identical clones.
+
+    Root cause: _gene_signature() only uses dna.signal_genes and ignores
+    dna.layers entirely, so two MTF strategies with same signal_genes but
+    different layer configurations get the same signature.
+    """
+
+    def test_different_layers_different_signatures(self):
+        """Two DNAs with same signal_genes but different layers should
+        have different signatures."""
+        from core.evolution.diversity import _gene_signature
+
+        # Base DNA with no layers
+        dna_a = StrategyDNA(
+            signal_genes=[
+                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           condition={"type": "gt", "threshold": 50}),
+                SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                           condition={"type": "lt", "threshold": 50}),
+            ],
+            execution_genes=ExecutionGenes(timeframe="15m"),
+            layers=[
+                TimeframeLayer(
+                    timeframe="1d",
+                    signal_genes=[
+                        SignalGene("EMA", {"period": 20}, SignalRole.ENTRY_TRIGGER,
+                                   condition={"type": "price_above"}),
+                    ],
+                    role="structure",
+                ),
+            ],
+        )
+        # Same signal_genes, different layer structure
+        dna_b = StrategyDNA(
+            signal_genes=[
+                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           condition={"type": "gt", "threshold": 50}),
+                SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                           condition={"type": "lt", "threshold": 50}),
+            ],
+            execution_genes=ExecutionGenes(timeframe="15m"),
+            layers=[
+                TimeframeLayer(
+                    timeframe="4h",
+                    signal_genes=[
+                        SignalGene("BB", {"period": 20, "std": 2.0}, SignalRole.ENTRY_TRIGGER,
+                                   condition={"type": "price_above"}),
+                    ],
+                    role="zone",
+                ),
+            ],
+        )
+        sig_a = _gene_signature(dna_a)
+        sig_b = _gene_signature(dna_b)
+        assert sig_a != sig_b, \
+            "DNAs with different layer structures should have different signatures"
+
+    def test_same_layers_same_signatures(self):
+        """Two DNAs with identical structure should have same signature."""
+        from core.evolution.diversity import _gene_signature
+
+        layer = TimeframeLayer(
+            timeframe="1d",
+            signal_genes=[
+                SignalGene("EMA", {"period": 20}, SignalRole.ENTRY_TRIGGER,
+                           condition={"type": "price_above"}),
+            ],
+            role="structure",
+        )
+        dna_a = StrategyDNA(
+            signal_genes=[
+                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           condition={"type": "gt", "threshold": 50}),
+            ],
+            execution_genes=ExecutionGenes(timeframe="15m"),
+            layers=[layer],
+        )
+        dna_b = StrategyDNA(
+            signal_genes=[
+                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           condition={"type": "gt", "threshold": 50}),
+            ],
+            execution_genes=ExecutionGenes(timeframe="15m"),
+            layers=[layer],
+        )
+        assert _gene_signature(dna_a) == _gene_signature(dna_b)
+
+    def test_mtf_diversity_recognizes_layer_differences(self):
+        """compute_diversity should recognize MTF layer differences."""
+        from core.evolution.diversity import compute_diversity
+
+        dna_a = StrategyDNA(
+            signal_genes=[
+                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           condition={"type": "gt", "threshold": 50}),
+            ],
+            execution_genes=ExecutionGenes(timeframe="15m"),
+            layers=[
+                TimeframeLayer(timeframe="1d", signal_genes=[
+                    SignalGene("EMA", {"period": 20}, SignalRole.ENTRY_TRIGGER,
+                               condition={"type": "price_above"}),
+                ], role="structure"),
+            ],
+        )
+        dna_b = StrategyDNA(
+            signal_genes=[
+                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                           condition={"type": "gt", "threshold": 50}),
+            ],
+            execution_genes=ExecutionGenes(timeframe="15m"),
+            layers=[
+                TimeframeLayer(timeframe="4h", signal_genes=[
+                    SignalGene("BB", {"period": 20, "std": 2.0}, SignalRole.ENTRY_TRIGGER,
+                               condition={"type": "price_above"}),
+                ], role="zone"),
+            ],
+        )
+        pop = [dna_a, dna_b]
+        div = compute_diversity(pop)
+        assert div == 1.0, \
+            "Population with different layer structures should have diversity=1.0"
