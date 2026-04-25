@@ -92,7 +92,7 @@ def make_signal_gene(
     if params is None:
         params = {"period": 14} if indicator in ("RSI", "EMA") else {}
 
-    condition = {"type": condition_type, "value": condition_value}
+    condition = {"type": condition_type, "threshold": condition_value}
     if condition_type in ("price_above", "price_below"):
         condition = {"type": condition_type}
 
