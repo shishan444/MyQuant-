@@ -4,6 +4,7 @@ Stateless functions shared by the evolution runner and the backtest API.
 """
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Dict, Optional, Set
@@ -108,7 +109,9 @@ def load_mtf_data(
             if len(tf_df) < 50:
                 continue
             dfs_by_timeframe[tf] = compute_all_indicators(tf_df)
-        except Exception:
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.warning("Failed to load MTF data for %s: %s", tf, e)
             continue
 
     return dfs_by_timeframe

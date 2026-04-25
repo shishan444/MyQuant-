@@ -3,6 +3,7 @@
 Verifies that load_mtf_data returns a valid dict (not None) when only
 the execution timeframe data is available, enabling graceful degradation.
 """
+import logging
 import numpy as np
 import pandas as pd
 import pytest
@@ -89,3 +90,75 @@ def test_no_needed_tfs_returns_exec_only():
 
     assert result is not None
     assert "4h" in result
+
+
+class TestM4LoaderExceptionLogging:
+    """M4: mtf_loader should log warnings when data loading fails,
+    not silently swallow exceptions.
+
+    Root cause: bare `except Exception: continue` at line 111-112
+    swallows all errors without logging, making debugging impossible.
+    """
+
+    def test_exception_during_loading_produces_warning_log(self):
+        """When compute_all_indicators raises, a warning should be logged."""
+        import logging
+        from unittest.mock import patch
+
+        enhanced_df = _make_df()
+
+        def mock_find_parquet(data_dir, safe_symbol, tf):
+            if tf == "1d":
+                return Path("/tmp/fake_data/BTCUSDT_1d.parquet")
+            return None
+
+        mock_df = _make_df(300)
+
+        with patch('core.data.mtf_loader.find_parquet', side_effect=mock_find_parquet):
+            with patch('core.data.storage.load_parquet', return_value=mock_df):
+                with patch(
+                    'core.features.indicators.compute_all_indicators',
+                    side_effect=ValueError("Missing column 'close'"),
+                ):
+                    with self._assert_logs('core.data.mtf_loader', level=logging.WARNING) as cm:
+                        result = load_mtf_data(
+                            data_dir=Path("/tmp/fake_data"),
+                            symbol="BTCUSDT",
+                            exec_timeframe="4h",
+                            enhanced_df=enhanced_df,
+                            needed_tfs={"1d"},
+                        )
+                    # Function should still return valid dict (graceful degradation)
+                    assert result is not None
+                    assert "4h" in result
+                    # But should have logged a warning about the failure
+                    assert len(cm.output) > 0, "Expected warning log for failed 1d load"
+                    assert "1d" in cm.output[0], "Log should mention the failed timeframe"
+
+    @staticmethod
+    def _assert_logs(logger_name, level=logging.WARNING):
+        """Context manager to capture log messages."""
+        import contextlib
+
+        class _LogCapture:
+            def __init__(self):
+                self.output = []
+
+            def __enter__(self):
+                self.handler = logging.Handler()
+                self.handler.emit = lambda record: self.output.append(
+                    self.handler.format(record)
+                )
+                logger = logging.getLogger(logger_name)
+                logger.addHandler(self.handler)
+                orig_level = logger.level
+                logger.setLevel(level)
+                self._logger = logger
+                self._orig_level = orig_level
+                return self
+
+            def __exit__(self, *args):
+                self._logger.removeHandler(self.handler)
+                self._logger.setLevel(self._orig_level)
+
+        return _LogCapture()
