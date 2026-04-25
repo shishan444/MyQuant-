@@ -18,3 +18,11 @@
 - [2026-04-23] [doc-rebuild] 完成模块 B11 日志
 - [2026-04-23] [doc-rebuild] 完成模块 B12 可视化
 - [2026-04-23] [doc-rebuild] 后端 12 模块全部完成
+- [2026-04-25] [doc-rebuild] 启动全量文档更新（D0-D6），覆盖 MTF 引擎新增 + 前端待处理模块
+- [2026-04-25] [doc-rebuild] D0: 全量扫描完成，识别后端 10 文件 + 前端 4 模块的文档差距
+- [2026-04-25] [doc-rebuild] D1: 新增 mtf-engine.md（MTF 共振引擎模块文档）
+- [2026-04-25] [doc-rebuild] D2: 更新 strategy-dna.md（derive_role、MTF 控制参数、direction=mixed、SignalSet 新字段）
+- [2026-04-25] [doc-rebuild] D3: 更新 evolution-engine.md（3 MTF 变异算子、diversity MTF 签名、population MTF 层生成）
+- [2026-04-25] [doc-rebuild] D4: 更新 backtest-engine.md（双向交易、from_order_func）和 data-storage.md（mtf_loader 日志）
+- [2026-04-25] [doc-rebuild] D5: 新增前端 4 模块文档（pages-routes/services/state-management/types-utils）
+- [2026-04-25] [doc-rebuild] D6: 更新 backend/architecture.md 和 INDEX.md，全量文档更新完成
