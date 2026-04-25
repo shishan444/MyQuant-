@@ -110,6 +110,9 @@ class DNAModel(BaseModel):
     mutation_ops: List[str] = Field(default_factory=list)
     layers: Optional[List[dict]] = None
     cross_layer_logic: str = "AND"
+    mtf_mode: Optional[str] = None
+    confluence_threshold: float = 0.3
+    proximity_mult: float = 1.5
 
 
 class TimeframeLayerModel(BaseModel):
@@ -120,7 +123,7 @@ class TimeframeLayerModel(BaseModel):
     timeframe: str
     signal_genes: List[SignalGeneModel] = Field(default_factory=list)
     logic_genes: LogicGenesModel = Field(default_factory=LogicGenesModel)
-    role: Optional[str] = None  # "trend" | "execution"
+    role: Optional[str] = None  # "structure" | "zone" | "execution"
 
 
 # ── Strategy Schemas ──
@@ -270,7 +273,6 @@ class EvolutionTaskCreate(BaseModel):
     indicator_pool: Optional[List[str]] = None
     timeframe_pool: Optional[List[str]] = None
     mode: Optional[str] = None
-    walk_forward_enabled: bool = False
     leverage: int = Field(default=1, ge=1, le=10)
     direction: str = Field(default="long", pattern="^(long|short|mixed)$")
     data_start: Optional[str] = None
@@ -311,7 +313,6 @@ class EvolutionTaskResponse(BaseModel):
     mode: Optional[str] = None
     champion_metrics: Optional[Dict[str, Any]] = None
     champion_dimension_scores: Optional[Dict[str, Any]] = None
-    walk_forward_enabled: bool = False
     continuous: bool = True
     strategy_threshold: float = 80.0
     strategy_count: int = 0

@@ -51,6 +51,23 @@ class SignalRole(Enum):
     REDUCE_GUARD = "reduce_guard"     # filters reduce conditions
 
 
+def derive_role(timeframe: str) -> str:
+    """Derive layer role from timeframe string.
+
+    >= 1d -> 'structure'
+    >= 1h -> 'zone'
+    < 1h  -> 'execution'
+    """
+    tf = timeframe.strip().lower()
+    # Extract numeric value and unit
+    if tf.endswith("d"):
+        return "structure"
+    if tf.endswith("h"):
+        hours = int(tf[:-1])
+        return "structure" if hours >= 24 else "zone"
+    return "execution"
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
@@ -152,14 +169,15 @@ class TimeframeLayer:
     Each layer contains signal genes and logic genes evaluated
     independently on its own timeframe's data.
 
-    role: "trend" for state signals (ffilled), "execution" for pulse signals.
+    role: "structure" (>=1d), "zone" (>=1h), or "execution" (<1h).
+          Legacy "trend" is mapped to "structure" on deserialization.
           None defaults to "execution" for backward compatibility.
     """
 
     timeframe: str
     signal_genes: List[SignalGene] = field(default_factory=list)
     logic_genes: LogicGenes = field(default_factory=LogicGenes)
-    role: Optional[str] = None  # "trend" | "execution"
+    role: Optional[str] = None  # "structure" | "zone" | "execution"
 
     def to_dict(self) -> dict:
         return {
@@ -204,6 +222,9 @@ class StrategyDNA:
     mutation_ops: List[str] = field(default_factory=list)
     layers: Optional[List[TimeframeLayer]] = None
     cross_layer_logic: str = "AND"
+    mtf_mode: Optional[str] = None  # "direction" | "confluence" | "direction+confluence" | None
+    confluence_threshold: float = 0.3
+    proximity_mult: float = 1.5
     _layers_explicit: bool = field(default=False, repr=False, init=False)
 
     def __post_init__(self):
@@ -240,6 +261,9 @@ class StrategyDNA:
             "execution_genes": self.execution_genes.to_dict(),
             "risk_genes": self.risk_genes.to_dict(),
             "cross_layer_logic": self.cross_layer_logic,
+            "mtf_mode": self.mtf_mode,
+            "confluence_threshold": self.confluence_threshold,
+            "proximity_mult": self.proximity_mult,
         }
         if self.layers:
             result["layers"] = [layer.to_dict() for layer in self.layers]
@@ -260,6 +284,17 @@ class StrategyDNA:
 
         # Parse cross_layer_logic
         cross_layer_logic = data.pop("cross_layer_logic", "AND")
+
+        # Parse new MTF control fields with defaults
+        mtf_mode = data.pop("mtf_mode", None)
+        confluence_threshold = data.pop("confluence_threshold", 0.3)
+        proximity_mult = data.pop("proximity_mult", 1.5)
+
+        # Map legacy "trend" role -> "structure" in layers
+        if layers:
+            for layer in layers:
+                if layer.role == "trend":
+                    layer.role = "structure"
 
         if "signal_genes" in data and isinstance(data["signal_genes"], list):
             data["signal_genes"] = [
@@ -282,6 +317,9 @@ class StrategyDNA:
         instance = cls(**data)
         instance.layers = layers
         instance.cross_layer_logic = cross_layer_logic
+        instance.mtf_mode = mtf_mode
+        instance.confluence_threshold = confluence_threshold
+        instance.proximity_mult = proximity_mult
         # Mark layers as explicit only if they came from the data (not auto-wrap)
         instance._layers_explicit = layers is not None
 

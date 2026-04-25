@@ -596,8 +596,8 @@ def dna_to_signal_set(
             all_layer_adds.append(resampled_adds)
             all_layer_reduces.append(resampled_reduces)
 
-            if layer_role == "trend":
-                # Trend layers: forward-filled state signals
+            if layer_role in ("trend", "structure", "zone"):
+                # Trend/structure/zone layers: forward-filled state signals
                 trend_entries.append(resampled_entries)
                 trend_exits.append(resampled_exits)
 

@@ -30,23 +30,23 @@ def test_random_layer_has_role():
     for _ in range(50):
         layer = create_random_mtf_layer("1d")
         assert layer.role is not None, "Layer should have a role"
-        assert layer.role in ("trend", "execution"), \
-            f"Role should be 'trend' or 'execution', got '{layer.role}'"
+        assert layer.role in ("trend", "execution", "structure", "zone"), \
+            f"Role should be 'trend', 'execution', 'structure', or 'zone', got '{layer.role}'"
 
 
 def test_random_layer_role_distribution():
-    """Random layers should produce both trend and execution roles."""
+    """Random layers should produce both structure and execution roles."""
     random.seed(42)
     roles = []
     for _ in range(100):
         layer = create_random_mtf_layer("1d")
         roles.append(layer.role)
 
-    trend_count = roles.count("trend")
+    # "structure" is derive_role("1d") which appears ~60% of the time
+    struct_count = roles.count("structure") + roles.count("trend")
     exec_count = roles.count("execution")
 
-    # With "trend" at 1/3 probability and 100 samples, expect ~33 trend
-    assert trend_count > 10, f"Expected some trend layers, got {trend_count}/100"
+    assert struct_count > 10, f"Expected some structure layers, got {struct_count}/100"
     assert exec_count > 10, f"Expected some execution layers, got {exec_count}/100"
 
 
@@ -100,7 +100,9 @@ def test_random_layer_serialization_preserves_role():
     )
 
     restored = StrategyDNA.from_dict(dna.to_dict())
-    assert restored.layers[0].role == original_role
+    # "trend" maps to "structure" on deserialization - both are equivalent
+    expected = "structure" if original_role == "trend" else original_role
+    assert restored.layers[0].role == expected
 
 
 # ── B3: Validator checks layer gene conditions ──

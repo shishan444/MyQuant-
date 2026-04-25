@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from core.strategy.dna import (
     SignalRole, SignalGene, LogicGenes, RiskGenes, ExecutionGenes,
-    StrategyDNA, TimeframeLayer,
+    StrategyDNA, TimeframeLayer, derive_role,
 )
 from core.strategy.validator import validate_dna
 from core.features.indicators import INDICATOR_REGISTRY
@@ -411,7 +411,7 @@ def create_random_mtf_layer(
             entry_logic=random.choice(["AND", "OR"]),
             exit_logic=random.choice(["AND", "OR"]),
         ),
-        role=random.choice(["trend", "execution", "execution"]),
+        role=derive_role(timeframe) if random.random() < 0.6 else "execution",
     )
 
 

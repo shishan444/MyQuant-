@@ -2,7 +2,6 @@
 
 Verifies the complete MTF pipeline after all fixes:
 - MTF strategy backtest produces valid results
-- MTF walk-forward validation uses multi-timeframe data
 - MTF strategy comparison works correctly
 - Evolution produces structurally valid MTF strategies
 - Random MTF layer generates evaluable genes
@@ -23,7 +22,6 @@ from core.strategy.dna import (
     TimeframeLayer,
 )
 from core.backtest.engine import BacktestEngine
-from core.backtest.walk_forward import WalkForwardValidator
 from core.strategy.executor import dna_to_signal_set
 from core.evolution.operators import crossover, mutate_layer_timeframe
 from core.evolution.population import create_random_mtf_layer
@@ -82,7 +80,7 @@ def _make_mtf_dna():
                                 {"type": "price_below"}),
                 ],
                 logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
-                role="trend",
+                role="structure",
             ),
         ],
     )
@@ -143,35 +141,8 @@ def test_single_tf_backtest_unchanged():
     assert len(result.equity_curve) > 0
 
 
-# ── E2E Test 2: MTF Walk-Forward Validation ──
-
-def test_mtf_walk_forward_with_multi_timeframe():
-    """Walk-forward validation should work with MTF data."""
-    dna = _make_mtf_dna()
-    enhanced_df = _make_ohlcv_df(500, "4h")
-    raw_df = enhanced_df[["open", "high", "low", "close", "volume"]].copy()
-    daily_df = _make_ohlcv_df(200, "1d")
-
-    dfs_by_timeframe = {"4h": enhanced_df, "1d": daily_df}
-
-    wf = WalkForwardValidator(train_months=2, slide_months=2)
-    result = wf.validate(dna, enhanced_df, raw_df=raw_df,
-                          dfs_by_timeframe=dfs_by_timeframe)
-
-    assert isinstance(result["wf_score"], float)
-    assert isinstance(result["n_rounds"], int)
-    assert result["n_rounds"] >= 0
 
 
-def test_mtf_walk_forward_backward_compat():
-    """Walk-forward without MTF data should still work."""
-    dna = _make_mtf_dna()
-    enhanced_df = _make_ohlcv_df(500)
-
-    wf = WalkForwardValidator(train_months=2, slide_months=2)
-    result = wf.validate(dna, enhanced_df)
-
-    assert isinstance(result["wf_score"], float)
 
 
 # ── E2E Test 3: MTF Signal Evaluation Pipeline ──
@@ -277,7 +248,7 @@ def test_evolution_cycle_produces_valid_mtf():
             TimeframeLayer("1d", [
                 SignalGene("EMA", {"period": 50}, SignalRole.ENTRY_TRIGGER, "ema_50",
                             {"type": "price_above"}),
-            ], LogicGenes(), role="trend"),
+            ], LogicGenes(), role="structure"),
             TimeframeLayer("1h", [
                 SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, "RSI_14",
                             {"type": "lt", "threshold": 30}),
@@ -297,7 +268,7 @@ def test_evolution_cycle_produces_valid_mtf():
             TimeframeLayer("3d", [
                 SignalGene("EMA", {"period": 200}, SignalRole.ENTRY_TRIGGER, "ema_200",
                             {"type": "price_above"}),
-            ], LogicGenes(), role="trend"),
+            ], LogicGenes(), role="structure"),
         ],
     )
 
@@ -411,11 +382,6 @@ def test_single_tf_dna_still_works_end_to_end():
     bt_result = engine.run(dna, enhanced_df)
     assert bt_result.total_return is not None
 
-    # Walk-forward
-    wf = WalkForwardValidator(train_months=2, slide_months=2)
-    wf_result = wf.validate(dna, enhanced_df, raw_df=raw_df)
-    assert isinstance(wf_result["wf_score"], float)
-
     # Signal evaluation
     sig_set = dna_to_signal_set(dna, enhanced_df)
     assert len(sig_set.entries) == len(enhanced_df)
@@ -442,7 +408,7 @@ def test_mixed_direction_mtf_backtest():
                                 {"type": "price_above"}),
                 ],
                 logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
-                role="trend",
+                role="structure",
             ),
         ],
     )

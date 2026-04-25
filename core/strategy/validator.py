@@ -13,6 +13,7 @@ class ValidationResult:
     """Result of DNA validation."""
     is_valid: bool = True
     errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
 
 
 def validate_dna(dna: StrategyDNA) -> ValidationResult:
@@ -25,8 +26,11 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
     - Position size in [0.10, 1.0]
     - Take profit > stop loss (if set)
     - Condition structure validity for new condition types
+    - cross_layer_logic must be AND or OR (for MTF strategies)
+    - Warn if mixed direction with layers but no trend layer
     """
     errors: List[str] = []
+    warnings: List[str] = []
 
     # For non-MTF strategies, check top-level signal_genes
     if not dna.layers:
@@ -51,6 +55,7 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                 f"MTF strategy supports max 3 layers, got {len(dna.layers)}"
             )
         has_execution = False
+        has_trend = False
         for layer in dna.layers:
             layer_entry = [
                 g for g in layer.signal_genes
@@ -64,12 +69,27 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
             ]
             if not layer_exit:
                 errors.append(f"Layer {layer.timeframe}: no exit signal defined")
-            if layer.role not in (None, "trend", "execution"):
+            if layer.role not in (None, "trend", "execution", "structure", "zone"):
                 errors.append(f"Layer {layer.timeframe}: invalid role '{layer.role}'")
             if layer.role in (None, "execution"):
                 has_execution = True
+            if layer.role == "trend":
+                has_trend = True
         if not has_execution:
             errors.append("MTF strategy needs at least one execution layer")
+
+        # Validate cross_layer_logic
+        if dna.cross_layer_logic not in ("AND", "OR"):
+            errors.append(
+                f"cross_layer_logic must be 'AND' or 'OR', got '{dna.cross_layer_logic}'"
+            )
+
+        # Warn if mixed direction but no trend layer
+        if dna.risk_genes.direction == "mixed" and not has_trend:
+            warnings.append(
+                "mixed direction with layers but no trend layer: "
+                "direction signal may not be well-defined"
+            )
 
     # Validate condition structures for top-level genes
     for i, gene in enumerate(dna.signal_genes):
@@ -102,7 +122,18 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
     if risk.direction not in ("long", "short", "mixed"):
         errors.append(f"Direction must be 'long', 'short', or 'mixed', got '{risk.direction}'")
 
-    return ValidationResult(is_valid=len(errors) == 0, errors=errors)
+    # MTF control parameters validation
+    valid_mtf_modes = (None, "direction", "confluence", "direction+confluence")
+    if dna.mtf_mode not in valid_mtf_modes:
+        errors.append(f"mtf_mode must be one of {valid_mtf_modes}, got '{dna.mtf_mode}'")
+
+    if not (0.1 <= dna.confluence_threshold <= 0.9):
+        errors.append(f"confluence_threshold {dna.confluence_threshold} out of range [0.1, 0.9]")
+
+    if not (0.5 <= dna.proximity_mult <= 3.0):
+        errors.append(f"proximity_mult {dna.proximity_mult} out of range [0.5, 3.0]")
+
+    return ValidationResult(is_valid=len(errors) == 0, errors=errors, warnings=warnings)
 
 
 def _validate_condition_structure(
