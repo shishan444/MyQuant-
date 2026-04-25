@@ -535,6 +535,10 @@ def dna_to_signal_set(
     """Convert a StrategyDNA to a full SignalSet with adds/reduces."""
     # MTF mode with role-aware signal combination
     if dna.is_mtf and dfs_by_timeframe is not None:
+        # New MTF engine path: activated when mtf_mode is set
+        if dna.mtf_mode is not None:
+            from core.strategy.mtf_engine import run_mtf_engine
+            return run_mtf_engine(dna, dfs_by_timeframe, enhanced_df)
         trend_entries = []
         trend_exits = []
         exec_entries = []

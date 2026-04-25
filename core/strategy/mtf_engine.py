@@ -343,7 +343,11 @@ def evaluate_layer_with_context(
         ctx = extract_context(df, gene, category)
 
         if "direction" in ctx:
-            direction = ctx["direction"]
+            raw_dir = ctx["direction"]
+            if exec_df_index is not None and role in ("structure", "zone"):
+                direction = resample_values(raw_dir, exec_df_index)
+            else:
+                direction = raw_dir
         if "price_levels" in ctx:
             # Resample price levels to execution timeframe if needed
             if exec_df_index is not None and role in ("structure", "zone"):
@@ -599,7 +603,8 @@ def run_mtf_engine(
     multi-dimensional score-gating system.
     """
     exec_tf = dna.execution_genes.timeframe
-    exec_df = enhanced_df
+    # Use the execution timeframe's DataFrame as the base
+    exec_df = dfs_by_timeframe.get(exec_tf, enhanced_df)
 
     # Evaluate each layer with context extraction
     layer_results: List[Tuple[str, LayerResult]] = []
