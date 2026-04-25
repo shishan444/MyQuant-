@@ -481,9 +481,19 @@ def synthesize_cross_layer(
 
     # 3. Momentum: average across zone/structure layers
     momentum_values = []
+    non_exec_momenta = []  # momentum from structure/zone layers only
     for tf, lr in layer_results:
+        role = None
+        for layer in (dna.layers or []):
+            if layer.timeframe == tf:
+                role = layer.role
+                break
+        if role is None:
+            role = derive_role(tf)
         if lr.momentum is not None:
             momentum_values.append(lr.momentum)
+            if role in ("structure", "zone"):
+                non_exec_momenta.append(lr.momentum)
     if momentum_values:
         # Normalize momentum to 0-1 range (simple approach)
         combined = pd.concat(momentum_values, axis=1).mean(axis=1)
@@ -495,6 +505,32 @@ def synthesize_cross_layer(
             momentum_score = pd.Series(0.5, index=exec_index)
     else:
         momentum_score = pd.Series(0.5, index=exec_index)
+
+    # 2b. Momentum confluence fallback (C1 fix):
+    # When price confluence is 0 because structure/zone layers lack price_levels,
+    # use momentum directional agreement as confluence score.
+    if confluence_score.eq(0.0).all() and len(non_exec_momenta) >= 2:
+        momentum_confs = np.zeros(n)
+        mom_matrix = np.column_stack([
+            m.values[:n] for m in non_exec_momenta
+        ])
+        for bar_idx in range(n):
+            vals = mom_matrix[bar_idx]
+            valid = vals[~np.isnan(vals)]
+            if len(valid) < 2:
+                continue
+            # Agreement: proportion of momenta with same sign as the majority
+            pos_count = (valid > 0).sum()
+            neg_count = (valid < 0).sum()
+            majority = max(pos_count, neg_count)
+            agreement = majority / len(valid)
+            # Only score if majority direction is clear (>50%)
+            if agreement > 0.5:
+                # Scale: full agreement=1.0, bare majority=0.3
+                momentum_confs[bar_idx] = 0.3 + 0.7 * (agreement - 0.5) / 0.5
+        momentum_confluence = pd.Series(momentum_confs, index=exec_index)
+        # Use momentum confluence as fallback
+        confluence_score = momentum_confluence
 
     return MTFSynthesis(
         direction_score=direction_score,
@@ -556,8 +592,8 @@ def apply_decision_gate(
         elif dna.risk_genes.direction == "short":
             direction_pass = synthesis.direction_score < 0
         else:
-            # mixed: always pass direction gate
-            direction_pass = pd.Series(True, index=entries.index)
+            # mixed: direction must be non-zero (not neutral)
+            direction_pass = synthesis.direction_score != 0
 
     # Confluence gate
     confluence_pass = pd.Series(True, index=entries.index)

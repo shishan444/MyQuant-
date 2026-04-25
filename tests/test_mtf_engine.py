@@ -1078,3 +1078,225 @@ class TestDiagnostics:
         assert "confluence_score" in diag
         assert "momentum_score" in diag
         assert "strength_multiplier" in diag
+
+
+# =====================================================================
+# Bug Fix Tests: C1, C2, M2, M3, M4
+# =====================================================================
+
+class TestC1MomentumConfluence:
+    """C1: Confluence should not permanently block when momentum indicators
+    are used in structure/zone layers.
+
+    Root cause: extract_context only extracts price_levels for
+    {'trend', 'volatility'} categories, so momentum indicators in
+    non-execution layers produce empty price_levels, making
+    confluence_score=0 and blocking all entries.
+    """
+
+    def test_synthesize_with_momentum_layers_gets_confluence(self):
+        """Two structure/zone layers with only momentum data should still
+        produce a non-zero confluence score via momentum agreement."""
+        from core.strategy.mtf_engine import synthesize_cross_layer, LayerResult
+        from core.strategy.executor import SignalSet
+
+        idx = pd.date_range("2024-01-01", periods=10, freq="15min")
+        dna = StrategyDNA(
+            proximity_mult=1.5,
+            confluence_threshold=0.3,
+            layers=[
+                TimeframeLayer(timeframe="1d", signal_genes=[], role="structure"),
+                TimeframeLayer(timeframe="4h", signal_genes=[], role="zone"),
+            ],
+        )
+        # Both layers have momentum (same direction) but NO price_levels
+        layer_results = [
+            ("1d", LayerResult(
+                signal_set=SignalSet(
+                    entries=pd.Series([True] * 10, index=idx),
+                    exits=pd.Series([False] * 10, index=idx),
+                    adds=pd.Series([False] * 10, index=idx),
+                    reduces=pd.Series([False] * 10, index=idx),
+                ),
+                direction=pd.Series([1.0] * 10, index=idx),
+                price_levels=[],  # No price levels - momentum indicator
+                momentum=pd.Series([0.7] * 10, index=idx),
+            )),
+            ("4h", LayerResult(
+                signal_set=SignalSet(
+                    entries=pd.Series([True] * 10, index=idx),
+                    exits=pd.Series([False] * 10, index=idx),
+                    adds=pd.Series([False] * 10, index=idx),
+                    reduces=pd.Series([False] * 10, index=idx),
+                ),
+                direction=None,
+                price_levels=[],  # No price levels - momentum indicator
+                momentum=pd.Series([0.8] * 10, index=idx),
+            )),
+        ]
+        exec_close = pd.Series([60000.0] * 10, index=idx)
+        exec_atr = pd.Series([800.0] * 10, index=idx)
+        synthesis = synthesize_cross_layer(
+            layer_results, idx, exec_close, exec_atr, 1.5, dna,
+        )
+        # Momentum agreement should give non-zero confluence
+        assert synthesis.confluence_score.iloc[0] > 0.0, \
+            "Momentum-only layers should produce non-zero confluence score"
+
+    def test_momentum_only_layers_pass_decision_gate(self):
+        """Entries should NOT be blocked when only momentum data is available."""
+        from core.strategy.mtf_engine import apply_decision_gate, MTFSynthesis
+
+        idx = pd.date_range("2024-01-01", periods=5, freq="15min")
+        from core.strategy.executor import SignalSet
+        ss = SignalSet(
+            entries=pd.Series([True] * 5, index=idx),
+            exits=pd.Series([False] * 5, index=idx),
+            adds=pd.Series([False] * 5, index=idx),
+            reduces=pd.Series([False] * 5, index=idx),
+        )
+        # Momentum-derived confluence score > threshold
+        synthesis = MTFSynthesis(
+            direction_score=pd.Series([1.0] * 5, index=idx),
+            confluence_score=pd.Series([0.5] * 5, index=idx),
+            momentum_score=pd.Series([0.7] * 5, index=idx),
+            strength_multiplier=pd.Series([1.0] * 5, index=idx),
+        )
+        dna = StrategyDNA(
+            mtf_mode="direction+confluence",
+            confluence_threshold=0.3,
+            risk_genes=RiskGenes(direction="long"),
+        )
+        result = apply_decision_gate(ss, synthesis, dna)
+        assert result.entries.iloc[0] == True, \
+            "Entry should pass when momentum confluence > threshold"
+
+    def test_momentum_conflicting_directions_zero_confluence(self):
+        """When momentum directions conflict across layers, confluence should be 0."""
+        from core.strategy.mtf_engine import synthesize_cross_layer, LayerResult
+        from core.strategy.executor import SignalSet
+
+        idx = pd.date_range("2024-01-01", periods=10, freq="15min")
+        dna = StrategyDNA(
+            proximity_mult=1.5,
+            confluence_threshold=0.3,
+            layers=[
+                TimeframeLayer(timeframe="1d", signal_genes=[], role="structure"),
+                TimeframeLayer(timeframe="4h", signal_genes=[], role="zone"),
+            ],
+        )
+        layer_results = [
+            ("1d", LayerResult(
+                signal_set=SignalSet(
+                    entries=pd.Series([True] * 10, index=idx),
+                    exits=pd.Series([False] * 10, index=idx),
+                    adds=pd.Series([False] * 10, index=idx),
+                    reduces=pd.Series([False] * 10, index=idx),
+                ),
+                direction=pd.Series([1.0] * 10, index=idx),
+                price_levels=[],
+                momentum=pd.Series([0.8] * 10, index=idx),  # Positive
+            )),
+            ("4h", LayerResult(
+                signal_set=SignalSet(
+                    entries=pd.Series([True] * 10, index=idx),
+                    exits=pd.Series([False] * 10, index=idx),
+                    adds=pd.Series([False] * 10, index=idx),
+                    reduces=pd.Series([False] * 10, index=idx),
+                ),
+                direction=None,
+                price_levels=[],
+                momentum=pd.Series([-0.6] * 10, index=idx),  # Negative - conflicts
+            )),
+        ]
+        exec_close = pd.Series([60000.0] * 10, index=idx)
+        exec_atr = pd.Series([800.0] * 10, index=idx)
+        synthesis = synthesize_cross_layer(
+            layer_results, idx, exec_close, exec_atr, 1.5, dna,
+        )
+        # Conflicting momenta should produce low/zero confluence
+        assert synthesis.confluence_score.iloc[0] < 0.3, \
+            "Conflicting momentum directions should produce low confluence"
+
+
+class TestM2DirectionZeroMixedMode:
+    """M2: direction_score=0.0 in mixed mode should not route to short."""
+
+    def test_direction_zero_blocks_entry_in_mixed_mode(self):
+        """When direction_score=0.0 and mode is mixed, entry should be blocked."""
+        from core.strategy.mtf_engine import apply_decision_gate, MTFSynthesis
+        from core.strategy.executor import SignalSet
+
+        idx = pd.date_range("2024-01-01", periods=5, freq="15min")
+        ss = SignalSet(
+            entries=pd.Series([True] * 5, index=idx),
+            exits=pd.Series([False] * 5, index=idx),
+            adds=pd.Series([False] * 5, index=idx),
+            reduces=pd.Series([False] * 5, index=idx),
+        )
+        synthesis = MTFSynthesis(
+            direction_score=pd.Series([0.0] * 5, index=idx),  # Neutral
+            confluence_score=pd.Series([0.8] * 5, index=idx),
+            momentum_score=pd.Series([0.5] * 5, index=idx),
+            strength_multiplier=pd.Series([1.0] * 5, index=idx),
+        )
+        dna = StrategyDNA(
+            mtf_mode="direction+confluence",
+            confluence_threshold=0.3,
+            risk_genes=RiskGenes(direction="mixed"),
+        )
+        result = apply_decision_gate(ss, synthesis, dna)
+        assert result.entries.iloc[0] == False, \
+            "direction_score=0.0 (neutral) should block entry in mixed mode"
+
+    def test_direction_positive_allows_entry_in_mixed_mode(self):
+        """When direction_score > 0 and mode is mixed, entry should pass."""
+        from core.strategy.mtf_engine import apply_decision_gate, MTFSynthesis
+        from core.strategy.executor import SignalSet
+
+        idx = pd.date_range("2024-01-01", periods=5, freq="15min")
+        ss = SignalSet(
+            entries=pd.Series([True] * 5, index=idx),
+            exits=pd.Series([False] * 5, index=idx),
+            adds=pd.Series([False] * 5, index=idx),
+            reduces=pd.Series([False] * 5, index=idx),
+        )
+        synthesis = MTFSynthesis(
+            direction_score=pd.Series([1.0] * 5, index=idx),
+            confluence_score=pd.Series([0.8] * 5, index=idx),
+            momentum_score=pd.Series([0.5] * 5, index=idx),
+            strength_multiplier=pd.Series([1.0] * 5, index=idx),
+        )
+        dna = StrategyDNA(
+            mtf_mode="direction+confluence",
+            confluence_threshold=0.3,
+            risk_genes=RiskGenes(direction="mixed"),
+        )
+        result = apply_decision_gate(ss, synthesis, dna)
+        assert result.entries.iloc[0] == True
+
+    def test_direction_negative_allows_entry_in_mixed_mode(self):
+        """When direction_score < 0 and mode is mixed, entry should pass."""
+        from core.strategy.mtf_engine import apply_decision_gate, MTFSynthesis
+        from core.strategy.executor import SignalSet
+
+        idx = pd.date_range("2024-01-01", periods=5, freq="15min")
+        ss = SignalSet(
+            entries=pd.Series([True] * 5, index=idx),
+            exits=pd.Series([False] * 5, index=idx),
+            adds=pd.Series([False] * 5, index=idx),
+            reduces=pd.Series([False] * 5, index=idx),
+        )
+        synthesis = MTFSynthesis(
+            direction_score=pd.Series([-1.0] * 5, index=idx),
+            confluence_score=pd.Series([0.8] * 5, index=idx),
+            momentum_score=pd.Series([0.5] * 5, index=idx),
+            strength_multiplier=pd.Series([1.0] * 5, index=idx),
+        )
+        dna = StrategyDNA(
+            mtf_mode="direction+confluence",
+            confluence_threshold=0.3,
+            risk_genes=RiskGenes(direction="mixed"),
+        )
+        result = apply_decision_gate(ss, synthesis, dna)
+        assert result.entries.iloc[0] == True
