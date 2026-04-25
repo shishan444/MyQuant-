@@ -5,10 +5,13 @@ import random
 from typing import Callable, Dict, List, Optional, Tuple
 
 from core.strategy.dna import StrategyDNA
+from functools import partial
+
 from core.evolution.operators import (
     mutate_params, mutate_indicator, mutate_logic, mutate_risk, crossover,
     mutate_cross_logic,
     mutate_add_signal, mutate_remove_signal,
+    mutate_add_layer, mutate_remove_layer, mutate_layer_timeframe,
 )
 from core.evolution.population import init_population, create_random_dna
 from core.evolution.diversity import (
@@ -330,8 +333,14 @@ class EvolutionEngine:
                 mutate_params, mutate_indicator, mutate_logic, mutate_risk,
                 mutate_add_signal, mutate_remove_signal,
             ]
-            # Add cross_logic mutation for MTF strategies
+            # MTF-specific mutations: add/remove/modify layers
             if len(self.timeframe_pool) > 1:
+                mutation_pool.append(partial(mutate_add_layer, candidate_timeframes=list(self.timeframe_pool)))
+                mut_weights.append(5)
+                mutation_pool.append(mutate_remove_layer)
+                mut_weights.append(3)
+                mutation_pool.append(partial(mutate_layer_timeframe, candidate_timeframes=list(self.timeframe_pool)))
+                mut_weights.append(3)
                 mutation_pool.append(mutate_cross_logic)
                 mut_weights.append(10)
 

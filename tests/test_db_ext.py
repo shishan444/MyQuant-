@@ -99,8 +99,6 @@ def _sample_backtest_data(**overrides: Any) -> Dict[str, Any]:
         "total_score": 82.1,
         "template_name": "profit_first",
         "dimension_scores": json.dumps({"return": 90, "risk": 80}),
-        "wf_score": None,
-        "wf_rounds": 0,
         "equity_curve": None,
         "trades_json": None,
         "run_source": "lab",

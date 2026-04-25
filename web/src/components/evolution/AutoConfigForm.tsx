@@ -43,7 +43,6 @@ interface AutoConfigFormProps {
     direction: "long" | "short" | "mixed";
     dataStart?: string;
     dataEnd?: string;
-    walkForwardEnabled?: boolean;
     strategyThreshold?: number;
   }) => void;
 }
@@ -69,7 +68,6 @@ export function AutoConfigForm({
   const [direction, setDirection] = useState<"long" | "short" | "mixed">("long");
   const [dataStart, setDataStart] = useState("");
   const [dataEnd, setDataEnd] = useState("");
-  const [walkForwardEnabled, setWalkForwardEnabled] = useState(false);
   const [strategyThreshold, setStrategyThreshold] = useState(80);
 
   // Pre-fill date range from the most recent completed task
@@ -143,7 +141,6 @@ export function AutoConfigForm({
       direction,
       dataStart: dataStart || undefined,
       dataEnd: dataEnd || undefined,
-      walkForwardEnabled,
       strategyThreshold,
     });
   }, [
@@ -444,26 +441,6 @@ export function AutoConfigForm({
                 }
                 className="h-7 w-24 text-xs"
               />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-500">Walk-Forward 验证</label>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={walkForwardEnabled}
-                onClick={() => setWalkForwardEnabled(!walkForwardEnabled)}
-                className={cn(
-                  "mt-1 h-7 w-12 rounded-full transition-colors relative",
-                  walkForwardEnabled ? "bg-emerald-500" : "bg-slate-700"
-                )}
-              >
-                <span
-                  className={cn(
-                    "absolute top-0.5 h-6 w-6 rounded-full bg-white transition-transform",
-                    walkForwardEnabled ? "left-[22px]" : "left-0.5"
-                  )}
-                />
-              </button>
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-[11px] text-slate-500">策略提取阈值 (60-100)</label>

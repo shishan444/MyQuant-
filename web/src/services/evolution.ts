@@ -36,7 +36,6 @@ export async function createEvolutionTask(payload: {
   direction?: "long" | "short" | "mixed";
   data_start?: string;
   data_end?: string;
-  walk_forward_enabled?: boolean;
   strategy_threshold?: number;
 }): Promise<EvolutionTask> {
   const { data } = await api.post("/api/evolution/tasks", payload);

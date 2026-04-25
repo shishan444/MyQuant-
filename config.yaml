@@ -37,9 +37,3 @@ evolution:
     min_improvement: 0.5
     decline_limit: 10
 
-# Walk-Forward 验证参数
-walk_forward:
-  train_window_months: 3
-  slide_step_months: 1
-  train_weight: 0.4
-  val_weight: 0.6

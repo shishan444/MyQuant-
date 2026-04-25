@@ -196,7 +196,6 @@ export function Evolution() {
       direction: "long" | "short" | "mixed";
       dataStart?: string;
       dataEnd?: string;
-      walkForwardEnabled?: boolean;
       strategyThreshold?: number;
     }) => {
       if (activeTask) {
@@ -218,7 +217,6 @@ export function Evolution() {
           direction: config.direction,
           data_start: config.dataStart,
           data_end: config.dataEnd,
-          walk_forward_enabled: config.walkForwardEnabled ?? false,
           strategy_threshold: config.strategyThreshold ?? 80,
         });
         setConfigCollapsed(true);

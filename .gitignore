@@ -41,3 +41,13 @@ htmlcov/
 
 # Env files (sensitive)
 .env
+
+# Node modules
+node_modules/
+
+# Database files
+data/*.db
+
+# Working docs
+wroks/
+data/market/*.db

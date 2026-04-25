@@ -111,4 +111,4 @@ def load_mtf_data(
         except Exception:
             continue
 
-    return dfs_by_timeframe if len(dfs_by_timeframe) > 1 else None
+    return dfs_by_timeframe

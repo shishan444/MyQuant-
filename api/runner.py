@@ -473,41 +473,6 @@ class EvolutionRunner(threading.Thread):
                     conn.commit()
                     conn.close()
 
-                # Walk-Forward validation on champion only (moved from per-individual)
-                if champion_rec and champion_rec.score > 20:
-                    try:
-                        from core.backtest.walk_forward import WalkForwardValidator
-                        template_name = task_row.get("score_template", "profit_first")
-                        wf = WalkForwardValidator(template_name=template_name)
-                        # Pass raw OHLCV data (without indicators) so each WF window
-                        # recomputes indicators independently, eliminating look-ahead bias
-                        _raw_cols = ["open", "high", "low", "close", "volume"]
-                        _raw_wf_df = _enhanced_df[[
-                            c for c in _raw_cols if c in _enhanced_df.columns
-                        ]].copy()
-                        wf_result = wf.validate(
-                            champion, _enhanced_df, raw_df=_raw_wf_df,
-                            dfs_by_timeframe=_dfs_by_timeframe,
-                        )
-                        if wf_result["wf_score"] > 0:
-                            _wf_metrics = (champion_rec.metrics or {}).copy()
-                            _wf_metrics["wf_score"] = wf_result["wf_score"]
-                            _wf_metrics["wf_rounds"] = wf_result["n_rounds"]
-                            import sqlite3
-                            conn = sqlite3.connect(str(self.db_path))
-                            conn.execute("PRAGMA journal_mode=WAL")
-                            conn.execute(
-                                "UPDATE evolution_task SET champion_metrics = ? WHERE task_id = ?",
-                                (json.dumps(_wf_metrics), task_id),
-                            )
-                            conn.commit()
-                            conn.close()
-                            logger.info(
-                                "Task %s: champion WF score=%.1f (%d rounds)",
-                                task_id, wf_result["wf_score"], wf_result["n_rounds"],
-                            )
-                    except Exception:
-                        logger.debug("WF validation failed for champion", exc_info=True)
             else:
                 update_task(
                     self.db_path, task_id,

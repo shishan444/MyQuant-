@@ -109,7 +109,6 @@ def _task_row_to_response(
         mode=row.get("mode"),
         champion_metrics=_parse_json_dict(row.get("champion_metrics")),
         champion_dimension_scores=_parse_json_dict(row.get("champion_dimension_scores")),
-        walk_forward_enabled=bool(row.get("walk_forward_enabled", 0)),
         continuous=bool(row.get("continuous", 1)),
         strategy_threshold=row.get("strategy_threshold", 80.0),
         strategy_count=strategy_count,
@@ -185,16 +184,35 @@ def create_task(
     if payload.initial_dna:
         dna = _dna_model_to_dna(payload.initial_dna)
     else:
-        from core.strategy.dna import StrategyDNA, SignalGene, SignalRole, LogicGenes, ExecutionGenes, RiskGenes
+        from core.strategy.dna import StrategyDNA, SignalGene, SignalRole, LogicGenes, ExecutionGenes, RiskGenes, TimeframeLayer
+        base_signals = [
+            SignalGene(indicator="EMA", params={"period": 20}, role=SignalRole.ENTRY_TRIGGER, condition={"type": "price_above"}),
+            SignalGene(indicator="EMA", params={"period": 20}, role=SignalRole.EXIT_TRIGGER, condition={"type": "price_below"}),
+        ]
+        base_logic = LogicGenes(entry_logic="AND", exit_logic="AND")
+
+        # For MTF tasks, build multi-layer DNA directly in constructor
+        mtf_layers = None
+        if tf_pool and len(tf_pool) > 1:
+            exec_tf = payload.timeframe
+            other_tfs = [tf for tf in tf_pool if tf != exec_tf]
+            mtf_layers = [
+                TimeframeLayer(timeframe=exec_tf, signal_genes=list(base_signals), logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND")),
+            ]
+            for tf in other_tfs:
+                mtf_layers.append(TimeframeLayer(
+                    timeframe=tf,
+                    signal_genes=[SignalGene(indicator="SMA", params={"period": 30}, role=SignalRole.ENTRY_TRIGGER, condition={"type": "price_above"})],
+                    logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+                ))
+
         dna = StrategyDNA(
-            signal_genes=[
-                SignalGene(indicator="EMA", params={"period": 20}, role=SignalRole.ENTRY_TRIGGER, condition={"type": "price_above"}),
-                SignalGene(indicator="EMA", params={"period": 20}, role=SignalRole.EXIT_TRIGGER, condition={"type": "price_below"}),
-            ],
-            logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
+            signal_genes=base_signals,
+            logic_genes=base_logic,
             execution_genes=ExecutionGenes(timeframe=payload.timeframe, symbol=payload.symbol),
             risk_genes=RiskGenes(stop_loss=0.03, take_profit=0.06, position_size=1.0,
                                  leverage=payload.leverage, direction=payload.direction),
+            layers=mtf_layers,
         )
 
     # Force override leverage/direction on seed DNA with task-level constraints
@@ -264,7 +282,7 @@ def create_task(
                data_start = ?, data_end = ?,
                data_time_start = ?, data_time_end = ?, data_row_count = ?,
                indicator_pool = ?, timeframe_pool = ?, mode = ?,
-               walk_forward_enabled = ?, continuous = ?,
+               continuous = ?,
                strategy_threshold = ?
            WHERE task_id = ?""",
         (payload.population_size, payload.max_generations,
@@ -275,7 +293,6 @@ def create_task(
          json.dumps(payload.indicator_pool) if payload.indicator_pool else None,
          json.dumps(payload.timeframe_pool) if payload.timeframe_pool else None,
          payload.mode,
-         1 if payload.walk_forward_enabled else 0,
          1 if payload.continuous else 0,
          payload.strategy_threshold,
          task_id),

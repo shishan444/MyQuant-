@@ -127,7 +127,7 @@ def order_func_nb(c, entry_price, is_liquidated,
     i = c.i
     col = c.col
 
-    # Already liquidated -> force close any remaining position, then no trade
+    # Already liquidated -> force close any remaining position, then allow re-entry if funds remain
     if is_liquidated[col] > 0.5:
         if c.position_now != 0.0:
             return vbt_nb.order_nb(
@@ -136,7 +136,19 @@ def order_func_nb(c, entry_price, is_liquidated,
                 fees=fee,
                 slippage=slippage,
             )
-        return NoOrder
+        # Position closed after liquidation, check if we can re-enter
+        # If no entry signal, stay out; if entry signal, check funds below
+        if entries[i, col] < 0.5:
+            return NoOrder
+        # Entry signal after liquidation: check if sufficient funds to open
+        current_price = c.close[i, col]
+        min_required = current_price * (1.0 + fee + slippage) * 0.01  # at least 1% of a share's cost
+        if c.value_now < min_required:
+            return NoOrder  # insufficient funds
+        # Reset liquidation flag and proceed to entry logic below
+        is_liquidated[col] = 0.0
+        entry_price[col] = 0.0
+        # Fall through to entry signal handling below
 
     current_price = c.close[i, col]
 
@@ -257,10 +269,15 @@ def order_func_nb(c, entry_price, is_liquidated,
         if old_pos + add_shares > 0.0:
             new_ep = (old_ep * old_pos + current_price * add_shares) / (old_pos + add_shares)
             entry_price[col] = new_ep
+        # Add direction must match current position direction
+        if c.position_now > 0.0:
+            add_dir = np.int64(0)   # Long (Buy more)
+        else:
+            add_dir = np.int64(1)   # Short (Sell more)
         return vbt_nb.order_nb(
             size=np.float64(size_pct),
             size_type=np.int64(2),  # Percent
-            direction=np.int64(int(direction_val)),
+            direction=add_dir,
             fees=fee,
             slippage=slippage,
         )
@@ -315,9 +332,10 @@ class BacktestEngine:
         high_2d = high.values.astype(np.float64).reshape(-1, 1)
         low_2d = low.values.astype(np.float64).reshape(-1, 1)
 
-        # Build direction signal for mixed mode
+        # Build direction signal for mixed mode (shifted by 1 bar to prevent look-ahead)
         if sig_set.entry_direction is not None:
-            direction_signal_2d = sig_set.entry_direction.values.astype(np.float64).reshape(-1, 1)
+            direction_shifted = sig_set.entry_direction.shift(1).fillna(1.0)
+            direction_signal_2d = direction_shifted.values.astype(np.float64).reshape(-1, 1)
         else:
             direction_signal_2d = np.ones_like(entries_2d)
 
@@ -345,25 +363,16 @@ class BacktestEngine:
 
         return pf, int(adds.sum()), int(reduces.sum()), sig_set.degraded_layers
 
-    def run(
+    def _build_result_from_portfolio(
         self,
+        portfolio,
         dna: StrategyDNA,
         enhanced_df: pd.DataFrame,
-        dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None,
-        signal_set=None,
+        add_count: int = 0,
+        reduce_count: int = 0,
+        degraded: int = 0,
     ) -> BacktestResult:
-        """Run backtest for a single strategy DNA."""
-        build_result = self._build_portfolio(
-            dna, enhanced_df,
-            dfs_by_timeframe=dfs_by_timeframe,
-            signal_set=signal_set,
-        )
-        if isinstance(build_result, tuple):
-            portfolio, add_count, reduce_count, degraded = build_result
-        else:
-            portfolio = build_result
-            add_count, reduce_count, degraded = 0, 0, 0
-
+        """Build BacktestResult from an already-constructed portfolio."""
         equity_curve = portfolio.value()
         if isinstance(equity_curve, pd.DataFrame):
             equity_curve = equity_curve.iloc[:, 0]
@@ -448,6 +457,29 @@ class BacktestEngine:
             degraded_layers=degraded,
         )
 
+    def run(
+        self,
+        dna: StrategyDNA,
+        enhanced_df: pd.DataFrame,
+        dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None,
+        signal_set=None,
+    ) -> BacktestResult:
+        """Run backtest for a single strategy DNA."""
+        build_result = self._build_portfolio(
+            dna, enhanced_df,
+            dfs_by_timeframe=dfs_by_timeframe,
+            signal_set=signal_set,
+        )
+        if isinstance(build_result, tuple):
+            portfolio, add_count, reduce_count, degraded = build_result
+        else:
+            portfolio = build_result
+            add_count, reduce_count, degraded = 0, 0, 0
+
+        return self._build_result_from_portfolio(
+            portfolio, dna, enhanced_df, add_count, reduce_count, degraded,
+        )
+
     def run_with_portfolio(
         self,
         dna: StrategyDNA,
@@ -457,8 +489,11 @@ class BacktestEngine:
         """Run backtest and return (BacktestResult, vectorbt Portfolio) tuple."""
         build_result = self._build_portfolio(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
         if isinstance(build_result, tuple):
-            portfolio = build_result[0]
+            portfolio, add_count, reduce_count, degraded = build_result
         else:
             portfolio = build_result
-        result = self.run(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+            add_count, reduce_count, degraded = 0, 0, 0
+        result = self._build_result_from_portfolio(
+            portfolio, dna, enhanced_df, add_count, reduce_count, degraded,
+        )
         return result, portfolio

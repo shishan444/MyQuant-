@@ -39,18 +39,15 @@ import type { BacktestModePanelHandle } from "@/components/lab/BacktestModePanel
 import { useValidateRules } from "@/hooks/useValidation";
 import { useCreateStrategy, useStrategies } from "@/hooks/useStrategies";
 import { useAvailableSources } from "@/hooks/useDatasets";
-import { getOhlcvBySymbol, getChartIndicators } from "@/services/datasets";
+import { useChartIndicators } from "@/hooks/useChartIndicators";
+import type { SubChartType } from "@/hooks/useChartIndicators";
 import { SYMBOL_OPTIONS, TIMEFRAME_SELECT_OPTIONS, LEVERAGE_OPTIONS } from "@/lib/constants";
 import type {
   RuleCondition,
   RuleValidateResponse,
-  ChartIndicatorsResponse,
   DNA,
   Strategy,
 } from "@/types/api";
-import type { IndicatorData } from "@/components/charts/KlineChart";
-import type { BollingerBandData } from "@/types/chart";
-import { useChartSettings } from "@/stores/chart-settings";
 import { useQuery } from "@tanstack/react-query";
 
 // ---------------------------------------------------------------------------
@@ -135,10 +132,8 @@ export function Lab() {
   const [btInitCash, setBtInitCash] = useState(100000);
   const [btAdvancedOpen, setBtAdvancedOpen] = useState(false);
   const [btConfigCollapsed, setBtConfigCollapsed] = useState(!!routeState?.dna);
+  const [selectedStrategyId, setSelectedStrategyId] = useState("");
   const backtestPanelRef = useRef<BacktestModePanelHandle>(null);
-
-  // Track whether initial auto-run has been triggered from route state
-  const [btAutoRun] = useState(!!routeState?.dna);
 
   // Clear route state on first load so refresh returns to hypothesis mode
   useEffect(() => {
@@ -157,15 +152,28 @@ export function Lab() {
 
   // -- Result state --
   const [ruleResult, setRuleResult] = useState<RuleValidateResponse | null>(null);
-  const [candleData, setCandleData] = useState<Array<{ timestamp: string; open: number; high: number; low: number; close: number; volume?: number }>>([]);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
-  const [indicatorResponse, setIndicatorResponse] = useState<ChartIndicatorsResponse | null>(null);
+  const [hypoSubChartType, setHypoSubChartType] = useState<SubChartType>("volume");
+  const [hypoFetchEnabled, setHypoFetchEnabled] = useState(false);
 
   // -- Refs --
   const chartRef = useRef<KlineChartHandle>(null);
 
-  // -- Chart settings --
-  const chartSettings = useChartSettings();
+  // -- Chart indicators hook (shared for hypothesis mode) --
+  const {
+    candleData,
+    chartIndicators,
+    chartBollData,
+    volumeData,
+    macdData: hypoMacdData,
+    kdjData: hypoKdjData,
+  } = useChartIndicators({
+    symbol: pair,
+    timeframe,
+    dateRange,
+    subChartType: hypoSubChartType,
+    enabled: hypoFetchEnabled,
+  });
 
   // -- Mutations --
   const validateMutation = useValidateRules();
@@ -188,6 +196,7 @@ export function Lab() {
         setBacktestSymbol(strategy.symbol);
         setBacktestTimeframe(strategy.timeframe);
         setBtLeverage(strategy.dna.risk_genes?.leverage ?? 1);
+        setSelectedStrategyId(strategy.strategy_id);
         setBtConfigCollapsed(false);
       }
     },
@@ -291,19 +300,6 @@ export function Lab() {
     return ordered.filter((tf) => tfs.has(tf));
   }, [baseTimeframe, entryConditions, exitConditions, dynamicTimeframeOptions]);
 
-  // Extract volume data from candle data
-  const volumeData = useMemo(
-    () =>
-      candleData
-        .filter((d) => d.volume != null)
-        .map((d) => ({
-          time: d.timestamp,
-          value: d.volume!,
-          color: d.close >= d.open ? "rgba(0,200,83,0.2)" : "rgba(255,23,68,0.2)",
-        })),
-    [candleData],
-  );
-
   // -- Handlers --
   const handleQuickDate = useCallback((days: number) => {
     const end = new Date();
@@ -361,33 +357,7 @@ export function Lab() {
         exit_conditions: exitConditions,
       });
       setRuleResult(res);
-
-      // Fetch OHLCV and chart indicators
-      const enabledEma = chartSettings.emaList.filter((e) => e.enabled);
-      const indParams = {
-        start: safeStart,
-        end: safeEnd,
-        ema_periods: enabledEma.map((e) => e.period).join(",") || undefined,
-        boll_enabled: chartSettings.boll.enabled,
-        boll_period: chartSettings.boll.period,
-        boll_std: chartSettings.boll.std,
-        rsi_enabled: chartSettings.rsi.enabled,
-        rsi_period: chartSettings.rsi.period,
-      };
-
-      try {
-        const ohlcvRes = await getOhlcvBySymbol(pair, timeframe, {
-          start: safeStart,
-          end: safeEnd,
-          limit: 10000,
-        });
-        setCandleData(ohlcvRes.data);
-      } catch { /* silently handle */ }
-
-      try {
-        const indRes = await getChartIndicators(pair, timeframe, indParams);
-        setIndicatorResponse(indRes);
-      } catch { /* indicators unavailable */ }
+      setHypoFetchEnabled(true);
     } catch {
       // handled by mutation
     }
@@ -397,8 +367,7 @@ export function Lab() {
     setEntryConditions([]);
     setExitConditions([]);
     setRuleResult(null);
-    setCandleData([]);
-    setIndicatorResponse(null);
+    setHypoFetchEnabled(false);
   }, []);
 
   const handlePreset = useCallback((idx: number) => {
@@ -483,43 +452,6 @@ export function Lab() {
     }
     return signals;
   }, [ruleResult]);
-
-  // -- Chart indicator data for KlineChart --
-  const chartIndicators = useMemo<IndicatorData[] | undefined>(() => {
-    if (!indicatorResponse) return undefined;
-    const indicators: IndicatorData[] = [];
-
-    // EMA indicators
-    const emaList = chartSettings.emaList.filter((e) => e.enabled);
-    for (const ema of emaList) {
-      const emaData = indicatorResponse.ema?.[String(ema.period)];
-      if (emaData) {
-        indicators.push({
-          id: `ema_${ema.period}`,
-          type: "ema",
-          color: ema.color,
-          data: emaData,
-        });
-      }
-    }
-
-    // RSI indicator
-    if (chartSettings.rsi.enabled && indicatorResponse.rsi) {
-      indicators.push({
-        id: "rsi",
-        type: "rsi",
-        color: "#A78BFA",
-        data: indicatorResponse.rsi,
-      });
-    }
-
-    return indicators.length > 0 ? indicators : undefined;
-  }, [indicatorResponse, chartSettings.emaList, chartSettings.rsi.enabled]);
-
-  const chartBollData = useMemo<BollingerBandData | undefined>(() => {
-    if (!indicatorResponse?.boll || !chartSettings.boll.enabled) return undefined;
-    return indicatorResponse.boll;
-  }, [indicatorResponse?.boll, chartSettings.boll.enabled]);
 
   // -- Collapsed summary --
   const collapsedSummary = useMemo(() => {
@@ -618,7 +550,7 @@ export function Lab() {
                       策略选择
                     </span>
                     <Select
-                      value=""
+                      value={selectedStrategyId}
                       onValueChange={(v) => {
                         const s = allStrategies.find((st) => st.strategy_id === v);
                         if (s) handleSelectStrategy(s);
@@ -831,7 +763,6 @@ export function Lab() {
                   fee={btFee}
                   slippage={btSlippage}
                   initCash={btInitCash}
-                  autoRun={btAutoRun}
                 />
               ) : (
                 <div className="flex flex-col items-center gap-3 py-12 text-center">
@@ -1123,12 +1054,15 @@ export function Lab() {
               </div>
               <KlineChart
                 ref={chartRef}
-                data={candleData}
+                data={candleData ?? []}
                 indicators={chartIndicators}
                 bollData={chartBollData}
                 signals={chartSignals}
                 height={650}
                 volumeData={volumeData}
+                subChartType={hypoSubChartType}
+                macdData={hypoMacdData}
+                kdjData={hypoKdjData}
               />
             </GlassCard>
           </>

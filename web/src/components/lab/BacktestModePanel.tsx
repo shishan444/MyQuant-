@@ -1,17 +1,19 @@
-import { useState, useEffect, useMemo, useRef, useImperativeHandle, forwardRef } from "react";
-import { Loader2, AlertTriangle, Play, Dna } from "lucide-react";
+import { useState, useMemo, useRef, useImperativeHandle, forwardRef } from "react";
+import { Loader2, AlertTriangle, Dna } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/Button";
 import { KlineChart } from "@/components/charts/KlineChart";
-import type { KlineChartHandle, CandleData, SignalData } from "@/components/charts/KlineChart";
+import type { KlineChartHandle, SignalData } from "@/components/charts/KlineChart";
 import { BacktestMetricsPanel } from "./BacktestMetricsPanel";
 import { EquityCurveChart } from "./EquityCurveChart";
 import { runBacktest } from "@/services/strategies";
-import { getOhlcvBySymbol } from "@/services/datasets";
 import { useCreateStrategy } from "@/hooks/useStrategies";
+import { useChartIndicators } from "@/hooks/useChartIndicators";
+import type { SubChartType } from "@/hooks/useChartIndicators";
 import { StrategyDetail } from "@/components/evolution/StrategyDetail";
 import type { DNA, BacktestResult, TradeSignal } from "@/types/api";
+import { cn } from "@/lib/utils";
 
 export interface BacktestModePanelHandle {
   runBacktest: () => void;
@@ -26,7 +28,6 @@ interface BacktestModePanelProps {
   fee?: number;
   slippage?: number;
   initCash?: number;
-  autoRun?: boolean;
 }
 
 export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestModePanelProps>(
@@ -40,20 +41,35 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
       fee = 0.001,
       slippage = 0.0005,
       initCash = 100000,
-      autoRun = false,
     },
     ref,
   ) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<BacktestResult | null>(null);
-    const [candles, setCandles] = useState<CandleData[]>([]);
     const [ohlcvWarning, setOhlcvWarning] = useState<string | null>(null);
+    const [subChartType, setSubChartType] = useState<SubChartType>("volume");
     const chartRef = useRef<KlineChartHandle>(null);
     const saveStrategy = useCreateStrategy();
     const navigate = useNavigate();
 
     const datasetId = `${symbol}_${timeframe}`;
+
+    // Fetch chart indicators (only after backtest has a result)
+    const {
+      candleData,
+      chartIndicators,
+      chartBollData,
+      volumeData,
+      macdData,
+      kdjData,
+    } = useChartIndicators({
+      symbol,
+      timeframe,
+      dateRange: { start: dataStart, end: dataEnd },
+      subChartType,
+      enabled: !!result,
+    });
 
     function runBacktestAction() {
       setLoading(true);
@@ -67,40 +83,19 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
         risk_genes: { ...dna.risk_genes },
       };
 
-      Promise.all([
-        runBacktest({
-          dna: dnaCopy,
-          symbol,
-          timeframe,
-          dataset_id: datasetId,
-          data_start: dataStart || undefined,
-          data_end: dataEnd || undefined,
-          fee,
-          slippage,
-          init_cash: initCash,
-        }),
-        getOhlcvBySymbol(symbol, timeframe, {
-          start: dataStart || undefined,
-          end: dataEnd || undefined,
-          limit: 10000,
-        }).catch(() => {
-          setOhlcvWarning("K 线数据加载失败，回测结果不受影响");
-          return null;
-        }),
-      ])
-        .then(([btResult, ohlcvData]) => {
+      runBacktest({
+        dna: dnaCopy,
+        symbol,
+        timeframe,
+        dataset_id: datasetId,
+        data_start: dataStart || undefined,
+        data_end: dataEnd || undefined,
+        fee,
+        slippage,
+        init_cash: initCash,
+      })
+        .then((btResult) => {
           setResult(btResult);
-          if (ohlcvData?.data) {
-            setCandles(
-              ohlcvData.data.map((d) => ({
-                timestamp: d.timestamp,
-                open: d.open,
-                high: d.high,
-                low: d.low,
-                close: d.close,
-              }))
-            );
-          }
         })
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : "回测失败";
@@ -111,11 +106,6 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
 
     // Expose runBacktestAction to parent via ref
     useImperativeHandle(ref, () => ({ runBacktest: runBacktestAction }), []);
-
-    // Auto-run on mount when autoRun=true (e.g. from route state)
-    useEffect(() => {
-      if (autoRun) runBacktestAction();
-    }, []);
 
     const signals: SignalData[] = useMemo(() => {
       if (!result?.signals) return [];
@@ -141,8 +131,8 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
           tags: "backtest,evolution",
         });
         toast.success("策略已保存");
-      } catch {
-        // handled by mutation
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "保存失败");
       }
     }
 
@@ -175,14 +165,6 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
           <StrategyDetail dna={dna} />
         </div>
 
-        {/* Run button (when no result and not auto-running) */}
-        {!result && !loading && !error && (
-          <Button onClick={runBacktestAction} className="gap-2">
-            <Play className="h-4 w-4" />
-            运行回测
-          </Button>
-        )}
-
         {result && (
           <>
             {/* OHLCV warning */}
@@ -193,20 +175,53 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
               </div>
             )}
 
-            {/* K-line chart with trade signals */}
-            {candles.length > 0 && (
+            {/* K-line chart with trade signals + indicators */}
+            {candleData && candleData.length > 0 && (
               <div>
-                <h4 className="mb-2 text-xs font-medium text-slate-400">
-                  K 线 + 交易信号
-                  <span className="ml-2 text-slate-600">
-                    {symbol} / {timeframe}
-                  </span>
-                </h4>
+                <div className="mb-2 flex items-center justify-between">
+                  <h4 className="text-xs font-medium text-slate-400">
+                    K 线 + 交易信号
+                    <span className="ml-2 text-slate-600">
+                      {symbol} / {timeframe}
+                    </span>
+                  </h4>
+                  {/* Sub-chart indicator selector */}
+                  <div className="flex items-center gap-0.5">
+                    <span className="mr-1 text-[11px] text-slate-500">副图</span>
+                    {(["volume", "macd", "rsi", "kdj"] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setSubChartType(t)}
+                        className={cn(
+                          "rounded px-1.5 py-0.5 text-[11px] transition-colors",
+                          subChartType === t
+                            ? "bg-sky-400/20 text-sky-400"
+                            : "bg-slate-800/30 text-slate-500 hover:text-slate-400",
+                        )}
+                      >
+                        {t.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="rounded-lg border border-slate-700/30 bg-slate-950/50">
                   <KlineChart
                     ref={chartRef}
-                    data={candles}
+                    data={candleData.map((d) => ({
+                      timestamp: d.timestamp,
+                      open: d.open,
+                      high: d.high,
+                      low: d.low,
+                      close: d.close,
+                    }))}
                     signals={signals}
+                    indicators={chartIndicators}
+                    bollData={chartBollData}
+                    volumeData={volumeData}
+                    subChartType={subChartType}
+                    macdData={macdData}
+                    kdjData={kdjData}
                     height={420}
                   />
                 </div>

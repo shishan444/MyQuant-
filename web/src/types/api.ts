@@ -134,7 +134,6 @@ export interface EvolutionTask {
     total_trades: number;
   };
   champion_dimension_scores?: Record<string, number>;
-  walk_forward_enabled?: boolean;
   continuous?: boolean;
   population_count?: number;
   strategy_threshold?: number;

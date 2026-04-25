@@ -1,6 +1,7 @@
 /** Scene verification mode panel: template selection + chart + annotations + results. */
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Play, Crosshair, Minus, Square, X, Eye } from "lucide-react";
+import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import type { IChartApi, ISeriesApi } from "lightweight-charts";
 
@@ -22,15 +23,12 @@ import { cn } from "@/lib/utils";
 import { SceneSelector } from "./SceneSelector";
 import { SceneResult } from "./SceneResult";
 
-import { useVerifyScene } from "@/hooks/useScene";
 import { useAvailableSources } from "@/hooks/useDatasets";
+import { useChartIndicators } from "@/hooks/useChartIndicators";
+import type { SubChartType } from "@/hooks/useChartIndicators";
 import { getSceneTypes, verifyScene } from "@/services/scene";
-import { getOhlcvBySymbol, getChartIndicators } from "@/services/datasets";
-import { useChartSettings } from "@/stores/chart-settings";
 import { SYMBOL_OPTIONS, TIMEFRAME_SELECT_OPTIONS } from "@/lib/constants";
-import type { SceneTypeInfo, SceneVerifyResponse, SceneTriggerDetail } from "@/types/scene";
-import type { IndicatorData } from "@/components/charts/KlineChart";
-import type { BollingerBandData } from "@/types/chart";
+import type { SceneVerifyResponse, SceneTriggerDetail } from "@/types/scene";
 
 // Default params per scene type (sub-patterns inherit from parent)
 const SCENE_DEFAULT_PARAMS: Record<string, Record<string, number>> = {
@@ -127,10 +125,22 @@ export function SceneModePanel({
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
 
   // Sub-chart indicator type
-  const [subChartType, setSubChartType] = useState<"volume" | "macd" | "rsi" | "kdj">("volume");
+  const [subChartType, setSubChartType] = useState<SubChartType>("volume");
 
-  // Chart settings from store
-  const chartSettings = useChartSettings();
+  // Shared chart indicators hook (replaces manual OHLCV + indicator fetching)
+  const {
+    candleData,
+    chartIndicators,
+    chartBollData,
+    volumeData,
+    macdData,
+    kdjData,
+  } = useChartIndicators({
+    symbol,
+    timeframe,
+    dateRange: { start: dataStart, end: dataEnd },
+    subChartType,
+  });
 
   // Fetch scene types
   const { data: typesData } = useQuery({
@@ -139,17 +149,6 @@ export function SceneModePanel({
     staleTime: Infinity,
   });
   const sceneTypes = typesData?.types ?? [];
-
-  // Fetch candle data for chart
-  const { data: ohlcvResponse } = useQuery({
-    queryKey: ["scene_ohlcv", symbol, timeframe, dataStart, dataEnd],
-    queryFn: () => getOhlcvBySymbol(symbol, timeframe, {
-      start: dataStart || undefined,
-      end: dataEnd || undefined,
-      limit: 10000,
-    }),
-  });
-  const candleData = ohlcvResponse?.data;
 
   // Available sources for symbol dropdown
   const { data: sourcesData } = useQuery(useAvailableSources());
@@ -248,7 +247,7 @@ export function SceneModePanel({
       const merged = mergeResponses(responses);
       setResult(merged);
     } catch (err) {
-      console.error("Scene verification failed:", err);
+      toast.error("场景验证失败，请检查参数后重试");
     } finally {
       setIsValidating(false);
     }
@@ -261,75 +260,7 @@ export function SceneModePanel({
     [],
   );
 
-  // Fetch chart indicators
-  const { data: indicatorResponse } = useQuery({
-    queryKey: ["scene_indicators", symbol, timeframe, subChartType, dataStart, dataEnd],
-    queryFn: () => getChartIndicators(symbol, timeframe, {
-      start: dataStart || undefined,
-      end: dataEnd || undefined,
-      limit: 10000,
-      ema_periods: chartSettings.emaList.filter((e) => e.enabled).map((e) => e.period).join(","),
-      boll_enabled: chartSettings.boll.enabled,
-      boll_period: chartSettings.boll.period,
-      boll_std: chartSettings.boll.std,
-      rsi_enabled: subChartType === "rsi",
-      rsi_period: chartSettings.rsi.period,
-      macd_enabled: subChartType === "macd",
-      kdj_enabled: subChartType === "kdj",
-    }),
-    enabled: !!candleData && candleData.length > 0,
-    staleTime: 60_000,
-  });
-
-  // Convert indicator response to chart props
-  const chartIndicators = useMemo<IndicatorData[]>(() => {
-    if (!indicatorResponse) return [];
-    const indicators: IndicatorData[] = [];
-
-    const emaList = chartSettings.emaList.filter((e) => e.enabled);
-    for (const ema of emaList) {
-      const emaData = indicatorResponse.ema?.[String(ema.period)];
-      if (emaData) {
-        indicators.push({
-          id: `ema_${ema.period}`,
-          type: "ema",
-          color: ema.color,
-          data: emaData,
-        });
-      }
-    }
-
-    if (subChartType === "rsi" && indicatorResponse.rsi) {
-      indicators.push({
-        id: "rsi",
-        type: "rsi",
-        color: "#A78BFA",
-        data: indicatorResponse.rsi,
-      });
-    }
-
-    return indicators;
-  }, [indicatorResponse, chartSettings.emaList, subChartType]);
-
-  const chartBollData = useMemo<BollingerBandData | undefined>(() => {
-    if (!indicatorResponse?.boll || !chartSettings.boll.enabled) return undefined;
-    return indicatorResponse.boll;
-  }, [indicatorResponse?.boll, chartSettings.boll.enabled]);
-
-  // Volume data derived from candle data
-  const volumeData = useMemo(() => {
-    if (!candleData) return [];
-    return candleData.map((d) => {
-      const isUp = "close" in d && "open" in d && d.close >= d.open;
-      return {
-        time: d.timestamp,
-        value: "volume" in d ? (d as { volume: number }).volume : 0,
-        color: isUp ? "rgba(34,197,94,0.4)" : "rgba(239,68,68,0.4)",
-      };
-    });
-  }, [candleData]);
-
-  // Convert triggers to chart markers
+  // Convert triggers to chart markers (scene-specific logic, not part of shared hook)
   const chartTriggers = result?.trigger_details?.slice(0, 50).map((t) => ({
     id: t.id,
     time: t.timestamp,
@@ -490,8 +421,8 @@ export function SceneModePanel({
               height={550}
               onChartReady={handleChartReady}
               subChartType={subChartType}
-              macdData={indicatorResponse?.macd ?? null}
-              kdjData={indicatorResponse?.kdj ?? null}
+              macdData={macdData}
+              kdjData={kdjData}
             />
             <AnnotationLayer
               chartApi={chartApiRef.current}

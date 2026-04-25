@@ -470,8 +470,6 @@ def save_backtest_result(
     total_score: float = 0.0,
     template_name: str = "profit_first",
     dimension_scores: Optional[str] = None,
-    wf_score: Optional[float] = None,
-    wf_rounds: int = 0,
     equity_curve: Optional[str] = None,
     trades_json: Optional[str] = None,
     run_source: str = "lab",
@@ -484,12 +482,12 @@ def save_backtest_result(
            (result_id, strategy_id, symbol, timeframe, data_start, data_end,
             init_cash, fee, slippage, total_return, sharpe_ratio, max_drawdown,
             win_rate, total_trades, total_score, template_name, dimension_scores,
-            wf_score, wf_rounds, equity_curve, trades_json, run_source, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            equity_curve, trades_json, run_source, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (result_id, strategy_id, symbol, timeframe, data_start, data_end,
          init_cash, fee, slippage, total_return, sharpe_ratio, max_drawdown,
          win_rate, total_trades, total_score, template_name, dimension_scores,
-         wf_score, wf_rounds, equity_curve, trades_json, run_source, now),
+         equity_curve, trades_json, run_source, now),
     )
     conn.commit()
     conn.close()

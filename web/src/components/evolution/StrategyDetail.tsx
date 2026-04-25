@@ -14,7 +14,6 @@ interface StrategyDetailProps {
     total_trades: number;
   };
   champion_dimension_scores?: Record<string, number>;
-  walkForwardEnabled?: boolean;
 }
 
 export function StrategyDetail({
@@ -22,7 +21,6 @@ export function StrategyDetail({
   className,
   champion_metrics,
   champion_dimension_scores,
-  walkForwardEnabled,
 }: StrategyDetailProps) {
   const hasLayers = dna.layers && dna.layers.length > 0;
 
@@ -233,13 +231,6 @@ export function StrategyDetail({
               positive={metrics.total_trades > 0}
             />
           </div>
-        </div>
-      )}
-
-      {/* Walk-Forward indicator */}
-      {walkForwardEnabled && (
-        <div className="text-xs text-emerald-500">
-          Walk-Forward 验证已启用
         </div>
       )}
     </div>
