@@ -4,7 +4,10 @@ Replaces duplicated fixture setup across 40+ test files with
 a single source of truth for test data generation.
 
 Usage:
-    from tests.helpers.data_factory import make_ohlcv, make_dna, make_mtf_dna
+    from tests.helpers.data_factory import (
+        make_ohlcv, make_dna, make_mtf_dna, make_enhanced_df,
+        make_signal_gene, make_signal_set, make_ema_dna,
+    )
 """
 
 import numpy as np
@@ -290,3 +293,48 @@ def make_signal_set(
         "adds": _sparse_bool(adds),
         "reduces": _sparse_bool(reduces),
     }
+
+
+# ---------------------------------------------------------------------------
+# Enhanced DataFrame (with indicators)
+# ---------------------------------------------------------------------------
+
+def make_enhanced_df(
+    n: int = 500,
+    freq: str = "4h",
+    base_price: float = 40000.0,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """Generate OHLCV DataFrame with indicators computed.
+
+    Convenience wrapper combining make_ohlcv + compute_all_indicators.
+
+    Args:
+        n: Number of bars.
+        freq: Pandas frequency string.
+        base_price: Starting price.
+        seed: Random seed.
+
+    Returns:
+        DataFrame with OHLCV + indicator columns.
+    """
+    from core.features.indicators import compute_all_indicators
+    df = make_ohlcv(n=n, freq=freq, base_price=base_price, seed=seed)
+    return compute_all_indicators(df)
+
+
+# ---------------------------------------------------------------------------
+# Backtest engine (pre-configured)
+# ---------------------------------------------------------------------------
+
+def make_engine(init_cash: float = 100000) -> "BacktestEngine":
+    """Create a pre-configured BacktestEngine.
+
+    Args:
+        init_cash: Initial cash amount.
+
+    Returns:
+        BacktestEngine instance.
+    """
+    from core.backtest.engine import BacktestEngine
+    return BacktestEngine(init_cash=init_cash)
