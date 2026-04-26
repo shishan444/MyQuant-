@@ -317,6 +317,8 @@ class EvolutionTaskResponse(BaseModel):
     strategy_threshold: float = 80.0
     strategy_count: int = 0
     exploration_efficiency: float = 0.0
+    current_phase: Optional[str] = None
+    progress_json: Optional[Dict[str, Any]] = None
 
 
 class EvolutionTaskListResponse(BaseModel):

@@ -124,6 +124,8 @@ def _task_row_to_response(
         exploration_efficiency=round(
             strategy_count / max(row.get("current_generation", 0), 1), 4
         ),
+        current_phase=row.get("current_phase"),
+        progress_json=_parse_json_dict(row.get("progress_json")),
     )
 
 

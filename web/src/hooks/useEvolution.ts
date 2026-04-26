@@ -177,8 +177,22 @@ export function useEvolutionWebSocket(taskId: string | null) {
                   ...prev,
                   ...(update.current_generation != null ? { current_generation: update.current_generation } : {}),
                   ...(update.best_score != null ? { best_score: update.best_score } : {}),
+                  ...(update.current_phase != null ? { current_phase: update.current_phase } : {}),
                   status: update.status ?? prev.status,
                 };
+              }
+            );
+            return;
+          }
+
+          // Handle phase_changed: runner phase transition
+          if (update.type === "phase_changed") {
+            qc.setQueryData(
+              evolutionKeys.task(currentTaskId),
+              (old: unknown) => {
+                if (!old) return old;
+                const prev = old as Record<string, unknown>;
+                return { ...prev, current_phase: update.phase };
               }
             );
             return;

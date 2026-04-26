@@ -146,6 +146,8 @@ export interface EvolutionTask {
   strategy_threshold?: number;
   strategy_count?: number;
   exploration_efficiency?: number;
+  current_phase?: string;
+  progress_json?: Record<string, unknown>;
 }
 
 export interface EvolutionHistoryRecord {

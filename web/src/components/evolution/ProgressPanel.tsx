@@ -1,11 +1,17 @@
 import { useState, useCallback } from "react";
-import { Pause, Square, Play, AlertTriangle, CheckCircle, Database, ChevronDown, ChevronUp } from "lucide-react";
+import { Pause, Square, Play, AlertTriangle, CheckCircle, Database, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Progress } from "@/components/ui/progress";
 import { StatCard } from "@/components/StatCard";
 import { cn, formatNumber } from "@/lib/utils";
 import { STATUS_LABELS as STATUS_LABEL, isActiveStatus } from "@/lib/constants";
 import type { EvolutionTask } from "@/types/api";
+
+const PHASE_LABELS: Record<string, string> = {
+  initializing: "初始化中",
+  data_loading: "加载数据",
+  evolution_running: "进化运行中",
+};
 
 interface ProgressPanelProps {
   task: EvolutionTask;
@@ -41,6 +47,8 @@ export function ProgressPanel({
   const isContinuous = task.continuous === true;
   const populationCount = task.population_count ?? 1;
   const [showChampion, setShowChampion] = useState(false);
+  const phaseLabel = task.current_phase ? PHASE_LABELS[task.current_phase] ?? task.current_phase : null;
+  const showPhaseHint = isActive && currentGeneration === 0 && phaseLabel;
 
   return (
     <div className="flex flex-col gap-4">
@@ -78,6 +86,14 @@ export function ProgressPanel({
           </span>
         )}
       </div>
+
+      {/* Phase hint: show meaningful progress when generation=0 */}
+      {showPhaseHint && (
+        <div className="flex items-center gap-2 text-xs text-slate-400">
+          <Loader2 className="h-3 w-3 animate-spin text-blue-400" />
+          <span>{phaseLabel}</span>
+        </div>
+      )}
 
       {/* Progress bar - hidden for continuous mode (no upper bound) */}
       {!isContinuous && (

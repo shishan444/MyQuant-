@@ -79,6 +79,7 @@ def _get_task_snapshot(websocket: WebSocket, task_id: str) -> Optional[Dict[str,
             "best_score": row.get("best_score"),
             "target_score": row.get("target_score"),
             "max_generations": row.get("max_generations"),
+            "current_phase": row.get("current_phase"),
         }
     except Exception:
         return None
