@@ -339,6 +339,7 @@ class EvolutionRunner(threading.Thread):
 
         _enhanced_df = load_and_prepare_df(
             self.data_dir, _symbol, _timeframe, _data_start, _data_end,
+            stop_check=controller.check_stop,
         )
         if _enhanced_df is None:
             update_task(self.db_path, task_id, status="stopped", stop_reason="no_data")
@@ -353,6 +354,7 @@ class EvolutionRunner(threading.Thread):
             _dfs_by_timeframe = load_mtf_data(
                 self.data_dir, _symbol, _timeframe, _enhanced_df,
                 set(tf_pool), _data_start, _data_end,
+                stop_check=controller.check_stop,
             )
 
         # Use actually loaded TFs for evolution, not raw tf_pool
@@ -555,6 +557,7 @@ class EvolutionRunner(threading.Thread):
             ancestor=dna,
             evaluate_fn=evaluate_fn,
             on_generation=on_generation,
+            stop_check=controller.check_stop,
         )
 
         champion = result["champion"]
@@ -630,6 +633,7 @@ class EvolutionRunner(threading.Thread):
                 on_generation=on_generation,
                 extra_ancestors=extra_ancestors if extra_ancestors else None,
                 exclude_signatures=discovered_signatures,
+                stop_check=controller.check_stop,
             )
             champion = result["champion"]
             stop_reason = result["stop_reason"]

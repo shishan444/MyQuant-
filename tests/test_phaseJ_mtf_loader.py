@@ -62,7 +62,7 @@ def test_multi_timeframe_returns_all():
 
     with patch('core.data.mtf_loader.find_parquet', side_effect=mock_find_parquet):
         with patch('core.data.storage.load_parquet', return_value=mock_df):
-            with patch('core.features.indicators.compute_all_indicators', side_effect=lambda x: x):
+            with patch('core.features.indicators.compute_all_indicators', side_effect=lambda x, stop_check=None: x):
                 result = load_mtf_data(
                     data_dir=Path("/tmp/fake_data"),
                     symbol="BTCUSDT",

@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Dict, Optional, Set
+from typing import Callable, Dict, Optional, Set
 
 import pandas as pd
 
@@ -45,6 +45,7 @@ def load_and_prepare_df(
     data_start: Optional[str] = None,
     data_end: Optional[str] = None,
     min_bars: int = 50,
+    stop_check: Optional[Callable[[], None]] = None,
 ) -> Optional[pd.DataFrame]:
     """Load a single-timeframe parquet, slice by date, and compute all indicators.
 
@@ -69,7 +70,7 @@ def load_and_prepare_df(
     if len(df) < min_bars:
         return None
 
-    return compute_all_indicators(df)
+    return compute_all_indicators(df, stop_check=stop_check)
 
 
 def load_mtf_data(
@@ -80,6 +81,7 @@ def load_mtf_data(
     needed_tfs: Set[str],
     data_start: Optional[str] = None,
     data_end: Optional[str] = None,
+    stop_check: Optional[Callable[[], None]] = None,
 ) -> Optional[Dict[str, pd.DataFrame]]:
     """Load DataFrames for additional timeframes and compute indicators.
 
@@ -108,7 +110,7 @@ def load_mtf_data(
                 tf_df = tf_df[tf_df.index <= data_end]
             if len(tf_df) < 50:
                 continue
-            dfs_by_timeframe[tf] = compute_all_indicators(tf_df)
+            dfs_by_timeframe[tf] = compute_all_indicators(tf_df, stop_check=stop_check)
         except Exception as e:
             logger = logging.getLogger(__name__)
             logger.warning("Failed to load MTF data for %s: %s", tf, e)

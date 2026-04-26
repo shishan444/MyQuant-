@@ -216,9 +216,9 @@ class TestComputeAllIndicators:
 
     def test_volume_profile_compute(self, sample_ohlcv):
         """VolumeProfile is guard_only, compute it explicitly."""
-        result = _compute_indicator(sample_ohlcv, "VolumeProfile", {"bins": 50, "lookback": 60})
+        new_cols = _compute_indicator(sample_ohlcv, "VolumeProfile", {"bins": 50, "lookback": 60})
         poc_col = "vp_poc_50_60"
-        assert poc_col in result.columns
+        assert poc_col in new_cols
         # Should have some non-NaN values in the tail
-        valid = result[poc_col].dropna()
+        valid = new_cols[poc_col].dropna()
         assert len(valid) > 0

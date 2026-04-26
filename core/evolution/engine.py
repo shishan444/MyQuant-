@@ -195,6 +195,7 @@ class EvolutionEngine:
         on_generation: Optional[Callable[[int, float, float], None]] = None,
         extra_ancestors: Optional[List[StrategyDNA]] = None,
         exclude_signatures: Optional[set] = None,
+        stop_check: Optional[Callable[[], None]] = None,
     ) -> Dict:
         """Run the full evolution loop.
 
@@ -203,6 +204,8 @@ class EvolutionEngine:
             evaluate_fn: Function that takes a StrategyDNA and returns a score (0-100).
             on_generation: Optional callback(gen, best_score, avg_score) after each gen.
             exclude_signatures: Set of gene signatures to avoid in population init.
+            stop_check: Optional callback that raises on stop request.
+                Called between individual evaluations.
 
         Returns:
             Dict with champion, history, stop_reason, total_generations.
@@ -237,8 +240,12 @@ class EvolutionEngine:
                 if self.direction != "mixed":
                     ind.risk_genes.direction = self.direction
 
-            # Evaluate all individuals
-            scored = [(ind, evaluate_fn(ind)) for ind in population]
+            # Evaluate all individuals (with stop checks between batches)
+            scored = []
+            for idx, ind in enumerate(population):
+                if stop_check is not None and idx > 0 and idx % 3 == 0:
+                    stop_check()
+                scored.append((ind, evaluate_fn(ind)))
             scored.sort(key=lambda x: x[1], reverse=True)
 
             best_score = scored[0][1]

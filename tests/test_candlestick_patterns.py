@@ -187,6 +187,8 @@ def test_compute_pattern_indicators():
 
     for name in ["BearishEngulfing", "MorningStar", "ThreeWhiteSoldiers"]:
         result = _compute_indicator(df, name, {})
-        output_field = result.columns[-1]
-        assert output_field.startswith("pattern_")
-        assert set(result[output_field].unique()).issubset({0, 1})
+        assert isinstance(result, dict)
+        assert len(result) == 1
+        col_name = list(result.keys())[0]
+        assert col_name.startswith("pattern_")
+        assert set(result[col_name].unique()).issubset({0, 1})
