@@ -39,6 +39,28 @@ class BacktestResult:
     degraded_layers: int = 0
 
 
+@njit
+def _apply_funding_loop_nb(adjusted: np.ndarray, position_mask: np.ndarray,
+                           cost_rate: float) -> float:
+    """Numba-compiled inner loop for funding cost deduction.
+
+    Args:
+        adjusted: Float64 equity values (modified in-place).
+        position_mask: Bool array, True when position is open.
+        cost_rate: Per-bar funding cost rate.
+
+    Returns:
+        Total funding cost deducted.
+    """
+    total_cost = 0.0
+    for i in range(1, len(adjusted)):
+        if position_mask[i]:
+            cost = adjusted[i - 1] * cost_rate
+            total_cost += cost
+            adjusted[i] -= cost
+    return total_cost
+
+
 def _apply_funding_costs(
     equity_curve: pd.Series, leverage: int, timeframe: str,
     trades_df: Optional[pd.DataFrame] = None,
@@ -66,7 +88,7 @@ def _apply_funding_costs(
     cost_rate = RATE_PER_8H * periods_per_bar * borrowed_ratio
 
     # Build position mask: True when position is open
-    position_mask = np.zeros(len(equity_curve), dtype=bool)
+    position_mask = np.zeros(len(equity_curve), dtype=np.bool_)
     if trades_df is not None and len(trades_df) > 0:
         for _, trade in trades_df.iterrows():
             entry_ts = trade.get("Entry Timestamp")
@@ -78,19 +100,14 @@ def _apply_funding_costs(
                 mask_slice = equity_curve.index >= entry_ts
             else:
                 mask_slice = (equity_curve.index >= entry_ts) & (equity_curve.index <= exit_ts)
-            position_mask |= np.asarray(mask_slice)
+            position_mask |= np.asarray(mask_slice).astype(np.bool_)
     elif trades_df is None:
         # Legacy: no trades_df passed, deduct for all bars
         position_mask[:] = True
-    # else: trades_df provided but empty → no funding costs (correct)
+    # else: trades_df provided but empty -> no funding costs (correct)
 
     adjusted = equity_curve.values.astype(np.float64).copy()
-    total_cost = 0.0
-    for i in range(1, len(adjusted)):
-        if position_mask[i]:
-            cost = adjusted[i - 1] * cost_rate
-            total_cost += cost
-            adjusted[i] -= cost
+    total_cost = _apply_funding_loop_nb(adjusted, position_mask, cost_rate)
     return pd.Series(adjusted, index=equity_curve.index), total_cost
 
 
@@ -110,8 +127,8 @@ def pre_sim_func_nb(c):
 @njit
 def order_func_nb(c, entry_price, is_liquidated,
                   entries, exits, adds, reduces,
-                  direction_val, size_pct, leverage,
-                  sl_stop, tp_stop, fee, slippage,
+                  direction_vals, size_pcts, leverages,
+                  sl_stops, tp_stops, fee, slippage,
                   high_arr, low_arr, direction_signal):
     """Per-bar order callback with real-time SL/TP and liquidation.
 
@@ -120,12 +137,21 @@ def order_func_nb(c, entry_price, is_liquidated,
 
     Args via order_args:
         entries, exits, adds, reduces: 2D float64 arrays
-        direction_val, size_pct, ...: scalar float64 params
+        direction_vals, size_pcts, leverages, sl_stops, tp_stops:
+            1D float64 arrays (one value per column)
+        fee, slippage: scalar float64
         high_arr, low_arr: 2D float64 arrays for intrabar SL/TP
         direction_signal: 2D float64 array, +1=long, -1=short (for mixed mode)
     """
     i = c.i
     col = c.col
+
+    # Per-column parameter lookup
+    direction_val = direction_vals[col]
+    size_pct = size_pcts[col]
+    leverage = leverages[col]
+    sl_stop = sl_stops[col]
+    tp_stop = tp_stops[col]
 
     # Already liquidated -> force close any remaining position, then allow re-entry if funds remain
     if is_liquidated[col] > 0.5:
@@ -346,11 +372,11 @@ class BacktestEngine:
             exits_2d,
             adds_2d,
             reduces_2d,
-            np.float64(direction_val),
-            np.float64(size_pct),
-            np.float64(leverage),
-            np.float64(sl_stop),
-            np.float64(tp_stop),
+            np.array([direction_val], dtype=np.float64),
+            np.array([size_pct], dtype=np.float64),
+            np.array([leverage], dtype=np.float64),
+            np.array([sl_stop], dtype=np.float64),
+            np.array([tp_stop], dtype=np.float64),
             np.float64(self.fee),
             np.float64(self.slippage),
             high_2d,
@@ -497,3 +523,153 @@ class BacktestEngine:
             portfolio, dna, enhanced_df, add_count, reduce_count, degraded,
         )
         return result, portfolio
+
+    def batch_run(
+        self,
+        individuals: list[StrategyDNA],
+        enhanced_df: pd.DataFrame,
+        dfs_by_timeframe: dict | None = None,
+        signal_sets: list | None = None,
+    ) -> list[BacktestResult]:
+        """Batch-evaluate multiple individuals in a single vbt call.
+
+        Instead of calling run() N times, stacks all signals into (N, M) matrices
+        and runs one Portfolio.from_order_func. Each column corresponds to one
+        individual, enabling vectorized evaluation across the whole population.
+
+        Args:
+            individuals: List of StrategyDNA to evaluate.
+            enhanced_df: Market data with indicators.
+            dfs_by_timeframe: Multi-timeframe data dict (optional).
+            signal_sets: Pre-computed signal sets (optional, saves recomputation).
+
+        Returns:
+            List[BacktestResult] in the same order as individuals.
+        """
+        M = len(individuals)
+        if M == 0:
+            return []
+        N = len(enhanced_df)
+
+        # 1. Compute signal sets
+        if signal_sets is not None:
+            sig_sets = signal_sets
+        else:
+            sig_sets = [
+                dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+                for dna in individuals
+            ]
+
+        # 2. Stack signals into (N, M) matrices
+        entries_parts = []
+        exits_parts = []
+        adds_parts = []
+        reduces_parts = []
+        direction_signal_parts = []
+        add_counts = []
+        reduce_counts = []
+        degraded_layers_list = []
+
+        for ss in sig_sets:
+            entries_parts.append(
+                ss.entries.shift(1).fillna(False).astype(float).values
+            )
+            exits_parts.append(
+                ss.exits.shift(1).fillna(False).astype(float).values
+            )
+            adds_parts.append(
+                ss.adds.shift(1).fillna(False).astype(float).values
+            )
+            reduces_parts.append(
+                ss.reduces.shift(1).fillna(False).astype(float).values
+            )
+            add_counts.append(int(ss.adds.sum()))
+            reduce_counts.append(int(ss.reduces.sum()))
+            degraded_layers_list.append(ss.degraded_layers)
+
+            if ss.entry_direction is not None:
+                direction_signal_parts.append(
+                    ss.entry_direction.shift(1).fillna(1.0).astype(float).values
+                )
+            else:
+                direction_signal_parts.append(np.ones(N))
+
+        entries_matrix = np.column_stack(entries_parts).astype(np.float64)
+        exits_matrix = np.column_stack(exits_parts).astype(np.float64)
+        adds_matrix = np.column_stack(adds_parts).astype(np.float64)
+        reduces_matrix = np.column_stack(reduces_parts).astype(np.float64)
+        direction_signal_matrix = np.column_stack(direction_signal_parts).astype(np.float64)
+
+        close = enhanced_df["close"]
+        high_2d = np.tile(
+            enhanced_df["high"].values.astype(np.float64).reshape(-1, 1), (1, M)
+        )
+        low_2d = np.tile(
+            enhanced_df["low"].values.astype(np.float64).reshape(-1, 1), (1, M)
+        )
+
+        # 3. Build per-column parameter arrays
+        direction_map = {"long": 0, "short": 1, "mixed": 2}
+        direction_vals = np.array(
+            [direction_map.get(dna.risk_genes.direction, 0) for dna in individuals],
+            dtype=np.float64,
+        )
+        size_pcts = np.array(
+            [float(dna.risk_genes.position_size * dna.risk_genes.leverage)
+             for dna in individuals],
+            dtype=np.float64,
+        )
+        leverages = np.array(
+            [float(dna.risk_genes.leverage) for dna in individuals],
+            dtype=np.float64,
+        )
+        sl_stops = np.array(
+            [float(dna.risk_genes.stop_loss) if dna.risk_genes.stop_loss else 0.0
+             for dna in individuals],
+            dtype=np.float64,
+        )
+        tp_stops = np.array(
+            [float(dna.risk_genes.take_profit) if dna.risk_genes.take_profit else 0.0
+             for dna in individuals],
+            dtype=np.float64,
+        )
+
+        # 4. Single vbt call -- tile close to M columns to match signal matrices
+        close_2d = np.tile(
+            close.values.astype(np.float64).reshape(-1, 1), (1, M)
+        )
+        pf = vbt.Portfolio.from_order_func(
+            close_2d,
+            order_func_nb,
+            entries_matrix,
+            exits_matrix,
+            adds_matrix,
+            reduces_matrix,
+            direction_vals,
+            size_pcts,
+            leverages,
+            sl_stops,
+            tp_stops,
+            np.float64(self.fee),
+            np.float64(self.slippage),
+            high_2d,
+            low_2d,
+            direction_signal_matrix,
+            pre_sim_func_nb=pre_sim_func_nb,
+            init_cash=self.init_cash,
+            freq=None,
+        )
+
+        # 5. Extract per-column results
+        results = []
+        for col_idx in range(M):
+            col_pf = pf.iloc[col_idx]
+            result = self._build_result_from_portfolio(
+                col_pf, individuals[col_idx], enhanced_df,
+                add_count=add_counts[col_idx],
+                reduce_count=reduce_counts[col_idx],
+                degraded=degraded_layers_list[col_idx],
+            )
+            results.append(result)
+
+        return results

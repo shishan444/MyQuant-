@@ -370,7 +370,7 @@ class EvolutionRunner(threading.Thread):
             timeframe_pool=_loaded_tfs,
         )
 
-        # Build a simple evaluate_fn that scores a DNA
+        # Build evaluate_fn and evaluate_population for batch evaluation
         # NOTE: direction is fixed to the task's original direction (e.g. "mixed").
         # Continuous evolution direction rotation only affects seed creation, NOT evaluation.
         _eval_direction = direction
@@ -384,6 +384,13 @@ class EvolutionRunner(threading.Thread):
                 individual._eval_diagnostics = result
                 return result["score"]
             return result
+
+        def evaluate_population_fn(population: list[StrategyDNA]) -> list[float]:
+            """Batch-evaluate a population using BacktestEngine.batch_run."""
+            return self._evaluate_population(
+                population, task_row, leverage, _eval_direction,
+                enhanced_df=_enhanced_df, dfs_by_timeframe=_dfs_by_timeframe,
+            )
 
         # Track mutations for logging
         last_mutations: List[str] = []
@@ -558,6 +565,7 @@ class EvolutionRunner(threading.Thread):
             evaluate_fn=evaluate_fn,
             on_generation=on_generation,
             stop_check=controller.check_stop,
+            evaluate_population=evaluate_population_fn,
         )
 
         champion = result["champion"]
@@ -634,6 +642,7 @@ class EvolutionRunner(threading.Thread):
                 extra_ancestors=extra_ancestors if extra_ancestors else None,
                 exclude_signatures=discovered_signatures,
                 stop_check=controller.check_stop,
+                evaluate_population=evaluate_population_fn,
             )
             champion = result["champion"]
             stop_reason = result["stop_reason"]
@@ -777,6 +786,87 @@ class EvolutionRunner(threading.Thread):
             # Fallback: zero score (not random noise)
             diagnostics["score"] = 0.0
             return diagnostics
+
+    def _evaluate_population(
+        self,
+        population: list[StrategyDNA],
+        task_row: Dict[str, Any],
+        leverage: int = 1,
+        direction: str = "long",
+        enhanced_df=None,
+        dfs_by_timeframe=None,
+    ) -> list[float]:
+        """Batch-evaluate a population using BacktestEngine.batch_run.
+
+        Returns scores in the same order as the input population.
+        Falls back to per-individual evaluation on batch failure.
+        """
+        try:
+            from core.backtest.engine import BacktestEngine
+            from core.strategy.executor import dna_to_signal_set
+            from core.scoring.scorer import score_strategy
+
+            if enhanced_df is None:
+                # Cannot batch without data -- fallback to individual evaluation
+                return [
+                    self._evaluate_dna(
+                        ind, task_row, leverage, direction,
+                        enhanced_df=enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
+                    ).get("score", 0.0)
+                    for ind in population
+                ]
+
+            # Enforce constraints on all individuals before evaluation
+            for ind in population:
+                ind.risk_genes.leverage = leverage
+                if direction != "mixed":
+                    ind.risk_genes.direction = direction
+
+            # Compute signal sets for all individuals
+            signal_sets = []
+            for ind in population:
+                sig = dna_to_signal_set(ind, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
+                signal_sets.append(sig)
+
+            # Batch backtest
+            bt = BacktestEngine()
+            bt_results = bt.batch_run(
+                population, enhanced_df,
+                dfs_by_timeframe=dfs_by_timeframe,
+                signal_sets=signal_sets,
+            )
+
+            template_name = task_row.get("score_template", "profit_first")
+            scores = []
+            for i, (ind, bt_result) in enumerate(zip(population, bt_results)):
+                metrics = bt_result.metrics_dict
+                score_result = score_strategy(
+                    metrics, template_name, liquidated=bt_result.liquidated,
+                )
+                # Store diagnostics on individual (same as evaluate_fn)
+                ind._eval_diagnostics = {
+                    "score": score_result["total_score"],
+                    "total_trades": bt_result.total_trades,
+                    "data_bars": bt_result.data_bars,
+                    "raw_metrics": score_result["raw_metrics"],
+                    "dimension_scores": score_result["dimension_scores"],
+                    "liquidated": bt_result.liquidated,
+                    "used_real_data": True,
+                    "fallback": False,
+                }
+                scores.append(score_result["total_score"])
+
+            return scores
+
+        except Exception:
+            # Fallback to per-individual evaluation
+            return [
+                self._evaluate_dna(
+                    ind, task_row, leverage, direction,
+                    enhanced_df=enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
+                ).get("score", 0.0)
+                for ind in population
+            ]
 
 
     def _find_parquet(self, safe_symbol: str, timeframe: str):

@@ -196,6 +196,7 @@ class EvolutionEngine:
         extra_ancestors: Optional[List[StrategyDNA]] = None,
         exclude_signatures: Optional[set] = None,
         stop_check: Optional[Callable[[], None]] = None,
+        evaluate_population: Optional[Callable[[List[StrategyDNA]], List[float]]] = None,
     ) -> Dict:
         """Run the full evolution loop.
 
@@ -206,6 +207,9 @@ class EvolutionEngine:
             exclude_signatures: Set of gene signatures to avoid in population init.
             stop_check: Optional callback that raises on stop request.
                 Called between individual evaluations.
+            evaluate_population: Optional batch version of evaluate_fn.
+                Takes a list of StrategyDNA, returns a list of scores.
+                When provided, used instead of per-individual evaluate_fn.
 
         Returns:
             Dict with champion, history, stop_reason, total_generations.
@@ -240,12 +244,20 @@ class EvolutionEngine:
                 if self.direction != "mixed":
                     ind.risk_genes.direction = self.direction
 
-            # Evaluate all individuals (with stop checks between batches)
+            # Evaluate all individuals
             scored = []
-            for idx, ind in enumerate(population):
-                if stop_check is not None and idx > 0 and idx % 3 == 0:
+            if evaluate_population is not None:
+                # Batch evaluation: one call for the whole population
+                if stop_check is not None:
                     stop_check()
-                scored.append((ind, evaluate_fn(ind)))
+                scores = evaluate_population(population)
+                scored = list(zip(population, scores))
+            else:
+                # Sequential per-individual evaluation (with stop checks)
+                for idx, ind in enumerate(population):
+                    if stop_check is not None and idx > 0 and idx % 3 == 0:
+                        stop_check()
+                    scored.append((ind, evaluate_fn(ind)))
             scored.sort(key=lambda x: x[1], reverse=True)
 
             best_score = scored[0][1]
