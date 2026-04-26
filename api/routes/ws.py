@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, Dict, Optional, Set
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["websocket"])
 
@@ -41,7 +44,8 @@ class _ConnectionManager:
             try:
                 await ws.send_text(msg)
             except Exception:
-                pass
+                logger.warning("WS send failed for task %s, removing connection", task_id, exc_info=True)
+                self.remove(task_id, ws)
 
 
 manager = _ConnectionManager()

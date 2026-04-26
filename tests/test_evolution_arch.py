@@ -486,9 +486,8 @@ class TestWSPushReliability:
         loop.run_until_complete(manager.push("test", {"type": "test"}))
         loop.close()
 
-        # The WS should still be in connections (current behavior)
-        # After fix, it should be removed
-        assert "test" in manager._connections
+        # After fix, broken WS connections should be removed
+        assert "test" not in manager._connections
 
     def test_push_with_no_connections(self) -> None:
         """Push to a task_id with no WS connections should be a no-op."""

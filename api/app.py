@@ -85,7 +85,8 @@ def create_app(
 
         yield
 
-        # Shutdown: stop the runner and wait for cleanup
+        # Shutdown: disconnect WS push first, then stop runner
+        set_ws_push_fn(None)
         runner.stop()
         runner.join(timeout=5.0)
 
