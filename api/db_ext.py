@@ -102,10 +102,16 @@ _CONSTRAINT_COLUMNS = [
     ("indicator_pool", "TEXT"),
     ("timeframe_pool", "TEXT"),
     ("mode", "TEXT"),
-    ("champion_metrics", "TEXT"),  # JSON: {annual_return, sharpe_ratio, max_drawdown, win_rate, calmar_ratio, total_trades}
-    ("champion_dimension_scores", "TEXT"),  # JSON: {annual_return: 78.5, sharpe_ratio: 65.2, ...}
+    ("champion_metrics", "TEXT"),
+    ("champion_dimension_scores", "TEXT"),
     ("walk_forward_enabled", "INTEGER DEFAULT 0"),
     ("continuous", "INTEGER DEFAULT 1"),
+]
+
+_PROGRESS_COLUMNS = [
+    ("current_phase", "TEXT DEFAULT 'idle'"),
+    ("progress_json", "TEXT"),
+    ("heartbeat_at", "TEXT"),
 ]
 
 
@@ -131,6 +137,20 @@ def _apply_mtf_columns(conn: sqlite3.Connection) -> None:
     conn.row_factory = None
 
     for col_name, col_def in _MTF_COLUMNS:
+        if col_name not in existing:
+            conn.execute(
+                f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
+            )
+
+
+def _apply_progress_columns(conn: sqlite3.Connection) -> None:
+    """Add progress tracking columns to evolution_task (idempotent)."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(evolution_task)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+
+    for col_name, col_def in _PROGRESS_COLUMNS:
         if col_name not in existing:
             conn.execute(
                 f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
@@ -224,6 +244,11 @@ def init_db_ext(db_path: Path) -> None:
         _apply_strategy_ext_columns(conn)
         if 8 not in applied:
             _record_version(conn, 8)
+
+        # 8. ALTER TABLE for progress tracking columns (migration 009)
+        _apply_progress_columns(conn)
+        if 9 not in applied:
+            _record_version(conn, 9)
 
         conn.commit()
     finally:

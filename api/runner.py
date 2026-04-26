@@ -25,10 +25,135 @@ from core.persistence.db import (
     update_task,
 )
 
-logger = logging.getLogger("runner")
+from core.logging import get_logger
+
+logger = get_logger("RUNNER")
 
 # Global reference to the FastAPI app's asyncio loop for WS push
 _ws_push_fn: Optional[Callable] = None
+
+# Active task controllers: task_id -> TaskController
+_active_controllers: Dict[str, "TaskController"] = {}
+
+
+def get_active_controllers() -> Dict[str, "TaskController"]:
+    return _active_controllers
+
+
+# ---------------------------------------------------------------------------
+# TaskController: direct stop signal via threading.Event
+# ---------------------------------------------------------------------------
+
+class TaskStopRequested(Exception):
+    """Raised when a task stop is requested via TaskController."""
+    pass
+
+
+class TaskController:
+    """Thread-safe task controller for cooperative cancellation."""
+
+    def __init__(self) -> None:
+        self._stop_event = threading.Event()
+
+    def request_stop(self) -> None:
+        self._stop_event.set()
+
+    @property
+    def stop_requested(self) -> bool:
+        return self._stop_event.is_set()
+
+    def check_stop(self) -> None:
+        if self._stop_event.is_set():
+            raise TaskStopRequested()
+
+
+# ---------------------------------------------------------------------------
+# Progress & heartbeat helpers
+# ---------------------------------------------------------------------------
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def update_heartbeat(db_path: Path, task_id: str) -> None:
+    """Update heartbeat_at timestamp for a running task."""
+    from core.persistence.db import _connect
+    try:
+        with _connect(db_path) as conn:
+            conn.execute(
+                "UPDATE evolution_task SET heartbeat_at = ? WHERE task_id = ?",
+                (_now_iso(), task_id),
+            )
+            conn.commit()
+    except Exception:
+        logger.warning("heartbeat update failed for %s", task_id, exc_info=True)
+
+
+def update_phase(db_path: Path, task_id: str, phase: str) -> None:
+    """Update current_phase for a task and push WS notification."""
+    from core.persistence.db import _connect
+    try:
+        with _connect(db_path) as conn:
+            conn.execute(
+                "UPDATE evolution_task SET current_phase = ?, updated_at = ? WHERE task_id = ?",
+                (phase, _now_iso(), task_id),
+            )
+            conn.commit()
+    except Exception:
+        logger.warning("phase update failed for %s", task_id, exc_info=True)
+    _push_ws(task_id, {
+        "type": "phase_changed",
+        "task_id": task_id,
+        "phase": phase,
+    })
+
+
+def update_progress(db_path: Path, task_id: str, progress: dict) -> None:
+    """Write structured progress JSON to DB."""
+    from core.persistence.db import _connect
+    try:
+        with _connect(db_path) as conn:
+            conn.execute(
+                "UPDATE evolution_task SET progress_json = ?, updated_at = ? WHERE task_id = ?",
+                (json.dumps(progress, ensure_ascii=False), _now_iso(), task_id),
+            )
+            conn.commit()
+    except Exception:
+        logger.warning("progress update failed for %s", task_id, exc_info=True)
+
+
+def recover_stale_tasks(db_path: Path) -> None:
+    """Mark all running tasks as stopped (crash recovery).
+
+    Called once at app startup to clean up after unclean shutdowns.
+    """
+    from core.persistence.db import _connect
+    with _connect(db_path) as conn:
+        result = conn.execute(
+            "UPDATE evolution_task SET status = 'stopped', "
+            "stop_reason = 'crash_recovery', updated_at = ? "
+            "WHERE status = 'running'",
+            (_now_iso(),),
+        )
+        conn.commit()
+        if result.rowcount > 0:
+            logger.info("Recovered %d stale tasks on startup", result.rowcount)
+
+
+def check_stale_heartbeats(db_path: Path, timeout_minutes: int = 5) -> None:
+    """Detect tasks with expired heartbeat and mark them stopped."""
+    from core.persistence.db import _connect
+    threshold = (datetime.now(timezone.utc) - __import__("datetime").timedelta(minutes=timeout_minutes)).isoformat()
+    with _connect(db_path) as conn:
+        result = conn.execute(
+            "UPDATE evolution_task SET status = 'stopped', "
+            "stop_reason = 'heartbeat_timeout', updated_at = ? "
+            "WHERE status = 'running' AND heartbeat_at IS NOT NULL AND heartbeat_at < ?",
+            (_now_iso(), threshold),
+        )
+        conn.commit()
+        if result.rowcount > 0:
+            logger.warning("Heartbeat timeout: %d tasks marked stopped", result.rowcount)
 
 
 def set_ws_push_fn(fn: Callable) -> None:
@@ -156,6 +281,15 @@ class EvolutionRunner(threading.Thread):
 
         # Mark as running
         update_task(self.db_path, task_id, status="running")
+
+        # Immediately notify frontend that the task has started
+        _push_ws(task_id, {
+            "type": "task_started",
+            "task_id": task_id,
+            "status": "running",
+            "target_score": task_row["target_score"],
+            "max_generations": task_row.get("max_generations", 200),
+        })
 
         # Parse initial DNA
         try:

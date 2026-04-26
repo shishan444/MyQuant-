@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Dict, Set
+from typing import Any, Dict, Optional, Set
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -52,6 +52,35 @@ def get_manager() -> _ConnectionManager:
 
 
 # ---------------------------------------------------------------------------
+# Task snapshot helper
+# ---------------------------------------------------------------------------
+
+def _get_task_snapshot(websocket: WebSocket, task_id: str) -> Optional[Dict[str, Any]]:
+    """Read task current state from DB and return a WS snapshot message."""
+    try:
+        db_path = websocket.app.state.db_path
+        from core.persistence.db import get_task
+        row = get_task(db_path, task_id)
+        if row is None:
+            return None
+        # Only send snapshot for active or recently active tasks
+        status = row.get("status", "")
+        if status not in ("running", "paused", "pending", "completed"):
+            return None
+        return {
+            "type": "task_snapshot",
+            "task_id": task_id,
+            "status": status,
+            "current_generation": row.get("current_generation", 0),
+            "best_score": row.get("best_score"),
+            "target_score": row.get("target_score"),
+            "max_generations": row.get("max_generations"),
+        }
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
 
@@ -67,6 +96,8 @@ async def evolution_ws(websocket: WebSocket, task_id: str) -> None:
       Server -> Client:
         {"type": "pong"}
         {"type": "subscribed", "task_id": "..."}
+        {"type": "task_snapshot", ...}  (sent on connect for progress recovery)
+        {"type": "task_started", ...}   (sent when runner begins execution)
         {"type": "generation_complete", "task_id": "...", "generation": N, ...}
         {"type": "evolution_complete", "task_id": "...", ...}
     """
@@ -77,6 +108,11 @@ async def evolution_ws(websocket: WebSocket, task_id: str) -> None:
 
     try:
         await websocket.send_json({"type": "subscribed", "task_id": task_id})
+
+        # Send current task state snapshot for progress recovery on reconnect
+        snapshot = _get_task_snapshot(websocket, task_id)
+        if snapshot:
+            await websocket.send_json(snapshot)
 
         while True:
             data = await websocket.receive_json()

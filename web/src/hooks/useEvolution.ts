@@ -6,7 +6,8 @@ import {
 } from "@tanstack/react-query";
 import * as api from "@/services/evolution";
 import { toast } from "sonner";
-import type { GenerationUpdate } from "@/types/api";
+import type { EvolutionTask, GenerationUpdate } from "@/types/api";
+import { isActiveStatus } from "@/lib/constants";
 
 export const evolutionKeys = {
   all: ["evolution"] as const,
@@ -24,6 +25,12 @@ export function useEvolutionTasks(filters?: {
   return queryOptions({
     queryKey: evolutionKeys.tasks(filters as Record<string, string>),
     queryFn: () => api.getEvolutionTasks(filters),
+    refetchInterval: (query) => {
+      const items = (query.state.data as { items: EvolutionTask[] } | undefined)?.items;
+      if (!items) return false;
+      return items.some((t) => isActiveStatus(t.status)) ? 10000 : false;
+    },
+    refetchIntervalInBackground: true,
   });
 }
 
@@ -32,6 +39,12 @@ export function useEvolutionTask(id: string) {
     queryKey: evolutionKeys.task(id),
     queryFn: () => api.getEvolutionTask(id),
     enabled: !!id,
+    refetchInterval: (query) => {
+      const data = query.state.data as EvolutionTask | undefined;
+      if (!data) return false;
+      return isActiveStatus(data.status) ? 5000 : false;
+    },
+    refetchIntervalInBackground: true,
   });
 }
 
@@ -143,6 +156,34 @@ export function useEvolutionWebSocket(taskId: string | null) {
         try {
           const update: GenerationUpdate = JSON.parse(event.data);
 
+          // Handle task_started: runner has begun execution
+          if (update.type === "task_started") {
+            qc.invalidateQueries({ queryKey: evolutionKeys.task(currentTaskId) });
+            qc.invalidateQueries({ queryKey: ["evolution", "tasks"] });
+            return;
+          }
+
+          // Handle task_snapshot: progress recovery on WS reconnect
+          if (update.type === "task_snapshot") {
+            qc.setQueryData(
+              evolutionKeys.task(currentTaskId),
+              (old: unknown) => {
+                if (!old) {
+                  qc.invalidateQueries({ queryKey: evolutionKeys.task(currentTaskId) });
+                  return old;
+                }
+                const prev = old as Record<string, unknown>;
+                return {
+                  ...prev,
+                  ...(update.current_generation != null ? { current_generation: update.current_generation } : {}),
+                  ...(update.best_score != null ? { best_score: update.best_score } : {}),
+                  status: update.status ?? prev.status,
+                };
+              }
+            );
+            return;
+          }
+
           if (update.type === "population_started") {
             qc.setQueryData(
               evolutionKeys.task(currentTaskId),
@@ -170,7 +211,11 @@ export function useEvolutionWebSocket(taskId: string | null) {
             qc.setQueryData(
               evolutionKeys.task(currentTaskId),
               (old: unknown) => {
-                if (!old) return old;
+                if (!old) {
+                  // Cache not ready yet -- trigger refetch as fallback
+                  qc.invalidateQueries({ queryKey: evolutionKeys.task(currentTaskId) });
+                  return old;
+                }
                 const prev = old as Record<string, unknown>;
                 return {
                   ...prev,
