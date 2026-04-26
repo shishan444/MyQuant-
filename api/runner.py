@@ -10,6 +10,7 @@ import json
 import logging
 import random
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -40,12 +41,12 @@ def set_ws_push_fn(fn: Callable) -> None:
 
 
 def _push_ws(task_id: str, payload: Dict[str, Any]) -> None:
-    """Fire-and-forget WS push (non-blocking)."""
+    """Fire-and-forget WS push (non-blocking) with observability."""
     if _ws_push_fn is not None:
         try:
             _ws_push_fn(task_id, payload)
         except Exception:
-            logger.debug("ws push failed", exc_info=True)
+            logger.warning("ws push failed for task %s", task_id, exc_info=True)
 
 
 class EvolutionRunner(threading.Thread):
@@ -64,6 +65,8 @@ class EvolutionRunner(threading.Thread):
         self._stop_event = threading.Event()
         self._active_task_id: Optional[str] = None
         self._population_count: int = 0  # Track continuous population count
+        self._last_tick_time: float = 0.0
+        self._tick_count: int = 0
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -79,8 +82,20 @@ class EvolutionRunner(threading.Thread):
                 self._tick()
             except Exception:
                 logger.error("tick error", exc_info=True)
+            self._last_tick_time = time.monotonic()
+            self._tick_count += 1
             self._stop_event.wait(self.poll_interval)
         logger.info("EvolutionRunner stopped")
+
+    def get_status(self) -> dict:
+        """Return thread-safe health snapshot for API consumption."""
+        age = time.monotonic() - self._last_tick_time if self._last_tick_time else None
+        return {
+            "is_alive": self.is_alive(),
+            "last_tick_age_seconds": round(age, 1) if age else None,
+            "tick_count": self._tick_count,
+            "active_task_id": self._active_task_id,
+        }
 
     def _tick(self) -> None:
         """One poll cycle: pick a task, run one generation, update DB."""
@@ -117,8 +132,27 @@ class EvolutionRunner(threading.Thread):
         return dict(row) if row else None
 
     def _run_task(self, task_row: Dict[str, Any]) -> None:
+        """Exception boundary for task execution.
+
+        Guarantees:
+        - _active_task_id is ALWAYS cleared (finally block)
+        - task status is updated to 'stopped' on any unhandled exception
+        """
         task_id = task_row["task_id"]
         self._active_task_id = task_id
+
+        try:
+            self._execute_task(task_row, task_id)
+        except _StopEvolution as e:
+            logger.info("Task %s stopped: %s", task_id, e)
+        except Exception:
+            logger.error("Task %s failed", task_id, exc_info=True)
+            update_task(self.db_path, task_id, status="stopped", stop_reason="error")
+        finally:
+            self._active_task_id = None
+
+    def _execute_task(self, task_row: Dict[str, Any], task_id: str) -> None:
+        """Full task execution. All exceptions propagate to _run_task's handler."""
 
         # Mark as running
         update_task(self.db_path, task_id, status="running")
@@ -129,7 +163,6 @@ class EvolutionRunner(threading.Thread):
         except Exception:
             logger.error("Failed to parse initial_dna for task %s", task_id)
             update_task(self.db_path, task_id, status="stopped", stop_reason="invalid_dna")
-            self._active_task_id = None
             return
 
         target_score = task_row["target_score"]
@@ -161,7 +194,6 @@ class EvolutionRunner(threading.Thread):
         )
         if _enhanced_df is None:
             update_task(self.db_path, task_id, status="stopped", stop_reason="no_data")
-            self._active_task_id = None
             return
 
         _dfs_by_timeframe = None
@@ -361,145 +393,136 @@ class EvolutionRunner(threading.Thread):
                     ws_payload["champion_dna"] = best_ind.to_dict()
             _push_ws(task_id, ws_payload)
 
-        try:
+        result = engine.evolve(
+            ancestor=dna,
+            evaluate_fn=evaluate_fn,
+            on_generation=on_generation,
+        )
+
+        champion = result["champion"]
+        stop_reason = result["stop_reason"]
+
+        # Continuous evolution loop: keep starting new populations
+        # until user manually stops or an error occurs
+        continuous = bool(task_row.get("continuous", 1))
+
+        while continuous and stop_reason not in ("error",):
+            from core.persistence.db import get_task
+            t = get_task(self.db_path, task_id)
+            if not t or t["status"] not in ("running", "pending"):
+                break
+
+            self._population_count += 1
+
+            # Rotate direction for diversity in continuous mode
+            original_direction = task_row.get("direction", "long")
+            if original_direction == "mixed":
+                directions = ["long", "short"]
+                direction = directions[self._population_count % 2]
+                logger.info(
+                    "Task %s: rotating direction to '%s' for population #%d",
+                    task_id, direction, self._population_count + 1,
+                )
+
+            logger.info(
+                "Task %s: starting population #%d (stop_reason=%s)",
+                task_id, self._population_count + 1, stop_reason,
+            )
+
+            # Notify frontend that a new population has started
+            _push_ws(task_id, {
+                "type": "population_started",
+                "task_id": task_id,
+                "population_count": self._population_count + 1,
+                "best_score_ever": result.get("champion_score", 0) if result else 0,
+                "total_generations_so_far": global_gen_offset,
+            })
+
+            # Reset for new population with expanded search space
+            # Inject diverse strategy templates to avoid searching the same region
+            extra_ancestors = []
+            if champion is not None:
+                dna = champion
+                dna.mutation_ops = []
+
+            # Inject 2 random strategy templates as seeds (trend/momentum/mean-reversion etc.)
+            # This expands the search space beyond the champion's strategy region
+            from core.evolution.population import STRATEGY_TEMPLATES, _dna_from_template
+            _tf = task_row.get("execution_timeframe", task_row.get("timeframe", "4h"))
+            _sym = task_row.get("symbol", "BTCUSDT")
+            template_seeds = random.sample(
+                STRATEGY_TEMPLATES, min(2, len(STRATEGY_TEMPLATES))
+            )
+            for tpl in template_seeds:
+                seed = _dna_from_template(
+                    tpl, _tf, _sym, leverage, direction,
+                )
+                extra_ancestors.append(seed)
+
+            # Collect signatures from previous population for dedup
+            # MUST happen before setting _population = None
+            if hasattr(engine, '_population') and engine._population:
+                for ind in engine._population:
+                    discovered_signatures.add(_gene_signature(ind))
+                # Preserve top elites as ancestors for next population
+                extra_ancestors.extend(engine._population[:3])
+
+            engine._population = None
+
             result = engine.evolve(
                 ancestor=dna,
                 evaluate_fn=evaluate_fn,
                 on_generation=on_generation,
+                extra_ancestors=extra_ancestors if extra_ancestors else None,
+                exclude_signatures=discovered_signatures,
             )
-
             champion = result["champion"]
             stop_reason = result["stop_reason"]
+            # Accumulate global generation offset to prevent history overwrite
+            global_gen_offset += result["total_generations"]
 
-            # Continuous evolution loop: keep starting new populations
-            # until user manually stops or an error occurs
-            continuous = bool(task_row.get("continuous", 1))
+        # Save champion
+        if champion is not None:
+            update_task(
+                self.db_path, task_id,
+                status="completed",
+                champion_dna=champion,
+                stop_reason=stop_reason,
+            )
 
-            while continuous and stop_reason not in ("error",):
-                from core.persistence.db import get_task
-                t = get_task(self.db_path, task_id)
-                if not t or t["status"] not in ("running", "pending"):
-                    break
-
-                self._population_count += 1
-
-                # Rotate direction for diversity in continuous mode
-                original_direction = task_row.get("direction", "long")
-                if original_direction == "mixed":
-                    directions = ["long", "short"]
-                    direction = directions[self._population_count % 2]
-                    logger.info(
-                        "Task %s: rotating direction to '%s' for population #%d",
-                        task_id, direction, self._population_count + 1,
-                    )
-
-                logger.info(
-                    "Task %s: starting population #%d (stop_reason=%s)",
-                    task_id, self._population_count + 1, stop_reason,
+            # Save final champion metrics from tracker (consistent snapshot)
+            champion_rec = champion_tracker.get_champion()
+            if champion_rec and champion_rec.metrics:
+                import sqlite3
+                conn = sqlite3.connect(str(self.db_path))
+                conn.execute(
+                    "UPDATE evolution_task SET champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
+                    (json.dumps(champion_rec.metrics),
+                     json.dumps(champion_rec.dimension_scores),
+                     task_id),
                 )
+                conn.commit()
+                conn.close()
 
-                # Notify frontend that a new population has started
-                _push_ws(task_id, {
-                    "type": "population_started",
-                    "task_id": task_id,
-                    "population_count": self._population_count + 1,
-                    "best_score_ever": result.get("champion_score", 0) if result else 0,
-                    "total_generations_so_far": global_gen_offset,
-                })
+        else:
+            update_task(
+                self.db_path, task_id,
+                status="completed",
+                stop_reason=stop_reason,
+            )
 
-                # Reset for new population with expanded search space
-                # Inject diverse strategy templates to avoid searching the same region
-                extra_ancestors = []
-                if champion is not None:
-                    dna = champion
-                    dna.mutation_ops = []
-
-                # Inject 2 random strategy templates as seeds (trend/momentum/mean-reversion etc.)
-                # This expands the search space beyond the champion's strategy region
-                from core.evolution.population import STRATEGY_TEMPLATES, _dna_from_template
-                _tf = task_row.get("execution_timeframe", task_row.get("timeframe", "4h"))
-                _sym = task_row.get("symbol", "BTCUSDT")
-                template_seeds = random.sample(
-                    STRATEGY_TEMPLATES, min(2, len(STRATEGY_TEMPLATES))
-                )
-                for tpl in template_seeds:
-                    seed = _dna_from_template(
-                        tpl, _tf, _sym, leverage, direction,
-                    )
-                    extra_ancestors.append(seed)
-
-                # Collect signatures from previous population for dedup
-                # MUST happen before setting _population = None
-                if hasattr(engine, '_population') and engine._population:
-                    for ind in engine._population:
-                        discovered_signatures.add(_gene_signature(ind))
-                    # Preserve top elites as ancestors for next population
-                    extra_ancestors.extend(engine._population[:3])
-
-                engine._population = None
-
-                result = engine.evolve(
-                    ancestor=dna,
-                    evaluate_fn=evaluate_fn,
-                    on_generation=on_generation,
-                    extra_ancestors=extra_ancestors if extra_ancestors else None,
-                    exclude_signatures=discovered_signatures,
-                )
-                champion = result["champion"]
-                stop_reason = result["stop_reason"]
-                # Accumulate global generation offset to prevent history overwrite
-                global_gen_offset += result["total_generations"]
-
-            # Save champion
-            if champion is not None:
-                update_task(
-                    self.db_path, task_id,
-                    status="completed",
-                    champion_dna=champion,
-                    stop_reason=stop_reason,
-                )
-
-                # Save final champion metrics from tracker (consistent snapshot)
-                champion_rec = champion_tracker.get_champion()
-                if champion_rec and champion_rec.metrics:
-                    import sqlite3
-                    conn = sqlite3.connect(str(self.db_path))
-                    conn.execute(
-                        "UPDATE evolution_task SET champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
-                        (json.dumps(champion_rec.metrics),
-                         json.dumps(champion_rec.dimension_scores),
-                         task_id),
-                    )
-                    conn.commit()
-                    conn.close()
-
-            else:
-                update_task(
-                    self.db_path, task_id,
-                    status="completed",
-                    stop_reason=stop_reason,
-                )
-
-            # Final WS push
-            _push_ws(task_id, {
-                "type": "evolution_complete",
-                "task_id": task_id,
-                "stop_reason": stop_reason,
-                "total_generations": result["total_generations"],
-                "champion_score": result["champion_score"],
-                "generation": result["total_generations"],
-                "best_score": result["champion_score"],
-                "target_score": target_score,
-                "max_generations": max_gens,
-            })
-
-        except _StopEvolution as e:
-            logger.info("Task %s stopped: %s", task_id, e)
-        except Exception:
-            logger.error("Task %s failed", task_id, exc_info=True)
-            update_task(self.db_path, task_id, status="stopped", stop_reason="error")
-        finally:
-            self._active_task_id = None
+        # Final WS push
+        _push_ws(task_id, {
+            "type": "evolution_complete",
+            "task_id": task_id,
+            "stop_reason": stop_reason,
+            "total_generations": result["total_generations"],
+            "champion_score": result["champion_score"],
+            "generation": result["total_generations"],
+            "best_score": result["champion_score"],
+            "target_score": target_score,
+            "max_generations": max_gens,
+        })
 
     def _evaluate_dna(self, individual: StrategyDNA, task_row: Dict[str, Any],
                        leverage: int = 1, direction: str = "long",

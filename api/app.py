@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,8 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+logger = logging.getLogger("app")
 
 from .db_ext import init_db_ext
 from .routes import config, data, evolution, strategies, ws
@@ -61,19 +64,28 @@ def create_app(
 
         def _ws_push(task_id: str, payload: dict) -> None:
             try:
-                asyncio.run_coroutine_threadsafe(
+                future = asyncio.run_coroutine_threadsafe(
                     get_manager().push(task_id, payload), event_loop
                 )
+                future.add_done_callback(_on_ws_push_done)
             except Exception:
-                pass
+                logger.warning("WS push schedule failed for task %s", task_id, exc_info=True)
+
+        def _on_ws_push_done(future: asyncio.Future) -> None:
+            """Log any exception from the WS push coroutine."""
+            try:
+                future.result()
+            except Exception:
+                logger.warning("WS push coroutine failed", exc_info=True)
 
         set_ws_push_fn(_ws_push)
         runner.start()
 
         yield
 
-        # Shutdown: stop the runner
+        # Shutdown: stop the runner and wait for cleanup
         runner.stop()
+        runner.join(timeout=5.0)
 
     app = FastAPI(
         title="MyQuant API",

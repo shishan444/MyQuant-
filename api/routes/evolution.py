@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.deps import get_db_path, get_data_dir
 from api.schemas import (
@@ -28,6 +28,15 @@ from core.persistence.db import (
 from core.strategy.dna import StrategyDNA
 
 router = APIRouter(prefix="/api/evolution", tags=["evolution"])
+
+
+@router.get("/runner-status")
+def runner_status(request: Request) -> dict:
+    """Return EvolutionRunner health status."""
+    runner = getattr(request.app.state, "evolution_runner", None)
+    if runner is None:
+        return {"is_alive": False, "error": "runner not initialized"}
+    return runner.get_status()
 
 
 def _dna_model_to_dna(dna_model: DNAModel) -> StrategyDNA:
