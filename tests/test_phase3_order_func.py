@@ -7,31 +7,8 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.backtest.engine import BacktestEngine
-from core.strategy.dna import (
-    ExecutionGenes,
-    LogicGenes,
-    RiskGenes,
-    SignalGene,
-    SignalRole,
-    StrategyDNA,
-)
+from tests.helpers.data_factory import make_dna
 from core.strategy.executor import SignalSet
-
-def _make_dna(direction="long", leverage=1, sl=0.05, tp=0.10, pos_size=0.5):
-    return StrategyDNA(
-        signal_genes=[
-            SignalGene('RSI', {'period': 14}, SignalRole.ENTRY_TRIGGER, 'RSI_14',
-                        {'type': 'lt', 'threshold': 30}),
-            SignalGene('RSI', {'period': 14}, SignalRole.EXIT_TRIGGER, 'RSI_14',
-                        {'type': 'gt', 'threshold': 70}),
-        ],
-        logic_genes=LogicGenes(entry_logic='AND', exit_logic='AND'),
-        execution_genes=ExecutionGenes(timeframe='4h', symbol='BTCUSDT'),
-        risk_genes=RiskGenes(
-            stop_loss=sl, take_profit=tp, position_size=pos_size,
-            leverage=leverage, direction=direction,
-        ),
-    )
 
 def _make_df(n=200, seed=42):
     np.random.seed(seed)
@@ -62,7 +39,7 @@ def test_liquidation_stops_trading():
     df['rsi_14'] = 50.0
     df.loc[df.index[2], 'rsi_14'] = 20  # entry trigger
 
-    dna = _make_dna(leverage=10, sl=0.0, tp=0.0)
+    dna = make_dna(leverage=10, stop_loss=0.0, take_profit=0.0)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -72,7 +49,7 @@ def test_liquidation_stops_trading():
 def test_no_funding_without_position():
     """No funding cost when leverage is 1 (no borrowed capital)."""
     df = _make_df(200)
-    dna = _make_dna(leverage=1)
+    dna = make_dna(leverage=1)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
     assert result.total_funding_cost == 0.0
@@ -81,7 +58,7 @@ def test_no_negative_equity():
     """Equity should never go below 0."""
     df = _make_df(200)
     for leverage in [1, 3, 5]:
-        dna = _make_dna(leverage=leverage)
+        dna = make_dna(leverage=leverage)
         engine = BacktestEngine(init_cash=100000)
         result = engine.run(dna, df)
         equity = result.equity_curve
@@ -95,7 +72,7 @@ def test_basic_round_trip():
     df.loc[df.index[30], 'rsi_14'] = 20
     df.loc[df.index[80], 'rsi_14'] = 80
 
-    dna = _make_dna()
+    dna = make_dna()
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -119,7 +96,7 @@ def test_sl_trigger():
     df['rsi_14'] = 50.0
     df.loc[df.index[5], 'rsi_14'] = 20  # entry at bar 5
 
-    dna = _make_dna(sl=0.05, tp=0.20)
+    dna = make_dna(stop_loss=0.05, take_profit=0.20)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -143,7 +120,7 @@ def test_tp_trigger():
     df['rsi_14'] = 50.0
     df.loc[df.index[5], 'rsi_14'] = 20
 
-    dna = _make_dna(sl=0.20, tp=0.10)
+    dna = make_dna(stop_loss=0.20, take_profit=0.10)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -152,7 +129,7 @@ def test_tp_trigger():
 def test_equity_starts_at_init_cash():
     """Equity curve should start at init_cash."""
     df = _make_df(100)
-    dna = _make_dna()
+    dna = make_dna()
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
     assert abs(result.equity_curve.iloc[0] - 100000) < 1
@@ -165,7 +142,7 @@ def test_total_trades_counted():
     df.loc[df.index[100], 'rsi_14'] = 20
     df.loc[df.index[140], 'rsi_14'] = 80
 
-    dna = _make_dna()
+    dna = make_dna()
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -178,7 +155,7 @@ def test_position_size_capped():
     df.loc[df.index[20], 'rsi_14'] = 20
     df.loc[df.index[60], 'rsi_14'] = 80
 
-    dna = _make_dna(pos_size=0.3)
+    dna = make_dna(position_size=0.3)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -188,7 +165,7 @@ def test_position_size_capped():
 def test_result_structure_unchanged():
     """BacktestResult structure should be the same for backward compatibility."""
     df = _make_df(100)
-    dna = _make_dna()
+    dna = make_dna()
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 

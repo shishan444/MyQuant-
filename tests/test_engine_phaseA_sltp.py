@@ -15,31 +15,7 @@ import pytest
 pytestmark = [pytest.mark.integration]
 
 from core.backtest.engine import BacktestEngine
-from core.strategy.dna import (
-    ExecutionGenes,
-    LogicGenes,
-    RiskGenes,
-    SignalGene,
-    SignalRole,
-    StrategyDNA,
-)
-from core.strategy.executor import SignalSet
-
-def _make_dna(direction="long", leverage=1, sl=0.05, tp=0.10, pos_size=0.5):
-    return StrategyDNA(
-        signal_genes=[
-            SignalGene('RSI', {'period': 14}, SignalRole.ENTRY_TRIGGER, 'RSI_14',
-                        {'type': 'lt', 'threshold': 30}),
-            SignalGene('RSI', {'period': 14}, SignalRole.EXIT_TRIGGER, 'RSI_14',
-                        {'type': 'gt', 'threshold': 70}),
-        ],
-        logic_genes=LogicGenes(entry_logic='AND', exit_logic='AND'),
-        execution_genes=ExecutionGenes(timeframe='4h', symbol='BTCUSDT'),
-        risk_genes=RiskGenes(
-            stop_loss=sl, take_profit=tp, position_size=pos_size,
-            leverage=leverage, direction=direction,
-        ),
-    )
+from tests.helpers.data_factory import make_dna
 
 # ── A1: SL triggers on LOW for long positions ──
 
@@ -74,7 +50,7 @@ def test_sl_triggers_on_intraday_low_long():
     # Entry signal at bar 5
     df.loc[df.index[5], 'rsi_14'] = 20
 
-    dna = _make_dna(sl=0.05, tp=0.20)
+    dna = make_dna(stop_loss=0.05, take_profit=0.20)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -114,7 +90,7 @@ def test_sl_does_not_trigger_when_low_above_sl_level():
     # No exit signal - SL is the only way out
     df.loc[df.index[25], 'rsi_14'] = 80  # late exit
 
-    dna = _make_dna(sl=0.05, tp=0.50)  # TP far away
+    dna = make_dna(stop_loss=0.05, take_profit=0.50)  # TP far away
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -154,7 +130,7 @@ def test_tp_triggers_on_intraday_high_long():
     df['rsi_14'] = 50.0
     df.loc[df.index[5], 'rsi_14'] = 20
 
-    dna = _make_dna(sl=0.20, tp=0.10)
+    dna = make_dna(stop_loss=0.20, take_profit=0.10)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -191,7 +167,7 @@ def test_tp_does_not_trigger_when_high_below_tp_level():
     df.loc[df.index[5], 'rsi_14'] = 20
     df.loc[df.index[25], 'rsi_14'] = 80
 
-    dna = _make_dna(sl=0.20, tp=0.10)
+    dna = make_dna(stop_loss=0.20, take_profit=0.10)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -228,7 +204,7 @@ def test_sl_triggers_on_intraday_high_short():
     df['rsi_14'] = 50.0
     df.loc[df.index[5], 'rsi_14'] = 20
 
-    dna = _make_dna(direction="short", sl=0.05, tp=0.20)
+    dna = make_dna(direction="short", stop_loss=0.05, take_profit=0.20)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -262,7 +238,7 @@ def test_tp_triggers_on_intraday_low_short():
     df['rsi_14'] = 50.0
     df.loc[df.index[5], 'rsi_14'] = 20
 
-    dna = _make_dna(direction="short", sl=0.20, tp=0.10)
+    dna = make_dna(direction="short", stop_loss=0.20, take_profit=0.10)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -276,7 +252,7 @@ def test_liquidation_checked_before_sl():
     """When liquidation condition is met, position should be forcefully
     closed and no further trading should occur.
 
-    Uses no SL (sl=0) so that liquidation is the only exit mechanism.
+    Uses no SL (stop_loss=0) so that liquidation is the only exit mechanism.
     With 10x leverage and 90% price crash, equity must drop below
     maintenance level and trigger liquidation.
     """
@@ -295,7 +271,7 @@ def test_liquidation_checked_before_sl():
     df.loc[df.index[2], 'rsi_14'] = 20
 
     # No SL/TP so liquidation is the only exit
-    dna = _make_dna(leverage=10, sl=0.0, tp=0.0)
+    dna = make_dna(leverage=10, stop_loss=0.0, take_profit=0.0)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -332,7 +308,7 @@ def test_no_new_trades_after_catastrophic_sl_with_leverage():
     # Late entry signal - should NOT result in trade if liquidated
     df.loc[df.index[20], 'rsi_14'] = 20
 
-    dna = _make_dna(leverage=5, sl=0.05, tp=0.0)
+    dna = make_dna(leverage=5, stop_loss=0.05, take_profit=0.0)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -358,7 +334,7 @@ def test_sl_with_gradual_decline():
     df['rsi_14'] = 50.0
     df.loc[df.index[5], 'rsi_14'] = 20
 
-    dna = _make_dna(sl=0.05, tp=0.20)
+    dna = make_dna(stop_loss=0.05, take_profit=0.20)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -380,7 +356,7 @@ def test_tp_with_gradual_rise():
     df['rsi_14'] = 50.0
     df.loc[df.index[5], 'rsi_14'] = 20
 
-    dna = _make_dna(sl=0.20, tp=0.10)
+    dna = make_dna(stop_loss=0.20, take_profit=0.10)
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
@@ -400,7 +376,7 @@ def test_equity_starts_at_init_cash_after_fix():
     df.index.name = 'timestamp'
     df['rsi_14'] = np.clip(50 + np.random.randn(n) * 20, 0, 100)
 
-    dna = _make_dna()
+    dna = make_dna()
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
