@@ -70,12 +70,12 @@ export function AutoConfigForm({
   const [dataEnd, setDataEnd] = useState("");
   const [strategyThreshold, setStrategyThreshold] = useState(80);
 
-  // Pre-fill date range from the most recent completed task
+  // Pre-fill date range from the most recent task that has dates
   useEffect(() => {
     getEvolutionTasks({ limit: 5 })
       .then((res) => {
         const last = res.items?.find(
-          (t) => t.status === "completed" && t.data_start && t.data_end
+          (t) => t.data_start && t.data_end
         );
         if (last) {
           setDataStart(last.data_start);

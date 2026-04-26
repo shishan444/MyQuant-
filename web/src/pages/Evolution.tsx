@@ -144,7 +144,7 @@ export function Evolution() {
 
   // Fetch history for score trend chart (uses lastActiveTaskId fallback)
   const { data: historyData } = useQuery(
-    useEvolutionHistory(historyTaskId)
+    useEvolutionHistory(historyTaskId, !!activeTaskId)
   );
 
   const currentTask = activeTaskDetail ?? activeTask;

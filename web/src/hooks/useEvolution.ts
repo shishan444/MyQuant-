@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-query";
 import * as api from "@/services/evolution";
 import { toast } from "sonner";
-import type { EvolutionTask, GenerationUpdate } from "@/types/api";
+import type { EvolutionTask, EvolutionHistoryRecord, GenerationUpdate } from "@/types/api";
 import { isActiveStatus } from "@/lib/constants";
 
 export const evolutionKeys = {
@@ -48,11 +48,13 @@ export function useEvolutionTask(id: string) {
   });
 }
 
-export function useEvolutionHistory(id: string) {
+export function useEvolutionHistory(id: string, isActive?: boolean) {
   return queryOptions({
     queryKey: evolutionKeys.history(id),
     queryFn: () => api.getEvolutionHistory(id),
     enabled: !!id,
+    refetchInterval: isActive ? 3000 : false,
+    refetchIntervalInBackground: true,
   });
 }
 
@@ -245,6 +247,27 @@ export function useEvolutionWebSocket(taskId: string | null) {
                 };
               }
             );
+
+            // Directly merge history record into cache for instant chart update
+            if (update.type === "generation_complete" && update.generation != null) {
+              qc.setQueryData(
+                evolutionKeys.history(currentTaskId),
+                (old: unknown) => {
+                  if (!old) return old;
+                  const prev = old as { records: EvolutionHistoryRecord[] };
+                  const newRecord: EvolutionHistoryRecord = {
+                    generation: update.generation,
+                    best_score: update.best_score ?? 0,
+                    avg_score: update.avg_score ?? 0,
+                    created_at: new Date().toISOString(),
+                  };
+                  const records = prev.records ?? [];
+                  // Avoid duplicate if this generation already exists
+                  if (records.some((r) => r.generation === newRecord.generation)) return old;
+                  return { ...prev, records: [...records, newRecord] };
+                }
+              );
+            }
           } else {
             qc.setQueryData(
               evolutionKeys.task(currentTaskId),
