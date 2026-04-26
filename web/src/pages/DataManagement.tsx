@@ -365,7 +365,7 @@ export function DataManagement() {
     queryFn: () => api.get("/api/data/datasets").then((r) => r.data),
   });
 
-  const allDatasets: Dataset[] = data?.datasets ?? data?.items ?? [];
+  const allDatasets: Dataset[] = data?.items ?? [];
 
   const datasets = normalizedSearch
     ? allDatasets.filter(

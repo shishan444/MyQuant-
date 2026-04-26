@@ -190,6 +190,13 @@ def validate_ohlcv(df: pd.DataFrame) -> list[str]:
         neg_count = (df["volume"] < 0).sum()
         errors.append(f"Column 'volume' has {neg_count} negative values")
 
+    # Check negative prices (OHLC must be non-negative)
+    for col in ["open", "high", "low", "close"]:
+        neg_mask = df[col] < 0
+        if neg_mask.any():
+            neg_count = neg_mask.sum()
+            errors.append(f"Column '{col}' has {neg_count} negative values")
+
     return errors
 
 

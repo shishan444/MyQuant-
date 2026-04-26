@@ -115,6 +115,9 @@ def validate_hypothesis(
         if cond_tf and cond_tf != effective_base:
             referenced_tfs.add(cond_tf)
 
+    # Collect warnings during evaluation
+    warnings: List[str] = []
+
     if referenced_tfs:
         try:
             mtf_data = load_mtf_data(pair, list(referenced_tfs), start, end, data_dir)
@@ -132,9 +135,6 @@ def validate_hypothesis(
                 )
         except Exception as exc:
             warnings.append(f"MTF data loading failed, falling back to single timeframe: {exc}")
-
-    # Collect warnings during evaluation
-    warnings: List[str] = []
 
     # Evaluate WHEN conditions
     when_mask = _evaluate_conditions(enhanced_df, when_conditions, warnings)

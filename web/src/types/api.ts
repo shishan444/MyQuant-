@@ -35,6 +35,7 @@ export interface TimeframeLayerModel {
   timeframe: string;
   signal_genes: SignalGene[];
   logic_genes: LogicGenes;
+  role?: string; // "structure" | "zone" | "execution"
 }
 
 export interface DNA {
@@ -48,6 +49,9 @@ export interface DNA {
   mutation_ops: string[];
   layers?: TimeframeLayerModel[] | null;
   cross_layer_logic?: "AND" | "OR";
+  mtf_mode?: string | null;
+  confluence_threshold?: number;
+  proximity_mult?: number;
 }
 
 export interface Strategy {
@@ -75,6 +79,8 @@ export interface BacktestResult {
   data_start?: string;
   data_end?: string;
   init_cash: number;
+  fee: number;
+  slippage: number;
   total_return: number;
   sharpe_ratio: number;
   max_drawdown: number;
@@ -83,6 +89,7 @@ export interface BacktestResult {
   total_score: number;
   template_name: string;
   dimension_scores?: Record<string, number>;
+  run_source: string;
   equity_curve?: Array<{ timestamp: string; value: number }>;
   signals?: TradeSignal[];
   total_funding_cost: number;
@@ -163,6 +170,7 @@ export interface Dataset {
 }
 
 export interface OhlcvData {
+  dataset_id: string;
   data: Array<{
     timestamp: string;
     open: number;
@@ -193,7 +201,7 @@ export interface EvolutionTaskListResponse {
 }
 
 export interface DatasetListResponse {
-  datasets: Dataset[];
+  items: Dataset[];
   total: number;
 }
 

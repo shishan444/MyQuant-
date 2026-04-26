@@ -160,6 +160,8 @@ export const mockBacktestResult = {
   data_start: "2025-01-01T00:00:00Z",
   data_end: "2025-03-01T00:00:00Z",
   init_cash: 100000,
+  fee: 0.001,
+  slippage: 0.0005,
   total_return: 0.255,
   sharpe_ratio: 1.5,
   max_drawdown: -0.083,
@@ -167,6 +169,7 @@ export const mockBacktestResult = {
   total_trades: 10,
   total_score: 72,
   template_name: "default",
+  run_source: "lab",
   total_funding_cost: 0,
   liquidated: false,
   signals: [

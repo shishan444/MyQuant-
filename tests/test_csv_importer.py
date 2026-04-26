@@ -215,6 +215,62 @@ class TestValidateOhlcv:
         errors = validate_ohlcv(df)
         assert len(errors) > 0
 
+    def test_negative_close_price(self):
+        df = pd.DataFrame({
+            "open": [100.0, 200.0],
+            "high": [110.0, 220.0],
+            "low": [90.0, 180.0],
+            "close": [-50.0, 210.0],
+            "volume": [1000.0, 2000.0],
+        })
+        errors = validate_ohlcv(df)
+        assert any("close" in e and "negative" in e for e in errors)
+
+    def test_negative_open_price(self):
+        df = pd.DataFrame({
+            "open": [-100.0, 200.0],
+            "high": [110.0, 220.0],
+            "low": [90.0, 180.0],
+            "close": [105.0, 210.0],
+            "volume": [1000.0, 2000.0],
+        })
+        errors = validate_ohlcv(df)
+        assert any("open" in e and "negative" in e for e in errors)
+
+    def test_negative_high_price(self):
+        df = pd.DataFrame({
+            "open": [100.0, 200.0],
+            "high": [-110.0, 220.0],
+            "low": [90.0, 180.0],
+            "close": [105.0, 210.0],
+            "volume": [1000.0, 2000.0],
+        })
+        errors = validate_ohlcv(df)
+        assert any("high" in e and "negative" in e for e in errors)
+
+    def test_negative_low_price(self):
+        df = pd.DataFrame({
+            "open": [100.0, 200.0],
+            "high": [110.0, 220.0],
+            "low": [-90.0, 180.0],
+            "close": [105.0, 210.0],
+            "volume": [1000.0, 2000.0],
+        })
+        errors = validate_ohlcv(df)
+        assert any("low" in e and "negative" in e for e in errors)
+
+    def test_multiple_negative_prices(self):
+        df = pd.DataFrame({
+            "open": [-100.0, -200.0],
+            "high": [110.0, 220.0],
+            "low": [-90.0, -180.0],
+            "close": [105.0, 210.0],
+            "volume": [1000.0, 2000.0],
+        })
+        errors = validate_ohlcv(df)
+        negative_errors = [e for e in errors if "negative" in e]
+        assert len(negative_errors) >= 2  # open and low both negative
+
 # ── CSV Reading ───────────────────────────────────────────────
 
 class TestReadCsv:
