@@ -6,8 +6,11 @@ Verifies:
 - L1: mutate_layer_timeframe prevents duplicate timeframes
 - L2: Crossover handles mismatched layer counts without truncation
 """
+
 import random
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.strategy.dna import (
     ExecutionGenes,
@@ -23,7 +26,6 @@ from core.evolution.operators import (
     mutate_layer_timeframe,
 )
 from core.evolution.population import create_random_mtf_layer
-
 
 # ── Helpers ──
 
@@ -67,7 +69,6 @@ def _make_mtf_dna_with_layers(
         cross_layer_logic="AND",
     )
 
-
 # ── H3: create_random_mtf_layer consistent indicator/params/condition ──
 
 def test_mtf_layer_entry_trigger_consistent_indicator():
@@ -90,7 +91,6 @@ def test_mtf_layer_entry_trigger_consistent_indicator():
                     f"Expected param {param_name!r} for indicator {gene.indicator!r}, " \
                     f"but got params {list(gene.params.keys())}"
 
-
 def test_mtf_layer_exit_trigger_consistent_indicator():
     """Exit trigger gene should have matching indicator, params, and condition."""
     random.seed(456)
@@ -107,7 +107,6 @@ def test_mtf_layer_exit_trigger_consistent_indicator():
                 assert param_name in gene.params, \
                     f"Expected param {param_name!r} for indicator {gene.indicator!r}, " \
                     f"but got params {list(gene.params.keys())}"
-
 
 def test_mtf_layer_genes_are_valid_for_evaluation():
     """All genes in random layer should be evaluable without KeyError."""
@@ -140,7 +139,6 @@ def test_mtf_layer_genes_are_valid_for_evaluation():
         except Exception:
             pass  # Some indicators may fail on small data, that's OK
 
-
 def test_multiple_random_layers_statistical_consistency():
     """Generate many random layers and verify consistency statistically."""
     random.seed(42)
@@ -162,7 +160,6 @@ def test_multiple_random_layers_statistical_consistency():
     assert failures == 0, \
         f"{failures}/{total} genes had mismatched indicator/params"
 
-
 # ── M4: Crossover preserves role field ──
 
 def test_crossover_preserves_trend_role():
@@ -179,7 +176,6 @@ def test_crossover_preserves_trend_role():
     child_roles = [layer.role for layer in child.layers]
     assert "trend" in child_roles, \
         f"Expected 'trend' role in child layers, got {child_roles}"
-
 
 def test_crossover_preserves_all_roles():
     """Both trend and execution roles should survive crossover."""
@@ -200,7 +196,6 @@ def test_crossover_preserves_all_roles():
     for layer in child.layers:
         assert layer.role is not None, \
             f"Layer with tf={layer.timeframe} should have a role, got None"
-
 
 def test_crossover_single_parent_has_layers():
     """When only one parent has layers, child should get those layers."""
@@ -225,7 +220,6 @@ def test_crossover_single_parent_has_layers():
     assert child.layers[0].role == "trend"
     assert child.layers[1].role == "execution"
 
-
 # ── L1: mutate_layer_timeframe prevents duplicate timeframes ──
 
 def test_mutate_layer_timeframe_no_duplicates():
@@ -249,7 +243,6 @@ def test_mutate_layer_timeframe_no_duplicates():
             assert len(tfs) == len(set(tfs)), \
                 f"Duplicate timeframes after mutation: {tfs} (seed={seed})"
 
-
 def test_mutate_layer_timeframe_preserves_count():
     """Mutation should not change the number of layers."""
     random.seed(42)
@@ -259,7 +252,6 @@ def test_mutate_layer_timeframe_preserves_count():
     mutated = mutate_layer_timeframe(dna)
 
     assert len(mutated.layers) == original_count
-
 
 # ── L2: Crossover handles mismatched layer counts ──
 
@@ -281,7 +273,6 @@ def test_crossover_different_layer_counts_preserves_max():
     assert len(child.layers) == 3, \
         f"Expected 3 layers, got {len(child.layers)} (zip truncation bug?)"
 
-
 def test_crossover_different_layer_counts_preserves_roles():
     """All layers in child should have valid roles."""
     parent_a = _make_mtf_dna_with_layers(
@@ -302,7 +293,6 @@ def test_crossover_different_layer_counts_preserves_roles():
         assert layer.role is not None, \
             f"Layer tf={layer.timeframe} should have a role after crossover"
 
-
 def test_crossover_different_layer_counts_preserves_timeframes():
     """No layer timeframe should be lost during crossover."""
     parent_a = _make_mtf_dna_with_layers(
@@ -322,7 +312,6 @@ def test_crossover_different_layer_counts_preserves_timeframes():
     # All timeframes from parent_a should be preserved
     assert parent_a_tfs.issubset(child_tfs), \
         f"Lost timeframes: {parent_a_tfs - child_tfs}"
-
 
 # ── Integration: Full mutation/crossover cycle ──
 

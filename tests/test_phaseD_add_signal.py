@@ -3,9 +3,12 @@
 Verifies that add signals update entry_price to weighted average and
 add basic margin checking.
 """
+
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.strategy.dna import (
     ExecutionGenes,
@@ -16,7 +19,6 @@ from core.strategy.dna import (
     StrategyDNA,
 )
 from core.backtest.engine import BacktestEngine
-
 
 def _make_ohlcv(n=200, seed=42):
     """Create synthetic OHLCV DataFrame with indicators."""
@@ -30,7 +32,6 @@ def _make_ohlcv(n=200, seed=42):
     df.index.name = "timestamp"
     df["rsi_14"] = 50.0
     return df
-
 
 def _make_dna_with_add():
     """Create DNA with entry, add, and exit signals."""
@@ -52,7 +53,6 @@ def _make_dna_with_add():
         ),
     )
 
-
 def test_add_signal_increases_position():
     """Add signal should increase the total position."""
     dna = _make_dna_with_add()
@@ -67,7 +67,6 @@ def test_add_signal_increases_position():
 
     assert result.total_trades > 0, "Should have trades"
     assert result.add_count > 0, f"Should have add signals, got {result.add_count}"
-
 
 def test_add_updates_entry_price():
     """Add signal should update entry_price to weighted average.
@@ -145,7 +144,6 @@ def test_add_updates_entry_price():
         f"Exit at {exit_ts}, latest expected {dates[14]}"
     )
 
-
 def test_add_sl_uses_blended_price():
     """SL after add should use blended (weighted average) entry price.
 
@@ -209,7 +207,6 @@ def test_add_sl_uses_blended_price():
     assert exit_ts <= dates[14], (
         "SL should trigger at blended entry price level"
     )
-
 
 def test_add_capped_by_margin():
     """High leverage add should not exceed margin limits."""

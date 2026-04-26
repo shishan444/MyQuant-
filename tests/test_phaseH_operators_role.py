@@ -3,7 +3,10 @@
 Verifies that layers created by mutate_add_layer have a 'role' field
 (defaulting to 'execution'), so they are not ignored by MTF signal combination.
 """
+
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.strategy.dna import (
     ExecutionGenes,
@@ -14,7 +17,6 @@ from core.strategy.dna import (
     StrategyDNA,
 )
 from core.evolution.operators import mutate_add_layer
-
 
 def _make_base_dna():
     """Create a simple non-MTF DNA that can have layers added."""
@@ -33,7 +35,6 @@ def _make_base_dna():
         ),
     )
 
-
 def test_mutate_add_layer_assigns_role():
     """Newly added layer must have a 'role' field in its dict representation."""
     dna = _make_base_dna()
@@ -43,7 +44,6 @@ def test_mutate_add_layer_assigns_role():
     for layer in result.layers:
         if layer.role is not None:
             assert layer.role in ("trend", "execution", "structure", "zone")
-
 
 def test_mutate_add_layer_default_execution():
     """Newly added layer should default to 'execution' role.
@@ -60,7 +60,6 @@ def test_mutate_add_layer_default_execution():
     # The new layer should have a role (not None)
     new_layer = new_layers[0]
     assert new_layer.role is not None
-
 
 def test_evolved_dna_with_role_generates_signals():
     """Evolved DNA with role-assigned layers should be valid.

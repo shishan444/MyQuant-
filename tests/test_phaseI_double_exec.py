@@ -3,9 +3,12 @@
 Verifies that run_with_portfolio only calls _build_portfolio once,
 not twice (once directly + once via run()).
 """
+
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.backtest.engine import BacktestEngine
 from core.strategy.dna import (
@@ -16,7 +19,6 @@ from core.strategy.dna import (
     SignalRole,
     StrategyDNA,
 )
-
 
 def _make_dna():
     return StrategyDNA(
@@ -34,7 +36,6 @@ def _make_dna():
         ),
     )
 
-
 def _make_df():
     np.random.seed(42)
     n = 200
@@ -47,7 +48,6 @@ def _make_df():
     df.index.name = 'timestamp'
     df['rsi_14'] = np.clip(50 + np.random.randn(n) * 20, 0, 100)
     return df
-
 
 def test_run_with_portfolio_builds_once():
     """_build_portfolio should be called exactly once by run_with_portfolio.
@@ -72,7 +72,6 @@ def test_run_with_portfolio_builds_once():
     result, portfolio = engine.run_with_portfolio(dna, df)
 
     assert call_count[0] == 1, f"Expected 1 call, got {call_count[0]}"
-
 
 def test_run_with_portfolio_result_matches_run():
     """Results from run_with_portfolio should be identical to run().

@@ -1,6 +1,9 @@
 """Tests for leverage trading and short selling support."""
+
 import math
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import pandas as pd
 import numpy as np
 
@@ -14,7 +17,6 @@ from core.backtest.engine import (
 from core.evolution.operators import mutate_risk
 from core.evolution.population import create_random_dna, init_population
 from api.schemas import RiskGenesModel
-
 
 def _make_dna(
     leverage: int = 1,
@@ -37,7 +39,6 @@ def _make_dna(
         ),
     )
 
-
 def _make_price_df(trend: str = "up", bars: int = 200) -> pd.DataFrame:
     """Generate synthetic OHLCV data."""
     np.random.seed(42)
@@ -57,11 +58,9 @@ def _make_price_df(trend: str = "up", bars: int = 200) -> pd.DataFrame:
     })
     return df
 
-
 # ---------------------------------------------------------------------------
 # Phase 1: DNA + Validator
 # ---------------------------------------------------------------------------
-
 
 class TestRiskGenesRoundtrip:
     def test_leverage_direction_serialization(self):
@@ -77,7 +76,6 @@ class TestRiskGenesRoundtrip:
         risk = RiskGenes()
         assert risk.leverage == 1
         assert risk.direction == "long"
-
 
 class TestBackwardCompatibility:
     def test_old_dna_deserialization(self):
@@ -101,7 +99,6 @@ class TestBackwardCompatibility:
         assert dna.risk_genes.leverage == 1
         assert dna.risk_genes.direction == "long"
 
-
 class TestValidatorLeverageDirection:
     def test_valid_leverage_range(self):
         dna = _make_dna(leverage=5, direction="short")
@@ -123,11 +120,9 @@ class TestValidatorLeverageDirection:
         result = validate_dna(dna)
         assert not result.is_valid
 
-
 # ---------------------------------------------------------------------------
 # Phase 2: Backtest Engine
 # ---------------------------------------------------------------------------
-
 
 class TestFundingCostCalculation:
     def test_no_cost_for_1x(self):
@@ -158,7 +153,6 @@ class TestFundingCostCalculation:
         # cost_rate = 0.001 * 3 * 2/3 = 0.002
         expected_cost = 100000 * 0.002
         assert abs(cost - expected_cost) < 0.01
-
 
 class TestLiquidationCheck:
     def test_no_liquidation_for_1x(self):
@@ -198,7 +192,6 @@ class TestLiquidationCheck:
         # May or may not liquidate depending on price path, but verify result is valid
         assert isinstance(result.liquidated, bool)
 
-
 class TestLeverage1xSameResult:
     def test_1x_same_as_no_leverage(self):
         """1x leverage should produce same result as default (no leverage)."""
@@ -213,7 +206,6 @@ class TestLeverage1xSameResult:
         assert result1.total_return == result2.total_return
         assert result1.total_funding_cost == 0.0
 
-
 class TestShortDirection:
     def test_short_profit_in_downtrend(self):
         """Short should be profitable in a downtrend."""
@@ -225,7 +217,6 @@ class TestShortDirection:
         assert isinstance(result.total_return, float)
         assert isinstance(result.liquidated, bool)
 
-
 class TestStopLossTakeProfit:
     def test_tp_stop_passed_to_portfolio(self):
         """Take profit should be passed to vectorbt."""
@@ -235,11 +226,9 @@ class TestStopLossTakeProfit:
         result = engine.run(dna, df)
         assert isinstance(result.total_return, float)
 
-
 # ---------------------------------------------------------------------------
 # Phase 3: Evolution
 # ---------------------------------------------------------------------------
-
 
 class TestMutateRiskLeverage:
     def test_leverage_can_mutate(self):
@@ -260,7 +249,6 @@ class TestMutateRiskLeverage:
             dna = mutate_risk(dna)
             assert 1 <= dna.risk_genes.leverage <= 10
 
-
 class TestMutateRiskDirection:
     def test_direction_can_flip(self):
         dna = _make_dna(direction="long")
@@ -276,7 +264,6 @@ class TestMutateRiskDirection:
             dna = mutate_risk(dna)
             assert dna.risk_genes.direction in ("long", "short", "mixed")
 
-
 class TestPopulationInit:
     def test_random_dna_has_leverage_and_direction(self):
         dna = create_random_dna()
@@ -291,11 +278,9 @@ class TestPopulationInit:
         directions = {ind.risk_genes.direction for ind in pop}
         assert "long" in directions
 
-
 # ---------------------------------------------------------------------------
 # Phase 4: API Schema
 # ---------------------------------------------------------------------------
-
 
 class TestApiSchemaValidation:
     def test_valid_leverage_range(self):

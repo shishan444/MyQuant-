@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.features.patterns.candlestick import (
     detect_bearish_engulfing,
     detect_evening_star,
@@ -19,7 +21,6 @@ from core.features.patterns.divergence import (
     detect_bearish_divergence,
 )
 
-
 def _make_df(n: int = 20, seed: int = 42) -> pd.DataFrame:
     """Create a minimal OHLCV DataFrame for testing."""
     rng = np.random.RandomState(seed)
@@ -32,7 +33,6 @@ def _make_df(n: int = 20, seed: int = 42) -> pd.DataFrame:
         "volume": rng.randint(1000, 10000, size=n),
     })
     return df
-
 
 # -- Bearish engulfing --
 def test_bearish_engulfing_detected():
@@ -53,13 +53,11 @@ def test_bearish_engulfing_detected():
     assert result["pattern_bearish_engulfing"].iloc[0] == 0
     assert result["pattern_bearish_engulfing"].iloc[1] == 0
 
-
 def test_bearish_engulfing_no_false_positive():
     df = _make_df()
     result = detect_bearish_engulfing(df)
     # With random data, just verify it returns valid 0/1 values
     assert set(result["pattern_bearish_engulfing"].unique()).issubset({0, 1})
-
 
 # -- Morning star --
 def test_morning_star_detected():
@@ -78,7 +76,6 @@ def test_morning_star_detected():
     # Check it returns valid values
     assert set(result["pattern_morning_star"].unique()).issubset({0, 1})
 
-
 # -- Evening star --
 def test_evening_star_detected():
     df = pd.DataFrame({
@@ -90,7 +87,6 @@ def test_evening_star_detected():
     })
     result = detect_evening_star(df)
     assert set(result["pattern_evening_star"].unique()).issubset({0, 1})
-
 
 # -- Three black crows --
 def test_three_black_crows_detected():
@@ -105,7 +101,6 @@ def test_three_black_crows_detected():
     # Row 3 should detect 3 black crows
     assert result["pattern_3blackcrows"].iloc[3] == 1
 
-
 # -- Three white soldiers --
 def test_three_white_soldiers_detected():
     df = pd.DataFrame({
@@ -118,13 +113,11 @@ def test_three_white_soldiers_detected():
     result = detect_three_white_soldiers(df)
     assert result["pattern_3whitesoldiers"].iloc[3] == 1
 
-
 # -- Shooting star --
 def test_shooting_star_returns_valid():
     df = _make_df()
     result = detect_shooting_star(df)
     assert set(result["pattern_shooting_star"].unique()).issubset({0, 1})
-
 
 # -- Bullish reversal --
 def test_bullish_reversal_detected():
@@ -138,7 +131,6 @@ def test_bullish_reversal_detected():
     result = detect_bullish_reversal(df)
     assert set(result["pattern_bullish_reversal"].unique()).issubset({0, 1})
 
-
 # -- Bearish reversal --
 def test_bearish_reversal_detected():
     df = pd.DataFrame({
@@ -151,7 +143,6 @@ def test_bearish_reversal_detected():
     result = detect_bearish_reversal(df)
     assert set(result["pattern_bearish_reversal"].unique()).issubset({0, 1})
 
-
 # -- Divergence detection --
 def test_bullish_divergence_with_rsi():
     df = _make_df(50)
@@ -161,7 +152,6 @@ def test_bullish_divergence_with_rsi():
     assert "pattern_bullish_divergence" in result.columns
     assert set(result["pattern_bullish_divergence"].unique()).issubset({0, 1})
 
-
 def test_bearish_divergence_with_rsi():
     df = _make_df(50)
     df["rsi_14"] = 50 + np.random.randn(50) * 10
@@ -169,14 +159,12 @@ def test_bearish_divergence_with_rsi():
     assert "pattern_bearish_divergence" in result.columns
     assert set(result["pattern_bearish_divergence"].unique()).issubset({0, 1})
 
-
 def test_divergence_without_rsi_returns_zero():
     df = _make_df(50)
     result_bull = detect_bullish_divergence(df)
     result_bear = detect_bearish_divergence(df)
     assert result_bull["pattern_bullish_divergence"].sum() == 0
     assert result_bear["pattern_bearish_divergence"].sum() == 0
-
 
 # -- Registry integration --
 def test_pattern_indicators_in_registry():
@@ -191,7 +179,6 @@ def test_pattern_indicators_in_registry():
         assert INDICATOR_REGISTRY[name].category == "pattern"
         assert INDICATOR_REGISTRY[name].supported_conditions == ["eq"]
         assert INDICATOR_REGISTRY[name].params == {}
-
 
 # -- Compute integration --
 def test_compute_pattern_indicators():

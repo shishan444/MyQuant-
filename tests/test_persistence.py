@@ -1,5 +1,8 @@
 """Tests for SQLite persistence and checkpoint resume."""
+
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import json
 import sqlite3
 from pathlib import Path
@@ -14,11 +17,9 @@ from MyQuant.core.persistence.db import (
 )
 from MyQuant.core.persistence.checkpoint import save_generation, resume_evolution
 
-
 @pytest.fixture
 def db_path(tmp_path):
     return tmp_path / "evolution.db"
-
 
 @pytest.fixture
 def sample_dna():
@@ -33,12 +34,10 @@ def sample_dna():
         risk_genes=RiskGenes(stop_loss=0.05, position_size=0.3),
     )
 
-
 @pytest.fixture
 def initialized_db(db_path):
     init_db(db_path)
     return db_path
-
 
 class TestInitDb:
     def test_creates_tables(self, db_path):
@@ -56,7 +55,6 @@ class TestInitDb:
     def test_idempotent(self, db_path):
         init_db(db_path)
         init_db(db_path)  # Should not raise
-
 
 class TestTask:
     def test_save_and_get_task(self, initialized_db, sample_dna):
@@ -98,7 +96,6 @@ class TestTask:
         update_task(initialized_db, "task-004", status="completed")
         assert get_running_task(initialized_db) is None
 
-
 class TestSnapshot:
     def test_save_and_get_snapshot(self, initialized_db, sample_dna):
         save_snapshot(
@@ -129,7 +126,6 @@ class TestSnapshot:
         snap = get_latest_snapshot(initialized_db, "task-001")
         assert snap["generation"] == 7
 
-
 class TestHistory:
     def test_save_and_get_history(self, initialized_db):
         for gen in [1, 2, 3]:
@@ -144,7 +140,6 @@ class TestHistory:
         hist = get_history(initialized_db, "task-001")
         assert len(hist) == 3
         assert hist[0]["generation"] == 1
-
 
 class TestCheckpoint:
     def test_save_generation_and_resume(self, initialized_db, sample_dna):
@@ -174,7 +169,6 @@ class TestCheckpoint:
     def test_resume_no_task_returns_none(self, initialized_db):
         state = resume_evolution(initialized_db, "nonexistent")
         assert state is None
-
 
 class TestListAllTasks:
     def test_returns_all_tasks(self, initialized_db, sample_dna):

@@ -6,8 +6,11 @@ Verifies:
 - B3: Validator checks condition structures in layer genes
 - B3: Validator detects invalid conditions in layer genes
 """
+
 import random
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.strategy.dna import (
     ExecutionGenes,
@@ -21,7 +24,6 @@ from core.strategy.dna import (
 from core.evolution.population import create_random_mtf_layer
 from core.strategy.validator import validate_dna
 
-
 # ── A4: create_random_mtf_layer assigns role ──
 
 def test_random_layer_has_role():
@@ -32,7 +34,6 @@ def test_random_layer_has_role():
         assert layer.role is not None, "Layer should have a role"
         assert layer.role in ("trend", "execution", "structure", "zone"), \
             f"Role should be 'trend', 'execution', 'structure', or 'zone', got '{layer.role}'"
-
 
 def test_random_layer_role_distribution():
     """Random layers should produce both structure and execution roles."""
@@ -48,7 +49,6 @@ def test_random_layer_role_distribution():
 
     assert struct_count > 10, f"Expected some structure layers, got {struct_count}/100"
     assert exec_count > 10, f"Expected some execution layers, got {exec_count}/100"
-
 
 def test_random_layer_with_dna_produces_valid_strategy():
     """Random layer embedded in DNA should produce evaluable strategy."""
@@ -83,7 +83,6 @@ def test_random_layer_with_dna_produces_valid_strategy():
     result = validate_dna(dna)
     assert result.is_valid, f"DNA with random layer should be valid, errors: {result.errors}"
 
-
 def test_random_layer_serialization_preserves_role():
     """Random layer role should survive serialization round-trip."""
     random.seed(42)
@@ -103,7 +102,6 @@ def test_random_layer_serialization_preserves_role():
     # "trend" maps to "structure" on deserialization - both are equivalent
     expected = "structure" if original_role == "trend" else original_role
     assert restored.layers[0].role == expected
-
 
 # ── B3: Validator checks layer gene conditions ──
 
@@ -135,7 +133,6 @@ def test_validator_checks_layer_condition_structure():
     assert any("touch_bounce requires 'direction'" in e for e in result.errors), \
         f"Expected touch_bounce direction error, got: {result.errors}"
 
-
 def test_validator_checks_layer_lookback_condition():
     """Validator should detect invalid lookback conditions in layer genes."""
     dna = StrategyDNA(
@@ -160,7 +157,6 @@ def test_validator_checks_layer_lookback_condition():
     assert not result.is_valid
     assert any("window" in e for e in result.errors), \
         f"Expected lookback window error, got: {result.errors}"
-
 
 def test_validator_valid_layer_genes_pass():
     """Valid layer genes should pass validation."""
@@ -202,7 +198,6 @@ def test_validator_valid_layer_genes_pass():
 
     result = validate_dna(dna)
     assert result.is_valid, f"Valid DNA should pass, errors: {result.errors}"
-
 
 def test_validator_detects_invalid_layer_role():
     """Validator should reject invalid layer roles."""

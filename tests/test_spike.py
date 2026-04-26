@@ -3,8 +3,11 @@
 Validates: DNA → Indicators → Signals → Backtest → Metrics in < 5 seconds.
 Uses synthetic data (no Binance API needed).
 """
+
 import time
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import pandas as pd
 import numpy as np
 
@@ -14,7 +17,6 @@ from core.strategy.dna import (
 from core.strategy.validator import validate_dna
 from core.features.indicators import compute_all_indicators
 from core.backtest.engine import BacktestEngine
-
 
 @pytest.fixture
 def synthetic_ohlcv():
@@ -31,7 +33,6 @@ def synthetic_ohlcv():
         "volume": np.random.randint(100, 10000, n).astype(float),
     }, index=dates)
     return df
-
 
 def test_full_pipeline_end_to_end(synthetic_ohlcv):
     """Complete pipeline: DNA → validate → indicators → backtest → output metrics."""

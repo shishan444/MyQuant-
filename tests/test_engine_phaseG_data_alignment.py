@@ -7,10 +7,13 @@ Verifies:
 - EvolutionEngine uses timeframe_pool to constrain mutations
 - Runner passes loaded TFs (not raw tf_pool) to engine
 """
+
 import random
 from unittest.mock import patch, MagicMock
 
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.strategy.dna import (
     ExecutionGenes,
@@ -23,7 +26,6 @@ from core.strategy.dna import (
 )
 from core.evolution.operators import mutate_add_layer, mutate_layer_timeframe
 from core.evolution.population import create_random_dna
-
 
 def _make_mtf_dna(layers=None):
     """Create MTF DNA with given layers."""
@@ -63,7 +65,6 @@ def _make_mtf_dna(layers=None):
         layers=layers,
     )
 
-
 # ── mutate_add_layer respects candidate_timeframes ──
 
 def test_mutate_add_layer_respects_candidate_timeframes():
@@ -77,7 +78,6 @@ def test_mutate_add_layer_respects_candidate_timeframes():
         assert new_tfs.issubset(set(candidates)), \
             f"New TF {new_tfs} not in candidates {candidates}"
 
-
 def test_mutate_add_layer_never_produces_out_of_pool_tf():
     """With 100 random seeds, never produce TF outside candidate list."""
     candidates = ["4h", "1d", "1h"]
@@ -88,7 +88,6 @@ def test_mutate_add_layer_never_produces_out_of_pool_tf():
         for layer in result.layers:
             assert layer.timeframe in candidates, \
                 f"Layer TF '{layer.timeframe}' not in candidates {candidates}"
-
 
 # ── mutate_layer_timeframe respects candidate_timeframes ──
 
@@ -102,7 +101,6 @@ def test_mutate_layer_timeframe_respects_candidates():
     for layer in result.layers:
         assert layer.timeframe in candidates, \
             f"Layer TF '{layer.timeframe}' not in candidates {candidates}"
-
 
 # ── create_random_dna respects timeframe_pool ──
 
@@ -119,7 +117,6 @@ def test_create_random_dna_respects_timeframe_pool():
         for layer in dna.layers:
             assert layer.timeframe in tf_pool, \
                 f"Layer TF '{layer.timeframe}' not in timeframe_pool {tf_pool}"
-
 
 # ── EvolutionEngine uses timeframe_pool for mutations ──
 
@@ -158,7 +155,6 @@ def test_engine_timeframe_pool_constrains_mutations():
         new_tfs = {l.timeframe for l in result.layers}
         assert new_tfs.issubset({"4h", "1d"}), \
             f"Layer TFs {new_tfs} outside engine pool {engine.timeframe_pool}"
-
 
 # ── Runner passes loaded TFs to engine ──
 

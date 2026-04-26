@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 from core.strategy.dna import (
     ExecutionGenes,
     LogicGenes,
@@ -22,7 +24,6 @@ from core.strategy.executor import (
 )
 from core.strategy.validator import validate_dna
 
-
 def _make_layer(tf="4h", role=None):
     return TimeframeLayer(
         timeframe=tf,
@@ -36,7 +37,6 @@ def _make_layer(tf="4h", role=None):
         role=role,
     )
 
-
 def _make_df(n=100, seed=42):
     np.random.seed(seed)
     dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
@@ -49,21 +49,17 @@ def _make_df(n=100, seed=42):
     df['rsi_14'] = np.clip(50 + np.random.randn(n) * 20, 0, 100)
     return df
 
-
 def test_layer_role_default_none():
     layer = TimeframeLayer(timeframe="4h")
     assert layer.role is None
-
 
 def test_layer_role_trend():
     layer = TimeframeLayer(timeframe="1d", role="trend")
     assert layer.role == "trend"
 
-
 def test_layer_role_execution():
     layer = TimeframeLayer(timeframe="4h", role="execution")
     assert layer.role == "execution"
-
 
 def test_role_serialization():
     """Role should survive to_dict/from_dict roundtrip."""
@@ -73,7 +69,6 @@ def test_role_serialization():
     restored = TimeframeLayer.from_dict(d)
     assert restored.role == "trend"
 
-
 def test_role_none_serialization():
     """None role should survive roundtrip."""
     layer = _make_layer(role=None)
@@ -81,7 +76,6 @@ def test_role_none_serialization():
     assert d["role"] is None
     restored = TimeframeLayer.from_dict(d)
     assert restored.role is None
-
 
 def test_trend_signal_ffilled():
     """Trend layer signals should be forward-filled (state signals)."""
@@ -100,7 +94,6 @@ def test_trend_signal_ffilled():
     assert result.iloc[24] == True  # Day 4, first 4h bar (ffilled)
     assert result.iloc[30] == True  # Day 5 (ffilled)
 
-
 def test_execution_signal_not_ffilled():
     """Execution layer signals should NOT be forward-filled (pulse signals)."""
     high_tf_index = pd.date_range('2024-01-01', periods=10, freq='1D', tz='UTC')
@@ -117,7 +110,6 @@ def test_execution_signal_not_ffilled():
     # Pulse should only be True on bars that exactly match the source timestamp
     assert len(true_bars) <= 1  # At most one matching timestamp
 
-
 def test_no_role_defaults_execution():
     """Layers without role should be treated as execution (no ffill)."""
     df = _make_df(100)
@@ -127,7 +119,6 @@ def test_no_role_defaults_execution():
     sig = evaluate_layer(layer, df)
     assert isinstance(sig, SignalSet)
     assert len(sig.entries) == len(df)
-
 
 def test_phantom_signals_eliminated():
     """With trend+execution roles, phantom signals from ffill should be eliminated."""
@@ -173,7 +164,6 @@ def test_phantom_signals_eliminated():
     # Execution signal should be pulse (only at bar 10, not ffilled)
     assert isinstance(sig_set.entries, pd.Series)
 
-
 def test_backward_compat_no_role():
     """MTF DNA without roles should behave like before (all ffilled)."""
     df_4h = _make_df(60)
@@ -197,7 +187,6 @@ def test_backward_compat_no_role():
     # Should produce valid signals
     assert len(sig_set.entries) == len(df_4h)
     assert isinstance(sig_set, SignalSet)
-
 
 def test_validator_accepts_valid_roles():
     """Validator should accept trend and execution roles."""

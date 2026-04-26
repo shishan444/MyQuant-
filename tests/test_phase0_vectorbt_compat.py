@@ -3,33 +3,29 @@
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 import vectorbt as vbt
 from vectorbt.portfolio.enums import Direction
-
 
 def test_vectorbt_version():
     assert vbt.__version__ == "0.28.5"
 
-
 def test_from_order_func_exists():
     assert hasattr(vbt.Portfolio, "from_order_func")
 
-
 def test_direction_both_equals_2():
     assert int(Direction.Both) == 2
-
 
 def test_nb_order_nb_importable():
     from vectorbt.portfolio import nb
 
     assert hasattr(nb, "order_nb")
 
-
 def test_no_order_importable():
     from vectorbt.portfolio.enums import NoOrder
 
     assert NoOrder is not None
-
 
 def test_from_order_func_smoke():
     """Smoke test: run from_order_func with minimal callback."""

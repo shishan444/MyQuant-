@@ -1,5 +1,8 @@
 """Tests for DNA validator, executor, and backtest engine."""
+
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import pandas as pd
 import numpy as np
 
@@ -16,7 +19,6 @@ from core.strategy.validator import validate_dna, ValidationResult
 from core.strategy.executor import evaluate_condition, combine_signals, dna_to_signals
 from core.backtest.engine import BacktestEngine, BacktestResult
 from core.features.indicators import compute_all_indicators
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -40,7 +42,6 @@ def valid_dna():
         risk_genes=RiskGenes(stop_loss=0.05, take_profit=None, position_size=0.3),
     )
 
-
 @pytest.fixture
 def sample_ohlcv():
     """500 bars of synthetic 4h OHLCV data."""
@@ -56,7 +57,6 @@ def sample_ohlcv():
         "volume": np.random.randint(100, 10000, n).astype(float),
     }, index=dates)
     return compute_all_indicators(df)
-
 
 # ===========================================================================
 # Validator Tests
@@ -157,7 +157,6 @@ class TestValidator:
         result = validate_dna(dna)
         assert result.is_valid
 
-
 # ===========================================================================
 # Executor Tests
 # ===========================================================================
@@ -190,7 +189,6 @@ class TestEvaluateCondition:
         # First value should be False (no previous bar to compare)
         assert result.iloc[0] == False
 
-
 class TestCombineSignals:
     def test_and_logic(self, sample_ohlcv):
         s1 = pd.Series([True, True, False, False], index=sample_ohlcv.index[:4])
@@ -204,7 +202,6 @@ class TestCombineSignals:
         result = combine_signals([s1, s2], "OR")
         assert result.tolist() == [True, True, True, False]
 
-
 class TestDnaToSignals:
     def test_generates_entry_exit_signals(self, valid_dna, sample_ohlcv):
         entries, exits = dna_to_signals(valid_dna, sample_ohlcv)
@@ -214,7 +211,6 @@ class TestDnaToSignals:
         assert exits.dtype == bool
         assert len(entries) == len(sample_ohlcv)
         assert len(exits) == len(sample_ohlcv)
-
 
 # ===========================================================================
 # Backtest Engine Tests

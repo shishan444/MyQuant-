@@ -1,4 +1,5 @@
 """Integration tests for validate API and chart_config API."""
+
 from __future__ import annotations
 
 import json
@@ -6,13 +7,13 @@ from pathlib import Path
 from typing import Any, Dict
 
 import pytest
+
+pytestmark = [pytest.mark.integration]
 from fastapi.testclient import TestClient
 
 from api.app import create_app
 
-
 # ── Fixtures ──
-
 
 @pytest.fixture
 def tmp_data_dir(tmp_path: Path) -> Path:
@@ -20,11 +21,9 @@ def tmp_data_dir(tmp_path: Path) -> Path:
     data_dir.mkdir()
     return data_dir
 
-
 @pytest.fixture
 def db_path(tmp_path: Path) -> Path:
     return tmp_path / "test.db"
-
 
 @pytest.fixture
 def client(db_path: Path, tmp_data_dir: Path):
@@ -32,9 +31,7 @@ def client(db_path: Path, tmp_data_dir: Path):
     with TestClient(app) as c:
         yield c
 
-
 # ── Validate API ──
-
 
 class TestValidateAPI:
     """Tests for POST /api/validate endpoint."""
@@ -99,9 +96,7 @@ class TestValidateAPI:
         assert "total" in data
         assert "records" in data
 
-
 # ── Chart Config API ──
-
 
 class TestChartConfigAPI:
     """Tests for GET/PUT /api/config/chart_indicators."""

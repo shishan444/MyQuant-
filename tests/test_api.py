@@ -10,6 +10,7 @@ Covers:
 - CORS configuration
 - Error handling (404, validation errors)
 """
+
 from __future__ import annotations
 
 import io
@@ -19,13 +20,13 @@ from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+pytestmark = [pytest.mark.integration]
 from fastapi.testclient import TestClient
 
 from MyQuant.api.app import create_app
 
-
 # ── Fixtures ──
-
 
 @pytest.fixture
 def tmp_data_dir(tmp_path: Path) -> Path:
@@ -43,12 +44,10 @@ def tmp_data_dir(tmp_path: Path) -> Path:
     dummy_df.to_parquet(data_dir / "BTCUSDT_4h.parquet")
     return data_dir
 
-
 @pytest.fixture
 def db_path(tmp_path: Path) -> Path:
     """Return a temporary database path."""
     return tmp_path / "test_api.db"
-
 
 @pytest.fixture
 def client(db_path: Path, tmp_data_dir: Path):
@@ -59,7 +58,6 @@ def client(db_path: Path, tmp_data_dir: Path):
     app = create_app(db_path=db_path, data_dir=tmp_data_dir)
     with TestClient(app) as c:
         yield c
-
 
 def _sample_dna_dict(indicator: str = "RSI", period: int = 14) -> Dict[str, Any]:
     """Build a minimal valid StrategyDNA dict with configurable indicator."""
@@ -85,7 +83,6 @@ def _sample_dna_dict(indicator: str = "RSI", period: int = 14) -> Dict[str, Any]
         "risk_genes": {"stop_loss": 0.05, "take_profit": 0.10, "position_size": 0.3},
     }
 
-
 def _sample_strategy_create(indicator: str = "RSI", period: int = 14) -> Dict[str, Any]:
     """Build a payload for POST /api/strategies with configurable DNA."""
     return {
@@ -97,7 +94,6 @@ def _sample_strategy_create(indicator: str = "RSI", period: int = 14) -> Dict[st
         "tags": "reversal,rsi",
         "notes": "Test strategy",
     }
-
 
 def _sample_evolution_create() -> Dict[str, Any]:
     """Build a payload for POST /api/evolution/tasks."""
@@ -111,9 +107,7 @@ def _sample_evolution_create() -> Dict[str, Any]:
         "max_generations": 200,
     }
 
-
 # ── Test: CORS ──
-
 
 class TestCORS:
     def test_cors_allows_localhost_5173(self, client: TestClient) -> None:
@@ -128,9 +122,7 @@ class TestCORS:
         assert response.status_code in (200, 204)
         assert "access-control-allow-origin" in response.headers
 
-
 # ── Test: Strategy CRUD ──
-
 
 class TestStrategyCreate:
     def test_create_strategy(self, client: TestClient) -> None:
@@ -162,7 +154,6 @@ class TestStrategyCreate:
         """POST with missing required fields should return 422."""
         response = client.post("/api/strategies", json={})
         assert response.status_code == 422
-
 
 class TestStrategyList:
     def test_list_strategies_empty(self, client: TestClient) -> None:
@@ -226,7 +217,6 @@ class TestStrategyList:
         assert len(data["items"]) == 2
         assert data["total"] == 5
 
-
 class TestStrategyGet:
     def test_get_strategy(self, client: TestClient) -> None:
         """GET /api/strategies/{id} should return strategy details."""
@@ -242,7 +232,6 @@ class TestStrategyGet:
         """GET /api/strategies/{id} with nonexistent ID should return 404."""
         response = client.get("/api/strategies/nonexistent-id")
         assert response.status_code == 404
-
 
 class TestStrategyUpdate:
     def test_update_strategy(self, client: TestClient) -> None:
@@ -266,7 +255,6 @@ class TestStrategyUpdate:
         )
         assert response.status_code == 404
 
-
 class TestStrategyDelete:
     def test_delete_strategy(self, client: TestClient) -> None:
         """DELETE /api/strategies/{id} should delete strategy."""
@@ -283,9 +271,7 @@ class TestStrategyDelete:
         response = client.delete("/api/strategies/nonexistent-id")
         assert response.status_code == 404
 
-
 # ── Test: Strategy Backtest ──
-
 
 class TestStrategyBacktest:
     @patch("MyQuant.api.routes.strategies._bt_engine_mod")
@@ -358,9 +344,7 @@ class TestStrategyBacktest:
         )
         assert response.status_code == 404
 
-
 # ── Test: Strategy Compare ──
-
 
 class TestStrategyCompare:
     @patch("MyQuant.api.routes.strategies._bt_engine_mod")
@@ -419,9 +403,7 @@ class TestStrategyCompare:
         assert len(data["results"]) == 2
         assert data["results"][0]["strategy_id"] in ids
 
-
 # ── Test: Evolution Tasks ──
-
 
 class TestEvolutionTaskCreate:
     def test_create_evolution_task(self, client: TestClient) -> None:
@@ -440,7 +422,6 @@ class TestEvolutionTaskCreate:
         """POST /api/evolution/tasks with missing fields should return 422."""
         response = client.post("/api/evolution/tasks", json={})
         assert response.status_code == 422
-
 
 class TestEvolutionTaskList:
     def test_list_tasks_empty(self, client: TestClient) -> None:
@@ -467,7 +448,6 @@ class TestEvolutionTaskList:
         data = response.json()
         assert data["total"] == 1
 
-
 class TestEvolutionTaskGet:
     def test_get_task(self, client: TestClient) -> None:
         """GET /api/evolution/tasks/{id} should return task details."""
@@ -483,7 +463,6 @@ class TestEvolutionTaskGet:
         """GET /api/evolution/tasks/{id} with nonexistent ID should return 404."""
         response = client.get("/api/evolution/tasks/nonexistent-id")
         assert response.status_code == 404
-
 
 class TestEvolutionTaskHistory:
     def test_get_task_history_empty(self, client: TestClient) -> None:
@@ -516,7 +495,6 @@ class TestEvolutionTaskHistory:
         assert data["generations"][0]["generation"] == 1
         assert data["generations"][0]["best_score"] == 75.0
 
-
 class TestEvolutionTaskPause:
     def test_pause_task(self, client: TestClient) -> None:
         """POST /api/evolution/tasks/{id}/pause should pause task."""
@@ -531,7 +509,6 @@ class TestEvolutionTaskPause:
         """POST /api/evolution/tasks/{id}/pause with nonexistent ID should return 404."""
         response = client.post("/api/evolution/tasks/nonexistent-id/pause")
         assert response.status_code == 404
-
 
 class TestEvolutionTaskStop:
     def test_stop_task(self, client: TestClient) -> None:
@@ -548,9 +525,7 @@ class TestEvolutionTaskStop:
         response = client.post("/api/evolution/tasks/nonexistent-id/stop")
         assert response.status_code == 404
 
-
 # ── Test: Data Management ──
-
 
 class TestDatasetList:
     def test_list_datasets_empty(self, client: TestClient) -> None:
@@ -603,7 +578,6 @@ class TestDatasetList:
         data = response.json()
         assert data["total"] == 1
 
-
 class TestDatasetGet:
     def test_get_dataset(self, client: TestClient) -> None:
         """GET /api/data/datasets/{id} should return dataset details."""
@@ -630,7 +604,6 @@ class TestDatasetGet:
         response = client.get("/api/data/datasets/nonexistent")
         assert response.status_code == 404
 
-
 class TestDatasetDelete:
     def test_delete_dataset(self, client: TestClient) -> None:
         """DELETE /api/data/datasets/{id} should delete dataset."""
@@ -651,7 +624,6 @@ class TestDatasetDelete:
         """DELETE /api/data/datasets/{id} with nonexistent ID should return 404."""
         response = client.delete("/api/data/datasets/nonexistent")
         assert response.status_code == 404
-
 
 class TestDataImport:
     def test_import_csv_no_file(self, client: TestClient) -> None:
@@ -686,7 +658,6 @@ class TestDataImport:
         data = response.json()
         assert data["dataset_id"] == "BTCUSDT_4h"
         assert data["rows_imported"] == 1000
-
 
 class TestDatasetPreview:
     def test_preview_not_found(self, client: TestClient) -> None:
@@ -728,7 +699,6 @@ class TestDatasetPreview:
         assert "rows" in data
         assert data["total_rows"] == 2
 
-
 class TestDatasetOhlcv:
     def test_ohlcv_not_found(self, client: TestClient) -> None:
         """GET /api/data/datasets/{id}/ohlcv with nonexistent ID should return 404."""
@@ -769,9 +739,7 @@ class TestDatasetOhlcv:
         data = response.json()
         assert "data" in data
 
-
 # ── Test: WebSocket ──
-
 
 class TestWebSocket:
     def test_websocket_connect_and_disconnect(self, client: TestClient) -> None:
@@ -794,9 +762,7 @@ class TestWebSocket:
             data = websocket.receive_json()
             assert data["type"] == "pong"
 
-
 # ── Test: Health Check ──
-
 
 class TestHealthCheck:
     def test_health_check(self, client: TestClient) -> None:

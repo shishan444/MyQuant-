@@ -6,9 +6,12 @@ Verifies:
 - B2: Proportional period calculation (not ceil)
 - B2: 4h bars charge 0.5 period (not 1 full period)
 """
+
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.backtest.engine import BacktestEngine, _apply_funding_costs
 from core.strategy.dna import (
@@ -19,7 +22,6 @@ from core.strategy.dna import (
     SignalRole,
     StrategyDNA,
 )
-
 
 def _make_dna(leverage=1, direction="long", sl=0.05, tp=0.10, pos_size=0.5):
     return StrategyDNA(
@@ -37,7 +39,6 @@ def _make_dna(leverage=1, direction="long", sl=0.05, tp=0.10, pos_size=0.5):
         ),
     )
 
-
 def _make_ohlcv(n=200, start="2024-01-01", seed=42):
     """Create synthetic OHLCV DataFrame."""
     np.random.seed(seed)
@@ -50,7 +51,6 @@ def _make_ohlcv(n=200, start="2024-01-01", seed=42):
     df.index.name = 'timestamp'
     df['rsi_14'] = np.clip(50 + np.random.randn(n) * 20, 0, 100)
     return df
-
 
 # ── A2: Funding costs only while position is open ──
 
@@ -91,7 +91,6 @@ def test_funding_only_during_open_position():
     assert result.total_funding_cost < max_possible_cost * 0.5, \
         f"Funding cost {result.total_funding_cost} should be less than half of all-bars cost {max_possible_cost}"
 
-
 def test_no_funding_without_trades():
     """No funding costs should be charged when no trades are made."""
     n = 50
@@ -113,7 +112,6 @@ def test_no_funding_without_trades():
     assert result.total_funding_cost == 0.0, \
         f"No funding cost expected with no trades, got {result.total_funding_cost}"
 
-
 def test_no_funding_with_1x_leverage():
     """1x leverage should never incur funding costs."""
     df = _make_ohlcv()
@@ -122,7 +120,6 @@ def test_no_funding_with_1x_leverage():
     result = engine.run(dna, df)
 
     assert result.total_funding_cost == 0.0
-
 
 def test_funding_cost_positive_with_open_leveraged_position():
     """Leveraged position that stays open should incur funding costs."""
@@ -147,7 +144,6 @@ def test_funding_cost_positive_with_open_leveraged_position():
     # Funding cost should be positive
     assert result.total_funding_cost > 0.0, \
         f"Expected positive funding cost, got {result.total_funding_cost}"
-
 
 # ── B2: Proportional period calculation ──
 
@@ -175,7 +171,6 @@ def test_funding_rate_proportional_not_ceil():
     assert total_cost < 4000, \
         f"With proportional rate, total cost {total_cost} should be < 4000"
 
-
 def test_funding_rate_1h_bar():
     """1h bars should use 0.125 period (1/8), not 1 full period."""
     equity = pd.Series(np.full(100, 100000.0))
@@ -197,7 +192,6 @@ def test_funding_rate_1h_bar():
     assert total_cost < 1000, \
         f"With proportional 1h rate, total cost {total_cost} should be < 1000"
 
-
 def test_funding_rate_1d_bar():
     """1d bars should use 3 periods (24/8), same as ceil."""
     equity = pd.Series(np.full(100, 100000.0))
@@ -217,7 +211,6 @@ def test_funding_rate_1d_bar():
     assert total_cost > 10000, \
         f"With 1d proportional rate, total cost {total_cost} should be > 10000"
 
-
 # ── Regression ──
 
 def test_equity_starts_at_init_cash_phaseB():
@@ -228,7 +221,6 @@ def test_equity_starts_at_init_cash_phaseB():
     result = engine.run(dna, df)
 
     assert abs(result.equity_curve.iloc[0] - 100000) < 1
-
 
 def test_backward_compat_no_trades_df():
     """_apply_funding_costs without trades_df should deduct for all bars."""

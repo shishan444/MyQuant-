@@ -3,9 +3,12 @@
 Verifies that entry_direction is shifted by 1 bar alongside entries/exits,
 preventing look-ahead bias in mixed-direction mode.
 """
+
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.backtest.engine import BacktestEngine
 from core.strategy.dna import (
@@ -17,7 +20,6 @@ from core.strategy.dna import (
     StrategyDNA,
 )
 from core.strategy.executor import SignalSet
-
 
 def _make_dna(direction="mixed", leverage=1, sl=0.05, tp=0.10, pos_size=0.5):
     return StrategyDNA(
@@ -35,7 +37,6 @@ def _make_dna(direction="mixed", leverage=1, sl=0.05, tp=0.10, pos_size=0.5):
         ),
     )
 
-
 def _make_df(n=50, close_arr=None):
     dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
     if close_arr is None:
@@ -48,7 +49,6 @@ def _make_df(n=50, close_arr=None):
     df.index.name = 'timestamp'
     df['rsi_14'] = 50.0
     return df
-
 
 def test_direction_signal_shifted_with_entries():
     """entry_direction should be shifted by 1 bar, matching entries shift.
@@ -83,7 +83,6 @@ def test_direction_signal_shifted_with_entries():
     # Should have a trade (entry at shifted bar 6, direction from bar 5)
     assert result.total_trades >= 1
 
-
 def test_direction_at_execution_matches_prior_signal():
     """When entry_direction bar N = +1 and bar N-1 = -1,
     the executed trade direction should follow bar N-1 (shifted).
@@ -116,7 +115,6 @@ def test_direction_at_execution_matches_prior_signal():
     result = engine.run(dna, df, signal_set=sig_set)
 
     assert result.total_trades >= 1
-
 
 def test_mixed_shift_no_lookahead():
     """Verify that direction at the shifted entry bar doesn't use future data.

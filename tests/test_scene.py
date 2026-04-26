@@ -8,8 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tests.helpers.data_factory import make_ohlcv
+pytestmark = [pytest.mark.unit]
 
+from tests.helpers.data_factory import make_ohlcv
 
 # ============================================================================
 # Fixtures
@@ -21,7 +22,6 @@ def ohlcv_df():
     from core.features.indicators import compute_all_indicators
     df = make_ohlcv(n=200, freq="4h")
     return compute_all_indicators(df)
-
 
 # ============================================================================
 # B8-1: base dataclasses
@@ -58,7 +58,6 @@ class TestBaseDataclasses:
         assert result.scene_type == "test"
         assert result.warnings == []
 
-
 # ============================================================================
 # B8-2: SceneDetector ABC
 # ============================================================================
@@ -91,7 +90,6 @@ class TestSceneDetectorABC:
         assert d.default_params == {"window": 10}
         points = d.detect(pd.DataFrame(), {})
         assert len(points) == 1
-
 
 # ============================================================================
 # B8-3: pivot.detect_pivots
@@ -146,7 +144,6 @@ class TestDetectPivots:
         peak_indices = [p.index for p in pivots if p.pivot_type == "peak"]
         assert len(peak_indices) == len(set(peak_indices))
 
-
 # ============================================================================
 # B8-4: forward_stats.compute_forward_stats
 # ============================================================================
@@ -190,7 +187,6 @@ class TestComputeForwardStats:
         result = compute_forward_stats(df, trigger_bar=10, trigger_price=df["close"].iloc[10], horizons=[6])
         stats = result[6]
         assert stats.max_gain_pct >= stats.max_loss_pct
-
 
 # ============================================================================
 # B8-5: forward_stats.aggregate_by_horizon
@@ -247,7 +243,6 @@ class TestAggregateByHorizon:
         assert "min" in result[0].percentiles
         assert "max" in result[0].percentiles
 
-
 # ============================================================================
 # B8-6: scene_engine DETECTORS registry
 # ============================================================================
@@ -277,7 +272,6 @@ class TestSceneEngineRegistry:
         from core.validation.scene.scene_engine import SUB_PATTERN_PARENT
         assert SUB_PATTERN_PARENT["double_top"] == "top_pattern"
         assert SUB_PATTERN_PARENT["head_shoulders_top"] == "top_pattern"
-
 
 # ============================================================================
 # B8-7: detector implementations (smoke test each)

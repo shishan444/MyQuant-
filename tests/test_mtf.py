@@ -1,10 +1,12 @@
 """Tests for multi-timeframe data loading and merging."""
+
 import pytest
+
+pytestmark = [pytest.mark.integration]
 import numpy as np
 import pandas as pd
 
 from core.validation.mtf import get_timeframe_minutes, merge_to_base
-
 
 # ---------------------------------------------------------------------------
 # get_timeframe_minutes
@@ -39,7 +41,6 @@ class TestGetTimeframeMinutes:
         with pytest.raises(ValueError, match="Unknown timeframe"):
             get_timeframe_minutes("xyz")
 
-
 # ---------------------------------------------------------------------------
 # merge_to_base
 # ---------------------------------------------------------------------------
@@ -58,7 +59,6 @@ def _make_ohlcv_df(start: str, periods: int, freq: str, close_values=None) -> pd
         "volume": np.full(n, 1000.0),
     }
     return pd.DataFrame(data, index=idx)
-
 
 class TestMergeToBase:
     def test_skip_lower_timeframe(self):

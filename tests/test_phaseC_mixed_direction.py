@@ -3,9 +3,12 @@
 Verifies that direction="mixed" strategies can produce both long and short
 trades based on trend direction signals.
 """
+
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.strategy.dna import (
     ExecutionGenes,
@@ -18,7 +21,6 @@ from core.strategy.dna import (
 )
 from core.strategy.executor import dna_to_signal_set
 from core.backtest.engine import BacktestEngine
-
 
 def _make_ohlcv(n=300, timeframe="4h", seed=42):
     """Create synthetic OHLCV DataFrame with indicators."""
@@ -35,7 +37,6 @@ def _make_ohlcv(n=300, timeframe="4h", seed=42):
     df["rsi_14"] = 50.0
     df["ema_50"] = close.mean()
     return df
-
 
 def _make_trending_data(n=300):
     """Create data that trends up then down for mixed testing.
@@ -80,7 +81,6 @@ def _make_trending_data(n=300):
     df["ema_50"] = ema
 
     return df
-
 
 def _make_mixed_mtf_dna(direction="mixed", cross_layer_logic="OR"):
     """Create MTF DNA with mixed direction and trend-based direction.
@@ -127,7 +127,6 @@ def _make_mixed_mtf_dna(direction="mixed", cross_layer_logic="OR"):
         cross_layer_logic=cross_layer_logic,
     )
 
-
 def _make_single_tf_mixed_dna(direction="mixed"):
     """Create single-TF mixed DNA for simpler tests."""
     return StrategyDNA(
@@ -146,7 +145,6 @@ def _make_single_tf_mixed_dna(direction="mixed"):
         ),
     )
 
-
 def test_mixed_signal_set_has_entry_direction():
     """MTF mixed strategy should produce entry_direction in SignalSet."""
     dna = _make_mixed_mtf_dna("mixed")
@@ -157,7 +155,6 @@ def test_mixed_signal_set_has_entry_direction():
 
     assert hasattr(sig, "entry_direction"), "SignalSet should have entry_direction field"
     assert sig.entry_direction is not None, "MTF mixed should have non-None entry_direction"
-
 
 def test_mixed_entry_direction_values():
     """entry_direction should be +1 for uptrend and -1 for downtrend."""
@@ -175,7 +172,6 @@ def test_mixed_entry_direction_values():
 
     assert (uptrend_dirs > 0).any(), "Some uptrend bars should have positive direction"
     assert (downtrend_dirs < 0).any(), "Some downtrend bars should have negative direction"
-
 
 def test_mixed_produces_both_long_and_short_trades():
     """Mixed strategy should produce both Long and Short trades."""
@@ -197,7 +193,6 @@ def test_mixed_produces_both_long_and_short_trades():
         f"Expected both Long and Short trades, got directions: {directions}"
     )
 
-
 def test_mixed_differs_from_long():
     """Mixed strategy should produce different results from long-only."""
     df = _make_trending_data()
@@ -217,7 +212,6 @@ def test_mixed_differs_from_long():
         f"Long: {result_long.total_trades} trades, return={result_long.total_return:.4f}"
     )
 
-
 def test_mixed_differs_from_short():
     """Mixed strategy should produce different results from short-only."""
     df = _make_trending_data()
@@ -236,7 +230,6 @@ def test_mixed_differs_from_short():
         f"Mixed: {result_mixed.total_trades} trades, return={result_mixed.total_return:.4f}. "
         f"Short: {result_short.total_trades} trades, return={result_short.total_return:.4f}"
     )
-
 
 def test_mixed_sl_tp_works_both_directions():
     """SL/TP should work for both long and short positions in mixed mode."""
@@ -265,7 +258,6 @@ def test_mixed_sl_tp_works_both_directions():
 
     assert isinstance(result.total_return, float)
 
-
 def test_long_still_works():
     """direction='long' should still work normally."""
     dna = _make_single_tf_mixed_dna("long")
@@ -279,7 +271,6 @@ def test_long_still_works():
 
     assert isinstance(result.total_return, float)
 
-
 def test_short_still_works():
     """direction='short' should still work normally."""
     dna = _make_single_tf_mixed_dna("short")
@@ -292,7 +283,6 @@ def test_short_still_works():
     result = engine.run(dna, df)
 
     assert isinstance(result.total_return, float)
-
 
 def test_single_tf_mixed_no_direction_signal():
     """Single-TF mixed strategy: entry_direction should be None (no trend layer)."""

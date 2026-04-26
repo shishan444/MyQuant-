@@ -5,9 +5,12 @@ Verifies:
 - M2: Missing timeframe data logs warning instead of silent skip
 - M3: _resample_pulse uses time-window aggregation instead of exact timestamp match
 """
+
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 import logging
 
 from core.strategy.dna import (
@@ -24,7 +27,6 @@ from core.strategy.executor import (
     _resample_pulse,
     resample_signals,
 )
-
 
 # ── Helpers ──
 
@@ -58,7 +60,6 @@ def _make_ohlcv_df(n=500, timeframe="4h", start="2024-01-01"):
 
     return df
 
-
 def _make_mtf_dna_with_roles(exec_timeframe="4h"):
     """Create MTF DNA with trend + execution layers."""
     return StrategyDNA(
@@ -86,7 +87,6 @@ def _make_mtf_dna_with_roles(exec_timeframe="4h"):
             ),
         ],
     )
-
 
 def _make_mtf_dna_no_roles(exec_timeframe="4h"):
     """Create MTF DNA without roles (legacy mode)."""
@@ -116,7 +116,6 @@ def _make_mtf_dna_no_roles(exec_timeframe="4h"):
         cross_layer_logic="AND",
     )
 
-
 # ── M1: trend_exits participates in final exit signal ──
 
 def test_trend_exits_included_in_combined_exits():
@@ -138,7 +137,6 @@ def test_trend_exits_included_in_combined_exits():
     # (the daily EMA cross will produce exit signals)
     assert sig_set.exits.any() or not sig_set.entries.any(), \
         "If trend exits exist, they should influence final exits"
-
 
 def test_trend_exits_fire_on_trend_reversal():
     """Trend exit signal should fire when price drops below EMA on daily."""
@@ -177,7 +175,6 @@ def test_trend_exits_fire_on_trend_reversal():
     # With trend exits included, there should be exit signals
     # when price falls below daily EMA
 
-
 def test_no_trend_exits_without_trend_layers():
     """Non-MTF strategy should not be affected by trend_exits fix."""
     dna = StrategyDNA(
@@ -197,7 +194,6 @@ def test_no_trend_exits_without_trend_layers():
 
     assert isinstance(sig_set.entries, pd.Series)
     assert isinstance(sig_set.exits, pd.Series)
-
 
 # ── M2: Missing timeframe data logs warning ──
 
@@ -221,7 +217,6 @@ def test_missing_timeframe_data_logs_warning(caplog):
            any("missing" in record.message.lower() for record in caplog.records), \
         "Expected a warning about missing timeframe data"
 
-
 def test_all_layers_missing_still_returns_valid_result():
     """When all layer data is missing, should return all-False signals."""
     dna = _make_mtf_dna_with_roles()
@@ -234,7 +229,6 @@ def test_all_layers_missing_still_returns_valid_result():
 
     assert isinstance(sig_set.entries, pd.Series)
     assert len(sig_set.entries) == len(enhanced_df)
-
 
 # ── M3: _resample_pulse uses time-window aggregation ──
 
@@ -264,7 +258,6 @@ def test_resample_pulse_preserves_signals_within_window():
     # The 4h bar starting at 08:00 (index 2) should capture the 09:00 signal
     assert result.iloc[2], "Signal at 09:00 should map to 4h bar at 08:00"
 
-
 def test_resample_pulse_no_false_positives():
     """Pulse resampling should not create signals where none existed."""
     target_dates = pd.date_range("2024-01-01 00:00", periods=6, freq="4h", tz="UTC")
@@ -276,7 +269,6 @@ def test_resample_pulse_no_false_positives():
     result = _resample_pulse(source_signal, target_dates)
 
     assert not result.any(), "All-False source should produce all-False target"
-
 
 def test_resample_pulse_multiple_signals_in_window():
     """Multiple source signals in same target window should produce single True."""
@@ -297,7 +289,6 @@ def test_resample_pulse_multiple_signals_in_window():
     # Should NOT double-count
     assert result.sum() >= 1
 
-
 def test_resample_pulse_exact_match_still_works():
     """When source timestamp exactly matches target, signal should be preserved."""
     target_dates = pd.date_range("2024-01-01 00:00", periods=6, freq="4h", tz="UTC")
@@ -311,7 +302,6 @@ def test_resample_pulse_exact_match_still_works():
 
     assert result.iloc[1], "Exact timestamp match should be preserved"
 
-
 def test_resample_pulse_empty_source():
     """Empty source signal should return all-False."""
     target_dates = pd.date_range("2024-01-01", periods=6, freq="4h", tz="UTC")
@@ -321,7 +311,6 @@ def test_resample_pulse_empty_source():
 
     assert len(result) == len(target_dates)
     assert not result.any()
-
 
 def test_resample_pulse_preserves_all_signals():
     """Verify no signal loss in 1h→4h resampling."""
@@ -349,7 +338,6 @@ def test_resample_pulse_preserves_all_signals():
             assert result.iloc[i], \
                 f"Target bar {target_ts} should be True (has {window_signals.sum()} source signals)"
 
-
 # ── Integration: MTF signal set with fixed combination ──
 
 def test_mtf_signal_set_with_roles_produces_valid_signals():
@@ -368,7 +356,6 @@ def test_mtf_signal_set_with_roles_produces_valid_signals():
     assert isinstance(sig_set.reduces, pd.Series)
     assert len(sig_set.entries) == len(enhanced_df)
 
-
 def test_mtf_signal_set_no_roles_backward_compat():
     """MTF without roles should use legacy combination logic."""
     dna = _make_mtf_dna_no_roles()
@@ -381,7 +368,6 @@ def test_mtf_signal_set_no_roles_backward_compat():
 
     assert isinstance(sig_set.entries, pd.Series)
     assert len(sig_set.entries) == len(enhanced_df)
-
 
 def test_resample_signals_still_forward_fills():
     """resample_signals (trend layers) should still forward-fill correctly."""

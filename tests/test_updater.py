@@ -6,7 +6,10 @@ Tests:
 - updater handles empty Parquet file
 - updater deduplicates overlapping data
 """
+
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -15,14 +18,12 @@ from unittest.mock import patch, MagicMock
 from MyQuant.core.data.storage import save_parquet, load_parquet, get_latest_timestamp
 from MyQuant.core.data.updater import update_market_data
 
-
 @pytest.fixture
 def tmp_data_dir(tmp_path):
     """Create temp data directory."""
     data_dir = tmp_path / "market"
     data_dir.mkdir()
     return data_dir
-
 
 @pytest.fixture
 def sample_ohlcv():
@@ -40,7 +41,6 @@ def sample_ohlcv():
         "trades": np.random.randint(10, 500, n).astype(int),
     }, index=dates)
     return df
-
 
 class TestUpdaterFullFetch:
     def test_no_existing_data_triggers_full_fetch(self, tmp_data_dir, sample_ohlcv):
@@ -61,7 +61,6 @@ class TestUpdaterFullFetch:
             assert path.exists()
             saved = load_parquet(path)
             assert len(saved) == 100
-
 
 class TestUpdaterIncremental:
     def test_existing_data_triggers_incremental(self, tmp_data_dir, sample_ohlcv):
@@ -93,7 +92,6 @@ class TestUpdaterIncremental:
 
         result = load_parquet(path)
         assert result.index.is_monotonic_increasing
-
 
 class TestUpdaterEdgeCases:
     def test_empty_parquet_triggers_full_fetch(self, tmp_data_dir, sample_ohlcv):

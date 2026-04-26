@@ -3,15 +3,17 @@
 Verifies that load_mtf_data returns a valid dict (not None) when only
 the execution timeframe data is available, enabling graceful degradation.
 """
+
 import logging
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from core.data.mtf_loader import load_mtf_data
-
 
 def _make_df(n=200):
     """Create a minimal DataFrame with OHLCV columns."""
@@ -24,7 +26,6 @@ def _make_df(n=200):
     }, index=dates)
     df.index.name = 'timestamp'
     return df
-
 
 def test_single_timeframe_returns_valid_dict():
     """When only exec_timeframe data exists, return {exec_timeframe: df} not None.
@@ -46,7 +47,6 @@ def test_single_timeframe_returns_valid_dict():
     assert isinstance(result, dict)
     assert "4h" in result
     assert len(result["4h"]) == 200
-
 
 def test_multi_timeframe_returns_all():
     """When additional TF data is available, return all timeframes."""
@@ -76,7 +76,6 @@ def test_multi_timeframe_returns_all():
     assert "1d" in result
     assert len(result) == 2
 
-
 def test_no_needed_tfs_returns_exec_only():
     """When needed_tfs is empty, return just the exec_timeframe dict."""
     enhanced_df = _make_df()
@@ -90,7 +89,6 @@ def test_no_needed_tfs_returns_exec_only():
 
     assert result is not None
     assert "4h" in result
-
 
 class TestM4LoaderExceptionLogging:
     """M4: mtf_loader should log warnings when data loading fails,

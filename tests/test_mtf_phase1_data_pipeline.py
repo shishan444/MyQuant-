@@ -4,9 +4,12 @@ Verifies:
 - H1: Compare endpoint load_mtf_data parameter fix
 - MTF data loading and structure
 """
+
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,7 +23,6 @@ from core.strategy.dna import (
     StrategyDNA,
     TimeframeLayer,
 )
-
 
 # ── Helpers ──
 
@@ -38,7 +40,6 @@ def _make_ohlcv_df(n=500, timeframe="4h", start="2024-01-01"):
     }, index=dates)
     df.index.name = "timestamp"
     return df
-
 
 def _make_mtf_dna(exec_timeframe="4h", symbol="BTCUSDT"):
     """Create a multi-timeframe strategy DNA with 2 layers."""
@@ -66,7 +67,6 @@ def _make_mtf_dna(exec_timeframe="4h", symbol="BTCUSDT"):
         ],
     )
 
-
 # ── H1: Compare endpoint parameter fix ──
 
 def test_load_mtf_data_signature():
@@ -75,7 +75,6 @@ def test_load_mtf_data_signature():
     sig = inspect.signature(load_mtf_data)
     params = list(sig.parameters.keys())
     assert params[:5] == ["data_dir", "symbol", "exec_timeframe", "enhanced_df", "needed_tfs"]
-
 
 def test_compare_builds_needed_tfs_from_dna_layers():
     """Compare endpoint should extract needed_tfs from dna.layers."""
@@ -86,12 +85,10 @@ def test_compare_builds_needed_tfs_from_dna_layers():
     assert "1d" in needed_tfs
     assert exec_tf in needed_tfs
 
-
 def test_compare_endpoint_imports():
     """Verify compare endpoint module imports correctly."""
     from api.routes.strategies import compare_strategies
     assert callable(compare_strategies)
-
 
 # ── MTF data loading ──
 
@@ -106,7 +103,6 @@ def test_load_mtf_data_returns_none_for_single_tf():
     # Now returns {exec_timeframe: df} instead of None for graceful degradation
     assert result is not None
     assert "4h" in result
-
 
 def test_load_mtf_data_returns_dict_with_exec_tf():
     """load_mtf_data should include exec_timeframe in returned dict."""

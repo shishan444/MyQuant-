@@ -1,5 +1,8 @@
 """Tests for indicator registry and computation engine."""
+
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import pandas as pd
 import numpy as np
 from MyQuant.core.features.indicators import (
@@ -10,7 +13,6 @@ from MyQuant.core.features.indicators import (
     compute_all_indicators,
     _compute_indicator,
 )
-
 
 class TestIndicatorRegistry:
     """INDICATOR_REGISTRY structure and completeness tests."""
@@ -101,7 +103,6 @@ class TestIndicatorRegistry:
         assert "vp_vah" in vp.output_fields
         assert "vp_val" in vp.output_fields
 
-
 class TestGetInterchangeable:
     """Test same-category indicator lookup."""
 
@@ -123,7 +124,6 @@ class TestGetInterchangeable:
         interchangeable = get_interchangeable("RVOL")
         assert "VROC" in interchangeable or "OBV" in interchangeable
         assert "RVOL" not in interchangeable
-
 
 class TestComputeAllIndicators:
     """Test indicator computation on sample DataFrame."""

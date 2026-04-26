@@ -1,6 +1,8 @@
 """Integration tests for MTF engine in signal pipeline (Phase M1)."""
 
 import pytest
+
+pytestmark = [pytest.mark.integration]
 import numpy as np
 import pandas as pd
 
@@ -10,7 +12,6 @@ from core.strategy.dna import (
 )
 from core.strategy.executor import dna_to_signal_set, SignalSet
 from core.strategy.mtf_engine import run_mtf_engine
-
 
 def _make_ohlcv(n: int, freq: str, base_price: float = 60000.0) -> pd.DataFrame:
     """Generate synthetic OHLCV DataFrame."""
@@ -41,14 +42,12 @@ def _make_ohlcv(n: int, freq: str, base_price: float = 60000.0) -> pd.DataFrame:
 
     return df
 
-
 def _compute_rsi(close: pd.Series, period: int) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0).rolling(period).mean()
     loss = (-delta.clip(upper=0)).rolling(period).mean()
     rs = gain / loss.replace(0, np.nan)
     return (100 - 100 / (1 + rs)).fillna(50)
-
 
 def _compute_atr(df: pd.DataFrame, period: int) -> pd.Series:
     tr = pd.concat([
@@ -57,7 +56,6 @@ def _compute_atr(df: pd.DataFrame, period: int) -> pd.Series:
         (df["low"] - df["close"].shift(1)).abs(),
     ], axis=1).max(axis=1)
     return tr.rolling(period, min_periods=1).mean()
-
 
 class TestBackwardCompatibility:
     """Existing paths must be unchanged."""
@@ -162,7 +160,6 @@ class TestBackwardCompatibility:
         assert isinstance(result, SignalSet)
         # Should HAVE MTF diagnostics (new engine)
         assert result.mtf_diagnostics is not None
-
 
 class TestEndToEnd:
     """End-to-end MTF engine pipeline tests."""
@@ -271,7 +268,6 @@ class TestEndToEnd:
         result = dna_to_signal_set(dna, df)
         assert isinstance(result, SignalSet)
         assert result.mtf_diagnostics is None
-
 
 class TestMTFBacktest:
     """MTF engine should work with full backtest pipeline."""
@@ -399,7 +395,6 @@ class TestMTFBacktest:
         assert "confluence_score" in result.mtf_diagnostics
         assert "mtf_mode" in result.mtf_diagnostics
         assert result.mtf_diagnostics["mtf_mode"] == "direction+confluence"
-
 
 class TestRegression:
     """All existing MTF tests should still pass."""

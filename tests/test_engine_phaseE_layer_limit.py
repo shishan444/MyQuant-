@@ -7,9 +7,12 @@ Verifies:
 - create_random_dna caps layers when timeframe_pool > 3
 - init_population caps layers when timeframe_pool > 3
 """
+
 import random
 
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.strategy.dna import (
     ExecutionGenes,
@@ -24,7 +27,6 @@ from core.strategy.validator import validate_dna
 from core.evolution.operators import mutate_add_layer
 from core.evolution.population import create_random_dna, init_population
 
-
 def _make_layer(timeframe: str, role: str = "execution") -> TimeframeLayer:
     """Create a minimal valid TimeframeLayer."""
     return TimeframeLayer(
@@ -38,7 +40,6 @@ def _make_layer(timeframe: str, role: str = "execution") -> TimeframeLayer:
         logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
         role=role,
     )
-
 
 def _make_mtf_dna(n_layers: int = 2) -> StrategyDNA:
     """Create an MTF DNA with n_layers (1 exec + (n-1) others)."""
@@ -60,7 +61,6 @@ def _make_mtf_dna(n_layers: int = 2) -> StrategyDNA:
         layers=layers,
     )
 
-
 # ── Validator: layer count ──
 
 def test_validator_rejects_4_layers():
@@ -71,7 +71,6 @@ def test_validator_rejects_4_layers():
     assert any("max 3 layers" in e.lower() or "max 3" in e for e in result.errors), \
         f"Expected max layers error, got: {result.errors}"
 
-
 def test_validator_rejects_5_layers():
     """5-layer DNA should fail validation."""
     dna = _make_mtf_dna(5)
@@ -79,20 +78,17 @@ def test_validator_rejects_5_layers():
     assert not result.is_valid
     assert any("max 3" in e for e in result.errors)
 
-
 def test_validator_accepts_3_layers():
     """3-layer DNA should pass validation."""
     dna = _make_mtf_dna(3)
     result = validate_dna(dna)
     assert result.is_valid, f"3-layer DNA should be valid, errors: {result.errors}"
 
-
 def test_validator_accepts_1_layer():
     """1-layer MTF DNA should pass validation."""
     dna = _make_mtf_dna(1)
     result = validate_dna(dna)
     assert result.is_valid, f"1-layer DNA should be valid, errors: {result.errors}"
-
 
 # ── mutate_add_layer: layer count guard ──
 
@@ -103,14 +99,12 @@ def test_mutate_add_layer_refuses_at_3():
     assert len(result.layers) == 3, "Should not add a 4th layer"
     assert result.strategy_id == dna.strategy_id, "Should return same DNA"
 
-
 def test_mutate_add_layer_succeeds_at_2():
     """mutate_add_layer should add a layer when only 2 exist."""
     dna = _make_mtf_dna(2)
     result = mutate_add_layer(dna, candidate_timeframes=["15m", "30m"])
     assert len(result.layers) == 3, "Should add 3rd layer"
     assert result.strategy_id != dna.strategy_id, "Should return new DNA"
-
 
 # ── create_random_dna: cap layers ──
 
@@ -125,7 +119,6 @@ def test_create_random_dna_caps_at_3():
     if dna.layers:
         assert len(dna.layers) <= 3, \
             f"Expected max 3 layers, got {len(dna.layers)}"
-
 
 def test_init_population_caps_layers():
     """All individuals in population should have <= 3 layers."""

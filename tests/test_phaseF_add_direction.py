@@ -3,9 +3,12 @@
 Verifies that add-to-position orders use the current position direction
 instead of the DNA direction_val when in mixed mode.
 """
+
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.backtest.engine import BacktestEngine
 from core.strategy.dna import (
@@ -17,7 +20,6 @@ from core.strategy.dna import (
     StrategyDNA,
 )
 from core.strategy.executor import SignalSet
-
 
 def _make_dna(direction="mixed", leverage=1, sl=0.20, tp=0.0, pos_size=0.5):
     return StrategyDNA(
@@ -35,7 +37,6 @@ def _make_dna(direction="mixed", leverage=1, sl=0.20, tp=0.0, pos_size=0.5):
         ),
     )
 
-
 def _make_df(n=50, close_arr=None):
     dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
     if close_arr is None:
@@ -47,7 +48,6 @@ def _make_df(n=50, close_arr=None):
     }, index=dates)
     df.index.name = 'timestamp'
     return df
-
 
 def test_add_long_position_direction_is_long():
     """When holding a long position, add signal should buy more (direction=Buy/0).
@@ -83,7 +83,6 @@ def test_add_long_position_direction_is_long():
     # Long with add in rising market should be profitable
     assert result.equity_curve.iloc[-1] > 100000
 
-
 def test_add_short_position_direction_is_short():
     """When holding a short position, add signal should sell more (direction=Sell/1).
 
@@ -116,7 +115,6 @@ def test_add_short_position_direction_is_short():
     assert result.total_trades >= 1
     # Short with add in falling market should be profitable
     assert result.equity_curve.iloc[-1] > 100000
-
 
 def test_add_mixed_preserves_position_direction():
     """In mixed mode, adding to a position should keep the same direction as the position.

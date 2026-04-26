@@ -1,5 +1,8 @@
 """Tests for scoring module: metrics, normalizer, templates, scorer."""
+
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import pandas as pd
 import numpy as np
 
@@ -7,7 +10,6 @@ from MyQuant.core.scoring.metrics import compute_metrics
 from MyQuant.core.scoring.normalizer import normalize
 from MyQuant.core.scoring.templates import get_template, SCORING_TEMPLATES
 from MyQuant.core.scoring.scorer import score_strategy
-
 
 @pytest.fixture
 def equity_curve():
@@ -18,7 +20,6 @@ def equity_curve():
     equity = 100000 * np.cumprod(1 + daily_returns)
     return pd.Series(equity)
 
-
 @pytest.fixture
 def poor_equity_curve():
     """Simulated equity curve with large drawdown."""
@@ -27,7 +28,6 @@ def poor_equity_curve():
     daily_returns = np.random.normal(-0.001, 0.04, n)
     equity = 100000 * np.cumprod(1 + daily_returns)
     return pd.Series(equity)
-
 
 class TestComputeMetrics:
     def test_returns_all_metrics(self, equity_curve):
@@ -63,7 +63,6 @@ class TestComputeMetrics:
         short = pd.Series([100000, 101000, 99500, 102000])
         m = compute_metrics(short, total_trades=5)
         assert isinstance(m["annual_return"], float)
-
 
 class TestNormalize:
     def test_annual_return_good_is_high(self):
@@ -106,7 +105,6 @@ class TestNormalize:
                 score = normalize(metric_name, val)
                 assert 0 <= score <= 100, f"{metric_name}({val}) = {score}"
 
-
 class TestTemplates:
     def test_all_4_templates_exist(self):
         assert len(SCORING_TEMPLATES) >= 4
@@ -138,7 +136,6 @@ class TestTemplates:
         for name in ["profit_first", "steady", "risk_first"]:
             t = get_template(name)
             assert t.threshold > 0
-
 
 class TestScorer:
     def test_score_returns_total_and_dimensions(self, equity_curve):

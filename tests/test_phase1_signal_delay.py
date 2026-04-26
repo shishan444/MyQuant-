@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 from core.strategy.dna import (
     ConditionType,
     ExecutionGenes,
@@ -16,7 +18,6 @@ from core.strategy.dna import (
 )
 from core.strategy.executor import dna_to_signal_set, evaluate_condition
 from core.backtest.engine import BacktestEngine
-
 
 def _make_rsi_df(n=100, seed=42):
     """Create a DataFrame with RSI column for testing."""
@@ -41,7 +42,6 @@ def _make_rsi_df(n=100, seed=42):
     df["rsi_14"] = rsi
 
     return df
-
 
 def _make_rsi_dna(direction="long"):
     gene_entry = SignalGene(
@@ -71,7 +71,6 @@ def _make_rsi_dna(direction="long"):
         ),
     )
 
-
 def test_entries_delayed_by_1_bar():
     """Entry signals should be delayed by exactly 1 bar."""
     df = _make_rsi_df(100)
@@ -98,7 +97,6 @@ def test_entries_delayed_by_1_bar():
     assert delayed_entries.iloc[11] == True
     assert delayed_entries.iloc[10] == False
 
-
 def test_exits_delayed_by_1_bar():
     """Exit signals should be delayed by exactly 1 bar."""
     df = _make_rsi_df(100)
@@ -116,7 +114,6 @@ def test_exits_delayed_by_1_bar():
     assert delayed_exits.iloc[16] == True
     assert delayed_exits.iloc[15] == False
 
-
 def test_first_bar_no_signals():
     """Bar 0 should never have signals (can't delay from bar -1)."""
     df = _make_rsi_df(5)
@@ -131,7 +128,6 @@ def test_first_bar_no_signals():
     # After delay, bar 0 should be False
     delayed = sig_set.entries.shift(1).fillna(False).astype(bool)
     assert delayed.iloc[0] == False
-
 
 def test_touch_bounce_uses_only_past_data():
     """Verify touch_bounce doesn't use shift(-1) (future data)."""
@@ -159,7 +155,6 @@ def test_touch_bounce_uses_only_past_data():
     # All values should be computable without NaN (no shift(-1) edge effects)
     # Only the first bar might be NaN from shift(1), which is acceptable
     assert result.iloc[1:].notna().all()
-
 
 def test_signal_delay_produces_valid_trades():
     """With delayed signals, trades should execute after the signal bar."""
@@ -194,7 +189,6 @@ def test_signal_delay_produces_valid_trades():
     if result.trades_df is not None and len(result.trades_df) > 0:
         entry_price = result.trades_df.iloc[0]["Avg Entry Price"]
         assert 90 < entry_price < 130
-
 
 def test_existing_backtest_still_works():
     """Backtest should still produce trades after signal delay."""

@@ -3,9 +3,12 @@
 Verifies that dna.cross_layer_logic is respected when combining trend
 and execution layers in MTF signal generation.
 """
+
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.strategy.dna import (
     ExecutionGenes,
@@ -17,7 +20,6 @@ from core.strategy.dna import (
     TimeframeLayer,
 )
 from core.strategy.executor import dna_to_signal_set, evaluate_layer, resample_signals
-
 
 def _make_mtf_dna_with_logic(cross_layer_logic="AND"):
     """Create MTF DNA with specified cross_layer_logic."""
@@ -51,7 +53,6 @@ def _make_mtf_dna_with_logic(cross_layer_logic="AND"):
         ],
         cross_layer_logic=cross_layer_logic,
     )
-
 
 def _make_divergent_data():
     """Create data where exec and trend layers produce DIFFERENT signals.
@@ -90,7 +91,6 @@ def _make_divergent_data():
 
     return df
 
-
 def test_cross_layer_and_differs_from_or():
     """AND and OR logic should produce different entry counts with divergent data."""
     dna_and = _make_mtf_dna_with_logic("AND")
@@ -112,7 +112,6 @@ def test_cross_layer_and_differs_from_or():
         f"OR signals: {sig_or.entries.to_dict()}, AND signals: {sig_and.entries.to_dict()}"
     )
 
-
 def test_cross_layer_and_only_both_true():
     """AND mode: entry only when both trend AND exec fire on same bar."""
     dna = _make_mtf_dna_with_logic("AND")
@@ -127,7 +126,6 @@ def test_cross_layer_and_only_both_true():
     assert sig.entries.iloc[20], "AND: bar 20 should be entry (both true)"
     # Bar 30: exec=False, trend=True -> no entry
     assert not sig.entries.iloc[30], "AND: bar 30 should not be entry (trend only)"
-
 
 def test_cross_layer_or_any_true():
     """OR mode: entry when either trend OR exec fires."""
@@ -144,7 +142,6 @@ def test_cross_layer_or_any_true():
     # Bar 30: trend=True -> entry
     assert sig.entries.iloc[30], "OR: bar 30 should be entry (trend true)"
 
-
 def test_cross_layer_default_and():
     """Default cross_layer_logic is AND."""
     dna = _make_mtf_dna_with_logic("AND")
@@ -157,7 +154,6 @@ def test_cross_layer_default_and():
     assert not sig.entries.iloc[10]
     assert sig.entries.iloc[20]
     assert not sig.entries.iloc[30]
-
 
 def test_backward_compat_no_role_unchanged():
     """MTF DNA without roles should use cross_layer_logic via legacy path."""

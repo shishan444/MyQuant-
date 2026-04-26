@@ -14,14 +14,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tests.helpers.data_factory import make_ohlcv, make_dna, make_ema_dna, make_mtf_dna
+pytestmark = [pytest.mark.integration]
 
+from tests.helpers.data_factory import make_ohlcv, make_dna, make_ema_dna, make_mtf_dna
 
 # ============================================================================
 # Workflow 1: Full pipeline DNA -> signal -> backtest -> metrics -> score
 # ============================================================================
 
-@pytest.mark.integration
 class TestFullPipeline:
     """End-to-end: DNA -> signal -> backtest -> metrics -> score."""
 
@@ -101,7 +101,6 @@ class TestFullPipeline:
         if result.total_trades == 0:
             assert score_result["total_score"] == 0.0
 
-
 # ============================================================================
 # Workflow 2: DNA serialization roundtrip
 # ============================================================================
@@ -146,7 +145,6 @@ class TestDNASerializationRoundtrip:
         assert sig1.entries.equals(sig2.entries)
         assert sig1.exits.equals(sig2.exits)
 
-
 # ============================================================================
 # Workflow 3: MTF signal generation
 # ============================================================================
@@ -172,7 +170,6 @@ class TestMTFSignalGeneration:
         df = make_ohlcv(n=300, freq="4h")
         signal_set = dna_to_signal_set(dna, df)
         assert signal_set.entries.dtype == bool
-
 
 # ============================================================================
 # Workflow 4: Metrics -> Scoring with all templates
@@ -227,7 +224,6 @@ class TestScoringTemplates:
         metrics["max_consecutive_losses"] = 0
         result = score_strategy(metrics)
         assert result["total_score"] == 0.0
-
 
 # ============================================================================
 # Workflow 5: Data -> indicators -> backtest

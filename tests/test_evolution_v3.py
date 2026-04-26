@@ -1,8 +1,11 @@
 """Tests for V3 algorithm upgrades: polynomial mutation, multi-ancestor, adaptive weights,
 template-aware mutation bias, fresh blood count, and 40/40/20 population initialization."""
+
 import random
 
 import pytest
+
+pytestmark = [pytest.mark.unit]
 
 from core.evolution.operators import (
     mutate_params,
@@ -19,7 +22,6 @@ from core.strategy.dna import (
 )
 from core.strategy.validator import validate_dna
 
-
 def _make_simple_dna() -> StrategyDNA:
     return StrategyDNA(
         signal_genes=[
@@ -35,7 +37,6 @@ def _make_simple_dna() -> StrategyDNA:
         strategy_id="test-parent",
         generation=0,
     )
-
 
 # -- Polynomial mutation tests --
 
@@ -75,7 +76,6 @@ class TestPolynomialMutation:
             val = _polynomial_mutation(100.0, 0.0, 100.0, eta=20.0)
             assert 0.0 <= val <= 100.0
 
-
 class TestMutateParamsPolynomial:
     def test_stays_within_param_bounds(self):
         """Mutated params should stay within ParamDef bounds."""
@@ -96,7 +96,6 @@ class TestMutateParamsPolynomial:
                     periods.add(g.params["period"])
         # Should explore multiple RSI periods
         assert len(periods) > 3, f"Only explored {len(periods)} distinct RSI periods"
-
 
 # -- Multi-ancestor engine tests --
 
@@ -139,7 +138,6 @@ class TestMultiAncestorEngine:
         assert "stop_reason" in result
         assert "total_generations" in result
 
-
 # -- Adaptive mutation weight tests --
 
 class TestAdaptiveMutationWeights:
@@ -157,7 +155,6 @@ class TestAdaptiveMutationWeights:
         result = engine.evolve(ancestor=ancestor, evaluate_fn=mock_eval)
         assert result["total_generations"] == 5
         assert call_count["total"] > 0
-
 
 # -- Integration: population + multi-ancestor --
 
@@ -181,7 +178,6 @@ class TestPopulationMultiAncestor:
         for ind in pop:
             result = validate_dna(ind)
             assert result.is_valid, f"Individual invalid: {result.errors}"
-
 
 # -- Template-aware mutation bias tests --
 
@@ -214,7 +210,6 @@ class TestTemplateMutationBias:
         result = engine.evolve(ancestor=ancestor, evaluate_fn=mock_eval)
         assert result["champion"] is not None
 
-
 # -- Fresh blood count tests --
 
 class TestFreshBloodCount:
@@ -230,7 +225,6 @@ class TestFreshBloodCount:
 
         result = engine.evolve(ancestor=ancestor, evaluate_fn=mock_eval)
         assert result["total_generations"] == 5
-
 
 # -- 40/40/20 population init tests --
 

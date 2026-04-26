@@ -8,8 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tests.helpers.data_factory import make_ohlcv
+pytestmark = [pytest.mark.unit]
 
+from tests.helpers.data_factory import make_ohlcv
 
 # ============================================================================
 # Fixtures
@@ -22,12 +23,10 @@ def ohlcv_df():
     df = make_ohlcv(n=500, freq="4h")
     return compute_all_indicators(df)
 
-
 @pytest.fixture
 def basic_ohlcv():
     """Raw OHLCV without indicators, for label_generator tests."""
     return make_ohlcv(n=200, freq="4h")
-
 
 # ============================================================================
 # B9-1: label_generator.generate_labels
@@ -67,7 +66,6 @@ class TestGenerateLabels:
         from core.discovery.label_generator import generate_labels
         labels = generate_labels(basic_ohlcv, horizon=12)
         assert labels.index.equals(basic_ohlcv.index)
-
 
 # ============================================================================
 # B9-2: stat_validator.wilson_confidence
@@ -110,7 +108,6 @@ class TestWilsonConfidence:
         l2, u2 = wilson_confidence(50, 100, z=2.576)
         assert (u2 - l2) > (u1 - l1)
 
-
 # ============================================================================
 # B9-3: stat_validator.discretize_indicator
 # ============================================================================
@@ -130,7 +127,6 @@ class TestDiscretizeIndicator:
         s = pd.Series(range(100), dtype=float)
         result = discretize_indicator(s, "custom_indicator")
         assert result.notna().any()
-
 
 # ============================================================================
 # B9-4: stat_validator.build_conditional_prob_table
@@ -161,7 +157,6 @@ class TestBuildConditionalProbTable:
         result = build_conditional_prob_table(df, "rsi_14", "direction", "UP")
         for info in result.values():
             assert 0.0 <= info["prob"] <= 1.0
-
 
 # ============================================================================
 # B9-5: stat_validator.validate_rule_lift
@@ -197,7 +192,6 @@ class TestValidateRuleLift:
         lift = validate_rule_lift(df, [{"feature": "x", "operator": "le", "threshold": 100}])
         assert lift == 0.0  # < 10 samples
 
-
 # ============================================================================
 # B9-6: feature_encoder.FeatureEncoder
 # ============================================================================
@@ -231,7 +225,6 @@ class TestFeatureEncoder:
         df = pd.DataFrame({"close": [1.0, 2.0]})
         features = enc.fit_transform(df)
         assert features.shape[0] == 2
-
 
 # ============================================================================
 # B9-7: rule_extractor.extract_rules
@@ -287,7 +280,6 @@ class TestExtractRules:
                 assert "operator" in cond
                 assert "threshold" in cond
 
-
 # ============================================================================
 # B9-8: tree_engine.PatternDiscoveryEngine
 # ============================================================================
@@ -325,7 +317,6 @@ class TestPatternDiscoveryEngine:
         result = engine.discover(small_df)
         assert result.rules == []
         assert result.accuracy == 0.0
-
 
 # ============================================================================
 # B9-9: knn_engine.SimilarCaseEngine

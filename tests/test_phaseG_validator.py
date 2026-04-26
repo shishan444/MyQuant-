@@ -6,7 +6,10 @@ Verifies:
 - Valid MTF DNA passes validation
 - Existing DNA validation behavior unchanged
 """
+
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.strategy.dna import (
     ExecutionGenes,
@@ -19,7 +22,6 @@ from core.strategy.dna import (
 )
 from core.strategy.validator import validate_dna
 
-
 def _make_signal_gene(role=SignalRole.ENTRY_TRIGGER, indicator="RSI"):
     return SignalGene(
         indicator=indicator,
@@ -29,13 +31,11 @@ def _make_signal_gene(role=SignalRole.ENTRY_TRIGGER, indicator="RSI"):
         condition={"type": "lt", "threshold": 30},
     )
 
-
 def _make_risk(direction="long"):
     return RiskGenes(
         stop_loss=0.05, take_profit=0.10, position_size=0.5,
         leverage=1, direction=direction,
     )
-
 
 def _make_mtf_dna(direction="long", cross_layer_logic="AND", layers=None):
     """Create an MTF DNA with 2 layers by default."""
@@ -67,14 +67,12 @@ def _make_mtf_dna(direction="long", cross_layer_logic="AND", layers=None):
         cross_layer_logic=cross_layer_logic,
     )
 
-
 def test_rejects_invalid_cross_layer_logic():
     """cross_layer_logic must be AND or OR, not other values."""
     dna = _make_mtf_dna(cross_layer_logic="XOR")
     result = validate_dna(dna)
     assert not result.is_valid
     assert any("cross_layer_logic" in e.lower() for e in result.errors)
-
 
 def test_warns_mixed_without_trend_layer():
     """mixed direction with layers but no trend layer should produce a warning.
@@ -106,14 +104,12 @@ def test_warns_mixed_without_trend_layer():
     assert result.is_valid
     assert any("mixed" in e.lower() and "trend" in e.lower() for e in result.warnings)
 
-
 def test_valid_mtf_with_trend_passes():
     """Valid MTF DNA with mixed direction and trend layer should pass."""
     dna = _make_mtf_dna(direction="mixed")
     result = validate_dna(dna)
     assert result.is_valid
     assert len(result.errors) == 0
-
 
 def test_backward_compat_existing_dna():
     """Existing non-MTF DNA should validate the same as before."""

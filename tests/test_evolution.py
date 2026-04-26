@@ -1,5 +1,8 @@
 """Tests for evolution engine: operators, population, diversity, lineage, early stopping."""
+
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import numpy as np
 
 from core.strategy.dna import (
@@ -19,7 +22,6 @@ from core.evolution.diversity import compute_diversity, inject_fresh_blood
 from core.evolution.lineage import record_mutation, get_lineage
 from core.evolution.engine import EarlyStopChecker, EvolutionEngine
 
-
 def _make_simple_dna() -> StrategyDNA:
     return StrategyDNA(
         signal_genes=[
@@ -35,7 +37,6 @@ def _make_simple_dna() -> StrategyDNA:
         strategy_id="test-parent",
         generation=0,
     )
-
 
 def _make_mtf_dna() -> StrategyDNA:
     return StrategyDNA(
@@ -65,7 +66,6 @@ def _make_mtf_dna() -> StrategyDNA:
         generation=0,
     )
 
-
 class TestMutateParams:
     def test_changes_a_parameter(self):
         dna = _make_simple_dna()
@@ -88,7 +88,6 @@ class TestMutateParams:
             result = validate_dna(dna)
             assert result.is_valid, f"After mutation: {result.errors}"
 
-
 class TestMutateIndicator:
     def test_replaces_an_indicator(self):
         dna = _make_simple_dna()
@@ -96,7 +95,6 @@ class TestMutateIndicator:
         assert mutated.strategy_id != dna.strategy_id
         result = validate_dna(mutated)
         assert result.is_valid, f"Mutated DNA invalid: {result.errors}"
-
 
 class TestMutateLogic:
     def test_changes_logic(self):
@@ -110,7 +108,6 @@ class TestMutateLogic:
             mutated = mutate_logic(dna)
             assert mutated.logic_genes.entry_logic in ("AND", "OR")
             assert mutated.logic_genes.exit_logic in ("AND", "OR")
-
 
 class TestMutateRisk:
     def test_changes_risk_params(self):
@@ -126,7 +123,6 @@ class TestMutateRisk:
             assert 0.005 <= dna.risk_genes.stop_loss <= 0.20
             assert 0.10 <= dna.risk_genes.position_size <= 1.0
 
-
 class TestCrossover:
     def test_produces_valid_offspring(self):
         parent_a = _make_simple_dna()
@@ -141,7 +137,6 @@ class TestCrossover:
         child = crossover(parent_a, parent_b)
         assert parent_a.strategy_id in child.parent_ids
         assert parent_b.strategy_id in child.parent_ids
-
 
 class TestPopulation:
     def test_creates_population_of_size(self):
@@ -168,7 +163,6 @@ class TestPopulation:
         assert has_entry, "Random DNA missing entry signal"
         assert has_exit, "Random DNA missing exit signal"
 
-
 class TestDiversity:
     def test_compute_diversity_returns_float(self):
         pop = init_population(size=10, ancestor=_make_simple_dna())
@@ -188,7 +182,6 @@ class TestDiversity:
         pop = inject_fresh_blood(pop, n=2)
         assert len(pop) == original_size + 2
 
-
 class TestLineage:
     def test_record_mutation(self):
         dna = _make_simple_dna()
@@ -201,7 +194,6 @@ class TestLineage:
         lineage = get_lineage(dna)
         assert isinstance(lineage, list)
         assert len(lineage) == 1
-
 
 class TestEarlyStopChecker:
     def test_target_reached(self):
@@ -250,9 +242,7 @@ class TestEarlyStopChecker:
         assert action == "stop"
         assert reason == "decline"
 
-
 # ── MTF Operator Tests ──
-
 
 class TestMutateAddLayer:
     def test_adds_layer_to_single_tf_dna(self):
@@ -276,7 +266,6 @@ class TestMutateAddLayer:
         mutated = mutate_add_layer(dna, candidate_timeframes=all_tfs)
         assert mutated.strategy_id == dna.strategy_id
 
-
 class TestMutateRemoveLayer:
     def test_removes_layer_from_mtf(self):
         dna = _make_mtf_dna()
@@ -288,7 +277,6 @@ class TestMutateRemoveLayer:
         dna = _make_simple_dna()
         mutated = mutate_remove_layer(dna)
         assert mutated.strategy_id == dna.strategy_id
-
 
 class TestMutateLayerTimeframe:
     def test_changes_timeframe(self):
@@ -302,7 +290,6 @@ class TestMutateLayerTimeframe:
         mutated = mutate_layer_timeframe(dna)
         assert mutated.strategy_id == dna.strategy_id
 
-
 class TestMutateCrossLogic:
     def test_flips_logic(self):
         dna = _make_mtf_dna()
@@ -315,7 +302,6 @@ class TestMutateCrossLogic:
         mutated = mutate_cross_logic(dna)
         assert mutated.strategy_id == dna.strategy_id
 
-
 class TestRandomMtfLayer:
     def test_creates_valid_layer(self):
         layer = create_random_mtf_layer("1d")
@@ -327,7 +313,6 @@ class TestRandomMtfLayer:
         roles = [g.role for g in layer.signal_genes]
         assert any(r == SignalRole.ENTRY_TRIGGER for r in roles)
         assert any(r == SignalRole.EXIT_TRIGGER for r in roles)
-
 
 class TestGenerateRandomCondition:
     """Test the unified generate_random_condition function."""

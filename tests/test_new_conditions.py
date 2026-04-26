@@ -1,10 +1,12 @@
 """Tests for new condition types in evaluate_condition."""
+
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import pandas as pd
 import numpy as np
 
 from core.strategy.executor import evaluate_condition
-
 
 def _make_df(n: int = 50) -> pd.DataFrame:
     """Create a synthetic OHLCV DataFrame with EMA columns."""
@@ -22,7 +24,6 @@ def _make_df(n: int = 50) -> pd.DataFrame:
         "rsi_14": np.random.uniform(20, 80, n),
     }, index=dates)
     return df
-
 
 class TestCrossAboveSeries:
     """Test cross_above_series condition type."""
@@ -55,7 +56,6 @@ class TestCrossAboveSeries:
         # Should be all False for random data (no forced cross)
         assert isinstance(result, pd.Series)
 
-
 class TestCrossBelowSeries:
     """Test cross_below_series condition type."""
 
@@ -74,7 +74,6 @@ class TestCrossBelowSeries:
         }
         result = evaluate_condition(df["ema_10"], df["close"], condition, df=df)
         assert result.iloc[10] == True
-
 
 class TestLookbackAny:
     """Test lookback_any condition type."""
@@ -113,7 +112,6 @@ class TestLookbackAny:
         result = evaluate_condition(df["rsi_14"], df["close"], condition, df=df)
         assert result.sum() == 0
 
-
 class TestLookbackAll:
     """Test lookback_all condition type."""
 
@@ -132,7 +130,6 @@ class TestLookbackAll:
         result = evaluate_condition(df["rsi_14"], df["close"], condition, df=df)
         # Should be True at indices where all 3 prior bars are > 30
         assert result.iloc[9] == True
-
 
 class TestTouchBounce:
     """Test touch_bounce condition type."""
@@ -174,7 +171,6 @@ class TestTouchBounce:
         result = evaluate_condition(df["line"], df["close"], condition, df=df)
         assert result.iloc[10] == True
 
-
 class TestRoleReversal:
     """Test role_reversal condition type."""
 
@@ -209,7 +205,6 @@ class TestRoleReversal:
         }
         result = evaluate_condition(df["line"], df["close"], condition, df=df)
         assert result.iloc[20] == True
-
 
 class TestWickTouch:
     """Test wick_touch condition type."""
@@ -246,7 +241,6 @@ class TestWickTouch:
         }
         result = evaluate_condition(df["line"], df["close"], condition, df=df)
         assert result.iloc[10] == True
-
 
 class TestBackwardCompatibility:
     """Ensure original 8 condition types still work with df=None."""

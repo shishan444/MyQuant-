@@ -1,6 +1,8 @@
 """Tests for visualization modules: kline, equity_curve, generation_chart, chart_builder."""
 
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -15,7 +17,6 @@ from MyQuant.core.visualization.equity_curve import build_equity_curve
 from MyQuant.core.visualization.generation_chart import build_generation_chart
 from MyQuant.core.visualization.quick_preview import build_quick_preview
 from MyQuant.core.visualization.chart_builder import build_champion_report, build_evolution_dashboard
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -37,7 +38,6 @@ def sample_ohlcv():
     }, index=dates)
     return compute_all_indicators(df)
 
-
 @pytest.fixture
 def valid_dna():
     return StrategyDNA(
@@ -53,20 +53,17 @@ def valid_dna():
         risk_genes=RiskGenes(stop_loss=0.05, position_size=0.3),
     )
 
-
 @pytest.fixture
 def sample_entries(sample_ohlcv):
     """Generate some entry signals."""
     rsi = sample_ohlcv["rsi_14"]
     return rsi < 30
 
-
 @pytest.fixture
 def sample_exits(sample_ohlcv):
     """Generate some exit signals."""
     rsi = sample_ohlcv["rsi_14"]
     return rsi > 70
-
 
 @pytest.fixture
 def sample_history():
@@ -77,7 +74,6 @@ def sample_history():
         {"generation": 4, "best_score": 55.0, "avg_score": 38.0},
         {"generation": 5, "best_score": 63.0, "avg_score": 42.1},
     ]
-
 
 # ===========================================================================
 # K-Line Chart Tests
@@ -138,7 +134,6 @@ class TestKlineChart:
         )
         assert fig.layout.title.text == "Test Title"
 
-
 # ===========================================================================
 # Equity Curve Tests
 # ===========================================================================
@@ -186,7 +181,6 @@ class TestEquityCurve:
         fig = build_equity_curve(equity, benchmark)
         assert isinstance(fig, go.Figure)
 
-
 # ===========================================================================
 # Generation Chart Tests
 # ===========================================================================
@@ -211,7 +205,6 @@ class TestGenerationChart:
         best_trace = next(t for t in fig.data if t.name == "Best Score")
         assert len(best_trace.x) == len(sample_history)
 
-
 # ===========================================================================
 # Quick Preview Tests
 # ===========================================================================
@@ -222,7 +215,6 @@ class TestQuickPreview:
         _, portfolio = engine.run_with_portfolio(valid_dna, sample_ohlcv)
         fig = build_quick_preview(portfolio)
         assert isinstance(fig, go.Figure)
-
 
 # ===========================================================================
 # Chart Builder Tests

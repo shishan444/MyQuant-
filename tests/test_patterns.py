@@ -1,5 +1,8 @@
 """Tests for pattern detection algorithms."""
+
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import numpy as np
 import pandas as pd
 
@@ -12,14 +15,12 @@ from core.validation.patterns import (
     detect_role_reversal,
 )
 
-
 def _make_df(price: list[float], indicator: list[float]) -> pd.DataFrame:
     """Build a simple DataFrame with 'close' and 'rsi' columns."""
     return pd.DataFrame({
         "close": price,
         "rsi": indicator,
     })
-
 
 # ---------------------------------------------------------------------------
 # detect_divergence_top (bearish divergence)
@@ -63,7 +64,6 @@ class TestDetectDivergenceTop:
         assert len(result) == 3
         assert result.sum() == 0
 
-
 # ---------------------------------------------------------------------------
 # detect_divergence_bottom (bullish divergence)
 # ---------------------------------------------------------------------------
@@ -103,7 +103,6 @@ class TestDetectDivergenceBottom:
         assert len(result) == 3
         assert result.sum() == 0
 
-
 # ---------------------------------------------------------------------------
 # detect_consecutive_up
 # ---------------------------------------------------------------------------
@@ -140,7 +139,6 @@ class TestDetectConsecutiveUp:
         result = detect_consecutive_up(df, "nonexistent", count=2)
         assert result.sum() == 0
 
-
 # ---------------------------------------------------------------------------
 # detect_consecutive_down
 # ---------------------------------------------------------------------------
@@ -166,7 +164,6 @@ class TestDetectConsecutiveDown:
         result = detect_consecutive_down(df, "nonexistent", count=2)
         assert result.sum() == 0
 
-
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
@@ -189,7 +186,6 @@ class TestEdgeCases:
         df = _make_df([100], [50])
         assert detect_consecutive_up(df, "close", count=1).sum() == 0
         assert detect_consecutive_down(df, "close", count=1).sum() == 0
-
 
 # ---------------------------------------------------------------------------
 # detect_touch_bounce
@@ -234,7 +230,6 @@ class TestDetectTouchBounce:
         df = pd.DataFrame({"close": [1, 2, 3]})
         result = detect_touch_bounce(df, "nonexistent", direction="support")
         assert result.sum() == 0
-
 
 # ---------------------------------------------------------------------------
 # detect_role_reversal

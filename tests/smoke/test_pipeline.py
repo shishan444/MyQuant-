@@ -6,13 +6,13 @@ Run with: pytest -m smoke
 
 import pytest
 
+pytestmark = [pytest.mark.smoke]
+
 from core.backtest.engine import BacktestEngine
 from core.strategy.dna import StrategyDNA
 from core.strategy.executor import dna_to_signal_set
 from tests.helpers.data_factory import make_dna, make_ohlcv, make_mtf_dna
 
-
-@pytest.mark.smoke
 class TestSingleTFPipeline:
     """Smoke: single-timeframe DNA -> signals -> backtest."""
 
@@ -46,7 +46,6 @@ class TestSingleTFPipeline:
         assert isinstance(result.total_return, float)
         assert isinstance(result.max_drawdown, float)
 
-
 @pytest.mark.smoke
 class TestMTFPipeline:
     """Smoke: multi-timeframe DNA pipeline."""
@@ -61,7 +60,6 @@ class TestMTFPipeline:
         """MTF OR logic strategy runs without error."""
         dna = make_mtf_dna(timeframes=("4h", "15m"), cross_layer_logic="OR")
         assert dna.is_mtf
-
 
 @pytest.mark.smoke
 class TestDataFactory:

@@ -1,6 +1,9 @@
 """Tests for Strategy DNA data structure."""
+
 import json
 import pytest
+
+pytestmark = [pytest.mark.unit]
 from MyQuant.core.strategy.dna import (
     ConditionType,
     SignalRole,
@@ -11,7 +14,6 @@ from MyQuant.core.strategy.dna import (
     StrategyDNA,
     TimeframeLayer,
 )
-
 
 class TestConditionType:
     """ConditionType enum tests."""
@@ -38,7 +40,6 @@ class TestConditionType:
         assert ConditionType.ROLE_REVERSAL.value == "role_reversal"
         assert ConditionType.WICK_TOUCH.value == "wick_touch"
 
-
 class TestSignalRole:
     """SignalRole enum tests."""
 
@@ -54,7 +55,6 @@ class TestSignalRole:
         assert SignalRole.ADD_GUARD.value == "add_guard"
         assert SignalRole.REDUCE_TRIGGER.value == "reduce_trigger"
         assert SignalRole.REDUCE_GUARD.value == "reduce_guard"
-
 
 class TestSignalGene:
     """SignalGene dataclass tests."""
@@ -109,7 +109,6 @@ class TestSignalGene:
         assert gene.indicator == "RSI"
         assert gene.role == SignalRole.ENTRY_TRIGGER
 
-
 class TestTimeframeLayer:
     """TimeframeLayer dataclass tests."""
 
@@ -141,7 +140,6 @@ class TestTimeframeLayer:
         assert restored.timeframe == "1d"
         assert len(restored.signal_genes) == 2
         assert restored.logic_genes.entry_logic == "OR"
-
 
 class TestStrategyDNA:
     """StrategyDNA full structure tests."""

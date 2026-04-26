@@ -19,8 +19,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tests.helpers.data_factory import make_ohlcv, make_dna
+pytestmark = [pytest.mark.unit]
 
+from tests.helpers.data_factory import make_ohlcv, make_dna
 
 # ============================================================================
 # Gap 1: executor._get_indicator_column raises ValueError
@@ -71,7 +72,6 @@ class TestExecutorExceptions:
         result = evaluate_condition(s, close, {"type": "totally_unknown"})
         assert not result.any()
 
-
 # ============================================================================
 # Gap 2: BacktestEngine.run() boundary conditions
 # ============================================================================
@@ -104,7 +104,6 @@ class TestBacktestEngineBoundary:
             assert result is not None
         except (ValueError, IndexError):
             pass  # Acceptable on minimal data
-
 
 # ============================================================================
 # Gap 3: compute_all_indicators boundary conditions
@@ -155,7 +154,6 @@ class TestIndicatorsBoundary:
         result = compute_all_indicators(df)
         assert isinstance(result, pd.DataFrame)
 
-
 # ============================================================================
 # Gap 4: compute_metrics with single-element equity curve
 # ============================================================================
@@ -184,7 +182,6 @@ class TestMetricsBoundary:
         equity = pd.Series([], dtype=float)
         result = compute_metrics(equity)
         assert isinstance(result, dict)
-
 
 # ============================================================================
 # Gap 5: StrategyDNA.from_dict with malformed input
@@ -235,7 +232,6 @@ class TestDNABoundary:
         dna = StrategyDNA.from_dict(data)
         assert dna.layers[0].role == "structure"
 
-
 # ============================================================================
 # Gap 6: Evolution operators with empty signal_genes
 # ============================================================================
@@ -266,7 +262,6 @@ class TestEvolutionBoundary:
         except (IndexError, ValueError):
             pass  # Acceptable to reject empty parents
 
-
 # ============================================================================
 # Gap 8: storage.load_parquet with non-existent path
 # ============================================================================
@@ -293,7 +288,6 @@ class TestStorageBoundary:
         assert len(loaded) == 10
         assert list(loaded.columns) == list(df.columns)
 
-
 # ============================================================================
 # Gap 9: combine_signals with empty list
 # ============================================================================
@@ -309,7 +303,6 @@ class TestCombineSignalsBoundary:
         # Empty list returns empty False series
         if isinstance(result, pd.Series):
             assert len(result) == 0 or not result.any()
-
 
 # ============================================================================
 # Gap 10: compute_metrics with all-NaN equity curve

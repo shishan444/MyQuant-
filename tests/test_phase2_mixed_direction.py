@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 from core.strategy.dna import (
     ExecutionGenes,
     LogicGenes,
@@ -14,7 +16,6 @@ from core.strategy.dna import (
 )
 from core.strategy.validator import validate_dna
 from core.backtest.engine import BacktestEngine
-
 
 def _make_simple_dna(direction="long"):
     gene_entry = SignalGene(
@@ -43,7 +44,6 @@ def _make_simple_dna(direction="long"):
             direction=direction,
         ),
     )
-
 
 def _make_trend_df(n=200):
     """Create synthetic price data that trends up then down."""
@@ -81,7 +81,6 @@ def _make_trend_df(n=200):
     df["rsi_14"] = np.clip(rsi, 0, 100)
     return df
 
-
 def test_direction_map_includes_mixed():
     from core.backtest.engine import BacktestEngine
 
@@ -89,12 +88,10 @@ def test_direction_map_includes_mixed():
     direction_map = {"long": 0, "short": 1, "mixed": 2}
     assert direction_map["mixed"] == 2
 
-
 def test_validator_accepts_mixed():
     dna = _make_simple_dna(direction="mixed")
     result = validate_dna(dna)
     assert result.is_valid, f"Validation errors: {result.errors}"
-
 
 def test_mixed_backtest_produces_result():
     """End-to-end backtest with mixed direction should return valid BacktestResult."""
@@ -107,14 +104,12 @@ def test_mixed_backtest_produces_result():
     assert result.equity_curve is not None
     assert len(result.equity_curve) == len(df)
 
-
 def test_mixed_serialization_roundtrip():
     """RiskGenes(direction='mixed') should survive to_dict/from_dict."""
     dna = _make_simple_dna(direction="mixed")
     d = dna.to_dict()
     restored = StrategyDNA.from_dict(d)
     assert restored.risk_genes.direction == "mixed"
-
 
 def test_long_and_short_still_work():
     """Existing long/short directions should still work after mixed support."""

@@ -5,7 +5,10 @@ Tests:
 - build_signals produces entry/exit boolean Series
 - handles missing indicator columns gracefully
 """
+
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import pandas as pd
 import numpy as np
 
@@ -16,7 +19,6 @@ from core.features.signal_builder import (
     extract_indicator_requirements,
     build_signals,
 )
-
 
 @pytest.fixture
 def enhanced_df():
@@ -39,7 +41,6 @@ def enhanced_df():
         "macd_histogram_12_26_9": np.random.randn(n) * 3,
     }, index=dates)
     return df
-
 
 class TestExtractRequirements:
     def test_extracts_indicator_names_and_params(self):
@@ -68,7 +69,6 @@ class TestExtractRequirements:
         dna = StrategyDNA(signal_genes=[])
         reqs = extract_indicator_requirements(dna)
         assert len(reqs) == 0
-
 
 class TestBuildSignals:
     def test_simple_rsi_strategy(self, enhanced_df):

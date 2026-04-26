@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 from core.backtest.engine import BacktestEngine
 from core.strategy.dna import (
     ExecutionGenes,
@@ -14,7 +16,6 @@ from core.strategy.dna import (
     StrategyDNA,
 )
 from core.strategy.executor import SignalSet
-
 
 def _make_dna(direction="long", leverage=1, sl=0.05, tp=0.10, pos_size=0.5):
     return StrategyDNA(
@@ -32,7 +33,6 @@ def _make_dna(direction="long", leverage=1, sl=0.05, tp=0.10, pos_size=0.5):
         ),
     )
 
-
 def _make_df(n=200, seed=42):
     np.random.seed(seed)
     dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
@@ -44,7 +44,6 @@ def _make_df(n=200, seed=42):
     df.index.name = 'timestamp'
     df['rsi_14'] = np.clip(50 + np.random.randn(n) * 20, 0, 100)
     return df
-
 
 def test_liquidation_stops_trading():
     """10x leverage + 95% drop should trigger liquidation and stop all trading."""
@@ -70,7 +69,6 @@ def test_liquidation_stops_trading():
     # Should be liquidated with leveraged position in a crash
     assert result.liquidated
 
-
 def test_no_funding_without_position():
     """No funding cost when leverage is 1 (no borrowed capital)."""
     df = _make_df(200)
@@ -78,7 +76,6 @@ def test_no_funding_without_position():
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
     assert result.total_funding_cost == 0.0
-
 
 def test_no_negative_equity():
     """Equity should never go below 0."""
@@ -90,7 +87,6 @@ def test_no_negative_equity():
         equity = result.equity_curve
         # After funding cost adjustment, equity should still be >= 0
         assert (equity >= -1).all(), f"Negative equity with leverage={leverage}"
-
 
 def test_basic_round_trip():
     """Simple strategy should produce trades with valid price/size."""
@@ -105,7 +101,6 @@ def test_basic_round_trip():
 
     assert result.total_trades >= 1
     assert result.trades_df is not None or result.total_trades == 0
-
 
 def test_sl_trigger():
     """Stop-loss should close position when loss exceeds threshold."""
@@ -131,7 +126,6 @@ def test_sl_trigger():
     # Should have a trade (SL triggered or exit)
     assert result.total_trades >= 1
 
-
 def test_tp_trigger():
     """Take-profit should close position when profit exceeds threshold."""
     n = 50
@@ -155,7 +149,6 @@ def test_tp_trigger():
 
     assert result.total_trades >= 1
 
-
 def test_equity_starts_at_init_cash():
     """Equity curve should start at init_cash."""
     df = _make_df(100)
@@ -163,7 +156,6 @@ def test_equity_starts_at_init_cash():
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
     assert abs(result.equity_curve.iloc[0] - 100000) < 1
-
 
 def test_total_trades_counted():
     """total_trades should match portfolio.trades.count()."""
@@ -180,7 +172,6 @@ def test_total_trades_counted():
     assert isinstance(result.total_trades, int)
     assert result.total_trades >= 0
 
-
 def test_position_size_capped():
     """Position size should respect position_size setting."""
     df = _make_df(100)
@@ -193,7 +184,6 @@ def test_position_size_capped():
 
     # With position_size=0.3, the trade should not use all capital
     assert result.total_trades >= 0
-
 
 def test_result_structure_unchanged():
     """BacktestResult structure should be the same for backward compatibility."""

@@ -12,6 +12,8 @@ Tests:
 """
 
 import pytest
+
+pytestmark = [pytest.mark.unit]
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -33,7 +35,6 @@ from MyQuant.core.data.csv_importer import (
 )
 from MyQuant.core.data.storage import save_parquet, load_parquet, merge_parquet
 
-
 # ── Fixtures ──────────────────────────────────────────────────
 
 @pytest.fixture
@@ -41,7 +42,6 @@ def tmp_data_dir(tmp_path):
     data_dir = tmp_path / "market"
     data_dir.mkdir()
     return data_dir
-
 
 @pytest.fixture
 def binance_csv_content():
@@ -52,7 +52,6 @@ def binance_csv_content():
         "1735696800000,42850.0,42900.0,42500.0,42680.0,198.7,1735700399999,8480000,290,160.0,6820000,0\n"
     )
 
-
 @pytest.fixture
 def binance_csv_us_content():
     """Binance official CSV with microsecond timestamps (2025+ Spot)."""
@@ -60,7 +59,6 @@ def binance_csv_us_content():
         "1735689600010866,42000.0,42580.0,41850.0,42310.0,312.5,1735693200108666,13120000,450,250.0,10550000,0\n"
         "1735693200010866,42310.0,43120.0,42100.0,42850.0,289.3,1735696800108666,12380000,380,230.0,9850000,0\n"
     )
-
 
 @pytest.fixture
 def generic_csv_content():
@@ -72,20 +70,17 @@ def generic_csv_content():
         "2024-01-01 08:00:00,42850.0,42900.0,42500.0,42680.0,198.7\n"
     )
 
-
 @pytest.fixture
 def binance_csv_file(tmp_path, binance_csv_content):
     p = tmp_path / "BTCUSDT-4h-2025-01.csv"
     p.write_text(binance_csv_content)
     return p
 
-
 @pytest.fixture
 def generic_csv_file(tmp_path, generic_csv_content):
     p = tmp_path / "ETHUSDT_4h_data.csv"
     p.write_text(generic_csv_content)
     return p
-
 
 @pytest.fixture
 def sample_ohlcv():
@@ -101,7 +96,6 @@ def sample_ohlcv():
         "volume": np.random.randint(100, 10000, n).astype(float),
     }, index=dates)
     return df
-
 
 # ── Format Detection ──────────────────────────────────────────
 
@@ -120,7 +114,6 @@ class TestDetectFormat:
         with pytest.raises(ValueError, match="empty"):
             detect_format(p)
 
-
 # ── Timestamp Precision ───────────────────────────────────────
 
 class TestTimestampPrecision:
@@ -133,7 +126,6 @@ class TestTimestampPrecision:
     def test_small_number_not_timestamp(self):
         with pytest.raises(ValueError):
             detect_timestamp_precision(42)
-
 
 # ── Filename Parsing ──────────────────────────────────────────
 
@@ -161,7 +153,6 @@ class TestParseFilename:
         symbol, interval = parse_filename(Path("downloads/BTCUSDT-4h-2025-01.csv"))
         assert symbol == "BTCUSDT"
         assert interval == "4h"
-
 
 # ── OHLCV Validation ──────────────────────────────────────────
 
@@ -224,7 +215,6 @@ class TestValidateOhlcv:
         errors = validate_ohlcv(df)
         assert len(errors) > 0
 
-
 # ── CSV Reading ───────────────────────────────────────────────
 
 class TestReadCsv:
@@ -258,7 +248,6 @@ class TestReadCsv:
         df = read_csv(binance_csv_file)
         for col in ["open", "high", "low", "close", "volume"]:
             assert df[col].dtype in (np.float64, float)
-
 
 # ── Single File Import ────────────────────────────────────────
 
@@ -319,7 +308,6 @@ class TestImportCsv:
         )
         with pytest.raises(ValueError, match="[Oo][Hh][Ll][Cc]"):
             import_csv(bad_csv, symbol="BTCUSDT", interval="4h", data_dir=tmp_data_dir)
-
 
 # ── Batch Import ──────────────────────────────────────────────
 
@@ -383,7 +371,6 @@ class TestImportCsvBatch:
         assert df.index.is_unique
         assert len(df) == 15  # 10 + 5 new (5 overlap)
 
-
 # ── Storage Merge ─────────────────────────────────────────────
 
 class TestStorageMerge:
@@ -445,7 +432,6 @@ class TestStorageMerge:
 
         result = load_parquet(path)
         assert result.index.is_monotonic_increasing
-
 
 # ── ImportResult ──────────────────────────────────────────────
 

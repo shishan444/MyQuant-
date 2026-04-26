@@ -9,6 +9,8 @@ After C1 fix: momentum directional agreement provides confluence fallback -> tra
 """
 
 import pytest
+
+pytestmark = [pytest.mark.integration]
 import numpy as np
 import pandas as pd
 
@@ -18,7 +20,6 @@ from core.strategy.dna import (
 )
 from core.strategy.executor import dna_to_signal_set
 from core.backtest.engine import BacktestEngine
-
 
 def _make_ohlcv(n: int, freq: str) -> pd.DataFrame:
     """Create synthetic OHLCV + indicator DataFrame."""
@@ -41,7 +42,6 @@ def _make_ohlcv(n: int, freq: str) -> pd.DataFrame:
     from core.features.indicators import compute_all_indicators
     df = compute_all_indicators(df)
     return df
-
 
 # =====================================================================
 # Test 1: Momentum-only structure layer (the C1 bug scenario)
@@ -170,7 +170,6 @@ class TestC1MomentumOnlyStructureLayer:
         assert result.equity_curve is not None
         assert len(result.equity_curve) > 0
 
-
 # =====================================================================
 # Test 2: Mixed indicator types (momentum + trend)
 # =====================================================================
@@ -246,7 +245,6 @@ class TestC1MixedIndicatorTypes:
         # With confluence-only mode, the gate is more permissive
         assert result.total_trades >= 0, \
             f"Mixed indicator MTF should complete, got {result.total_trades} trades"
-
 
 # =====================================================================
 # Test 3: Comparison - Before vs After C1 fix
@@ -339,7 +337,6 @@ class TestC1BeforeAfterComparison:
         result = engine.run(dna, df_15m, dfs_by_timeframe=dfs)
         assert result.total_trades > 0, \
             f"C1 REGRESSION: New engine should produce trades, got {result.total_trades}"
-
 
 # =====================================================================
 # Test 4: MTF Direction-only mode (no confluence gate)

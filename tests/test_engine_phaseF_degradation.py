@@ -6,11 +6,14 @@ Verifies:
 - BacktestEngine.run propagates degraded_layers to BacktestResult
 - Full backtest with missing TF data reports degradation
 """
+
 import logging
 
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.strategy.dna import (
     ExecutionGenes,
@@ -23,7 +26,6 @@ from core.strategy.dna import (
 )
 from core.strategy.executor import dna_to_signal_set
 from core.backtest.engine import BacktestEngine
-
 
 def _make_ohlcv(n=200, timeframe="4h", seed=42):
     """Create synthetic OHLCV DataFrame with indicators."""
@@ -40,7 +42,6 @@ def _make_ohlcv(n=200, timeframe="4h", seed=42):
     df["rsi_14"] = 50.0
     df["ema_50"] = close.mean()
     return df
-
 
 def _make_mtf_dna():
     """Create MTF DNA with 3 layers (4h, 1d, 1h)."""
@@ -87,7 +88,6 @@ def _make_mtf_dna():
         ],
     )
 
-
 # ── dna_to_signal_set degradation reporting ──
 
 def test_dna_to_signal_set_reports_degraded_layers():
@@ -103,7 +103,6 @@ def test_dna_to_signal_set_reports_degraded_layers():
     assert hasattr(sig_set, "degraded_layers"), "SignalSet should have degraded_layers"
     assert sig_set.degraded_layers == 1, f"Expected 1 degraded layer, got {sig_set.degraded_layers}"
 
-
 def test_dna_to_signal_set_reports_all_degraded():
     """3-layer DNA with no data should report 3 degraded."""
     dna = _make_mtf_dna()
@@ -113,7 +112,6 @@ def test_dna_to_signal_set_reports_all_degraded():
     sig_set = dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
 
     assert sig_set.degraded_layers == 3, f"Expected 3 degraded layers, got {sig_set.degraded_layers}"
-
 
 def test_no_degradation_when_all_data_present():
     """All data present should report 0 degraded."""
@@ -127,7 +125,6 @@ def test_no_degradation_when_all_data_present():
 
     assert sig_set.degraded_layers == 0
 
-
 def test_executor_logs_error_on_missing_data(caplog):
     """Missing layer data should log at ERROR level, not WARNING."""
     dna = _make_mtf_dna()
@@ -140,7 +137,6 @@ def test_executor_logs_error_on_missing_data(caplog):
     error_logs = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert len(error_logs) >= 1, "Expected at least 1 ERROR log for missing layer data"
 
-
 def test_backtest_result_includes_degraded_layers():
     """BacktestResult should include degraded_layers from signal evaluation."""
     dna = _make_mtf_dna()
@@ -152,7 +148,6 @@ def test_backtest_result_includes_degraded_layers():
 
     assert hasattr(result, "degraded_layers"), "BacktestResult should have degraded_layers"
     assert result.degraded_layers >= 1, "Expected at least 1 degraded layer"
-
 
 def test_signal_set_degraded_layers_default_zero():
     """SignalSet from single-TF path should have degraded_layers=0."""

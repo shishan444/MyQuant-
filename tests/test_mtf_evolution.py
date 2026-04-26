@@ -4,6 +4,8 @@ import random
 
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 from core.strategy.dna import (
     StrategyDNA, TimeframeLayer, SignalGene, SignalRole,
     LogicGenes, ExecutionGenes, RiskGenes, derive_role,
@@ -12,7 +14,6 @@ from core.evolution.operators import (
     mutate_add_layer, mutate_remove_layer, crossover,
     mutate_params, mutate_indicator,
 )
-
 
 def _make_mtf_dna(mtf_mode="direction+confluence") -> StrategyDNA:
     """Create a simple MTF DNA for testing."""
@@ -62,7 +63,6 @@ def _make_mtf_dna(mtf_mode="direction+confluence") -> StrategyDNA:
         confluence_threshold=0.3,
         proximity_mult=1.5,
     )
-
 
 class TestMutateAddLayerRoleAware:
     """mutate_add_layer should derive role from timeframe."""
@@ -115,7 +115,6 @@ class TestMutateAddLayerRoleAware:
                     break
         assert len(roles_seen) >= 2, f"Expected diverse roles, got: {roles_seen}"
 
-
 class TestNewMutationOperators:
     """New MTF parameter mutation operators."""
 
@@ -148,7 +147,6 @@ class TestNewMutationOperators:
             assert 0.5 <= mutated.proximity_mult <= 3.0, \
                 f"proximity_mult {mutated.proximity_mult} out of range"
 
-
 class TestCrossoverRolePreservation:
     """Crossover should handle new roles correctly."""
 
@@ -179,7 +177,6 @@ class TestCrossoverRolePreservation:
         child = crossover(parent_a, parent_b)
         assert child.mtf_mode in ("direction", "confluence", "direction+confluence", None)
 
-
 class TestCreateRandomMTFDNA:
     """Random MTF DNA should have valid roles."""
 
@@ -203,7 +200,6 @@ class TestCreateRandomMTFDNA:
                 roles.add(layer.role)
         assert len(roles) >= 2, f"Expected diverse roles, got: {roles}"
 
-
 class TestEvolutionRegression:
     """Existing evolution operators should still work."""
 
@@ -226,7 +222,6 @@ class TestEvolutionRegression:
         assert isinstance(child, StrategyDNA)
         assert child.layers is not None
         assert len(child.layers) > 0
-
 
 class TestC2MutationOperatorRegistration:
     """C2: Three MTF mutation operators must be registered in EvolutionEngine.
@@ -303,7 +298,6 @@ class TestC2MutationOperatorRegistration:
             "mutate_confluence_threshold should be referenced in engine.py"
         assert "mutate_proximity_mult" in source, \
             "mutate_proximity_mult should be referenced in engine.py"
-
 
 class TestM3DiversitySignatureWithLayers:
     """M3: _gene_signature should include layer structure so that MTF

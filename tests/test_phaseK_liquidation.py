@@ -9,9 +9,12 @@ Verifies:
 - Short position liquidation works correctly
 - Multiple sequential liquidations are handled
 """
+
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.backtest.engine import BacktestEngine
 from core.strategy.dna import (
@@ -23,7 +26,6 @@ from core.strategy.dna import (
     StrategyDNA,
 )
 from core.strategy.executor import SignalSet
-
 
 def _make_dna(direction="long", leverage=5, sl=0.05, tp=0.0, pos_size=0.5):
     return StrategyDNA(
@@ -41,7 +43,6 @@ def _make_dna(direction="long", leverage=5, sl=0.05, tp=0.0, pos_size=0.5):
         ),
     )
 
-
 def _make_df(n=60, close_arr=None):
     dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
     if close_arr is None:
@@ -53,7 +54,6 @@ def _make_df(n=60, close_arr=None):
     }, index=dates)
     df.index.name = 'timestamp'
     return df
-
 
 def test_liquidation_clears_position():
     """After liquidation, position should be zero."""
@@ -81,7 +81,6 @@ def test_liquidation_clears_position():
 
     assert result.total_trades >= 1
     assert result.liquidated
-
 
 def test_liquidation_with_remaining_funds_continues():
     """After liquidation with remaining funds, new entry signals should work.
@@ -122,7 +121,6 @@ def test_liquidation_with_remaining_funds_continues():
     # Should have at least 2 trades: initial entry + post-liquidation entry
     assert result.total_trades >= 2
 
-
 def test_liquidation_zero_funds_stops_trading():
     """After catastrophic liquidation, equity should be drastically reduced.
 
@@ -162,7 +160,6 @@ def test_liquidation_zero_funds_stops_trading():
     # Equity should be significantly less than initial capital
     assert result.equity_curve.iloc[-1] < 95000
 
-
 def test_liquidation_reset_entry_price():
     """After liquidation, entry_price should be reset to 0."""
     n = 50
@@ -188,7 +185,6 @@ def test_liquidation_reset_entry_price():
 
     # The liquidation should have occurred and equity should be reduced
     assert result.equity_curve.iloc[-1] < 100000
-
 
 def test_post_liquidation_new_entry_respects_sl():
     """After liquidation and re-entry, SL should work normally."""
@@ -221,7 +217,6 @@ def test_post_liquidation_new_entry_respects_sl():
 
     # Should have multiple trades (SL triggered after re-entry too)
     assert result.total_trades >= 1
-
 
 def test_short_position_liquidation():
     """Short position liquidation should work correctly.
@@ -256,7 +251,6 @@ def test_short_position_liquidation():
 
     assert result.total_trades >= 1
     assert result.liquidated
-
 
 def test_multiple_liquidations_in_sequence():
     """Multiple sequential liquidations should each be handled correctly.

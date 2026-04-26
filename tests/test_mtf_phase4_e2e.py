@@ -6,11 +6,14 @@ Verifies the complete MTF pipeline after all fixes:
 - Evolution produces structurally valid MTF strategies
 - Random MTF layer generates evaluable genes
 """
+
 import json
 import random
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.strategy.dna import (
     ExecutionGenes,
@@ -25,7 +28,6 @@ from core.backtest.engine import BacktestEngine
 from core.strategy.executor import dna_to_signal_set
 from core.evolution.operators import crossover, mutate_layer_timeframe
 from core.evolution.population import create_random_mtf_layer
-
 
 # ── Shared Fixtures ──
 
@@ -56,7 +58,6 @@ def _make_ohlcv_df(n=500, timeframe="4h", start="2024-01-01", seed=42):
 
     return df
 
-
 def _make_mtf_dna():
     """Create a realistic MTF strategy with trend + execution layers."""
     return StrategyDNA(
@@ -85,7 +86,6 @@ def _make_mtf_dna():
         ],
     )
 
-
 # ── E2E Test 1: MTF Strategy Backtest ──
 
 def test_mtf_backtest_produces_valid_result():
@@ -105,7 +105,6 @@ def test_mtf_backtest_produces_valid_result():
     assert isinstance(result.total_trades, int)
     assert result.total_trades >= 0
 
-
 def test_mtf_backtest_without_mtf_data_falls_back():
     """MTF strategy without dfs_by_timeframe should fall back to single-TF."""
     dna = _make_mtf_dna()
@@ -116,7 +115,6 @@ def test_mtf_backtest_without_mtf_data_falls_back():
 
     assert result.total_return is not None
     assert len(result.equity_curve) > 0
-
 
 def test_single_tf_backtest_unchanged():
     """Single-TF strategy should produce same results as before."""
@@ -140,11 +138,6 @@ def test_single_tf_backtest_unchanged():
     assert result.total_return is not None
     assert len(result.equity_curve) > 0
 
-
-
-
-
-
 # ── E2E Test 3: MTF Signal Evaluation Pipeline ──
 
 def test_mtf_signal_pipeline_with_roles():
@@ -165,7 +158,6 @@ def test_mtf_signal_pipeline_with_roles():
     # Entries and exits should be boolean
     assert sig_set.entries.dtype == bool or str(sig_set.entries.dtype) == "boolean"
     assert sig_set.exits.dtype == bool or str(sig_set.exits.dtype) == "boolean"
-
 
 def test_mtf_signal_pipeline_no_roles():
     """MTF without roles should use legacy combination."""
@@ -198,7 +190,6 @@ def test_mtf_signal_pipeline_no_roles():
     assert len(sig_set.entries) == len(enhanced_df)
     assert isinstance(sig_set.entries, pd.Series)
 
-
 # ── E2E Test 4: Evolution produces valid MTF strategies ──
 
 def test_random_layer_produces_evaluable_strategy():
@@ -227,7 +218,6 @@ def test_random_layer_produces_evaluable_strategy():
     # Should not raise any errors
     sig_set = dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
     assert isinstance(sig_set.entries, pd.Series)
-
 
 def test_evolution_cycle_produces_valid_mtf():
     """Full evolution cycle: create -> crossover -> mutate should produce valid DNA."""
@@ -299,7 +289,6 @@ def test_evolution_cycle_produces_valid_mtf():
     restored = StrategyDNA.from_dict(serialized)
     assert len(restored.layers) == len(mutated.layers)
 
-
 # ── E2E Test 5: DNA Serialization Round-trip ──
 
 def test_mtf_dna_serialization_roundtrip():
@@ -323,7 +312,6 @@ def test_mtf_dna_serialization_roundtrip():
     for orig_layer, rest_layer in zip(original.layers, restored2.layers):
         assert orig_layer.role == rest_layer.role
 
-
 # ── E2E Test 6: API Schema Compatibility ──
 
 def test_mtf_dna_pydantic_roundtrip():
@@ -341,7 +329,6 @@ def test_mtf_dna_pydantic_roundtrip():
     assert len(restored.layers) == len(original.layers)
     assert restored.layers[0].role == original.layers[0].role
 
-
 # ── E2E Test 7: Compare endpoint contract ──
 
 def test_compare_endpoint_needed_tfs_construction():
@@ -356,7 +343,6 @@ def test_compare_endpoint_needed_tfs_construction():
     assert "4h" in needed_tfs
     assert "1d" in needed_tfs
     assert len(needed_tfs) == 2
-
 
 # ── E2E Test 8: No regressions in single-TF path ──
 
@@ -385,7 +371,6 @@ def test_single_tf_dna_still_works_end_to_end():
     # Signal evaluation
     sig_set = dna_to_signal_set(dna, enhanced_df)
     assert len(sig_set.entries) == len(enhanced_df)
-
 
 def test_mixed_direction_mtf_backtest():
     """MTF strategy with mixed direction should produce valid results."""

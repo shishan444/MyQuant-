@@ -1,15 +1,17 @@
 """Tests for V2 scoring system upgrades: new metrics, normalizers, templates, sigmoid penalty."""
+
 import math
 
 import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.scoring.metrics import compute_metrics
 from core.scoring.normalizer import normalize
 from core.scoring.templates import get_template, SCORING_TEMPLATES, ScoringTemplate
 from core.scoring.scorer import score_strategy
-
 
 def _make_equity_curve(n=200, start=10000, drift=0.001) -> pd.Series:
     """Generate a simple upward-trending equity curve."""
@@ -18,7 +20,6 @@ def _make_equity_curve(n=200, start=10000, drift=0.001) -> pd.Series:
     prices = start * np.cumprod(1 + returns)
     dates = pd.date_range("2024-01-01", periods=n, freq="4h")
     return pd.Series(prices, index=dates)
-
 
 def _make_trade_returns(n=50, win_rate=0.6, mean_win=0.02, mean_loss=-0.01) -> np.ndarray:
     """Generate synthetic trade returns."""
@@ -30,7 +31,6 @@ def _make_trade_returns(n=50, win_rate=0.6, mean_win=0.02, mean_loss=-0.01) -> n
         else:
             returns.append(-abs(np.random.normal(mean_loss, 0.005)))
     return np.array(returns)
-
 
 # -- Metrics tests --
 
@@ -91,7 +91,6 @@ class TestNewMetrics:
         metrics = compute_metrics(eq, total_trades=50, trade_returns=np.array([0.01] * 50))
         assert metrics["r_squared"] > 0.99
 
-
 # -- Normalizer tests --
 
 class TestNewNormalizers:
@@ -124,7 +123,6 @@ class TestNewNormalizers:
 
     def test_unknown_metric_defaults(self):
         assert normalize("unknown_metric", 0.0) == 50.0
-
 
 # -- Template tests --
 
@@ -160,7 +158,6 @@ class TestNewTemplates:
         with pytest.raises(ValueError, match="Unknown template"):
             get_template("nonexistent")
 
-
 # -- Sigmoid penalty tests --
 
 class TestSigmoidPenalty:
@@ -193,7 +190,6 @@ class TestSigmoidPenalty:
                 f"Trade count {count}: factor {factor} not in {expected_range}"
             )
 
-
 # -- Integration: full scoring pipeline --
 
 class TestFullScoringPipeline:
@@ -217,7 +213,6 @@ class TestFullScoringPipeline:
                 f"Template '{name}' score {result['total_score']} out of range"
             )
 
-
 # -- Bug fix regression tests --
 
 class TestFundingCostNotInTradeReturns:
@@ -231,7 +226,6 @@ class TestFundingCostNotInTradeReturns:
         # profit_factor should be > 0 when trade_returns has both wins and losses
         assert metrics["profit_factor"] > 0
         assert metrics["sortino_ratio"] >= 0
-
 
 class TestAnnualReturnLogNormalization:
     """Verify logarithmic normalization for annual_return."""
@@ -267,7 +261,6 @@ class TestAnnualReturnLogNormalization:
         score_300 = normalize("annual_return", 3.0)
         assert score_300 > score_100
         assert score_300 - score_100 > 10  # Meaningful discrimination
-
 
 class TestDynamicTradeCountThreshold:
     """Verify trade count penalty adapts to data size via total_bars."""

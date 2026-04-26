@@ -3,9 +3,12 @@
 Verifies that BacktestEngine.run() calls dna_to_signal_set exactly once for
 MTF strategies, not twice.
 """
+
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.strategy.dna import (
     ExecutionGenes,
@@ -20,7 +23,6 @@ from core.strategy.executor import dna_to_signal_set
 from core.backtest.engine import BacktestEngine
 import core.backtest.engine as engine_mod
 import core.strategy.executor as executor_mod
-
 
 def _make_ohlcv(n=200, timeframe="4h", seed=42):
     """Create synthetic OHLCV DataFrame with indicators."""
@@ -37,7 +39,6 @@ def _make_ohlcv(n=200, timeframe="4h", seed=42):
     df["rsi_14"] = 50.0
     df["ema_50"] = close.mean()
     return df
-
 
 def _make_mtf_dna():
     """Create MTF DNA with trend+execution layers."""
@@ -71,7 +72,6 @@ def _make_mtf_dna():
         ],
     )
 
-
 def _make_single_tf_dna():
     """Create single-timeframe DNA."""
     return StrategyDNA(
@@ -85,7 +85,6 @@ def _make_single_tf_dna():
         execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
         risk_genes=RiskGenes(stop_loss=0.05, take_profit=0.10, position_size=0.5),
     )
-
 
 def _patch_and_count(original_fn):
     """Create a counting wrapper and patch both engine and executor modules."""
@@ -103,11 +102,9 @@ def _patch_and_count(original_fn):
 
     return call_count, engine_ref, executor_ref
 
-
 def _restore(engine_ref, executor_ref):
     engine_mod.dna_to_signal_set = engine_ref
     executor_mod.dna_to_signal_set = executor_ref
-
 
 def test_mtf_signal_evaluated_once():
     """MTF strategy run() should call dna_to_signal_set exactly once."""
@@ -126,7 +123,6 @@ def test_mtf_signal_evaluated_once():
     finally:
         _restore(eng_ref, exec_ref)
 
-
 def test_single_tf_signal_evaluated_once():
     """Single-timeframe strategy run() should also call dna_to_signal_set exactly once."""
     dna = _make_single_tf_dna()
@@ -142,7 +138,6 @@ def test_single_tf_signal_evaluated_once():
     finally:
         _restore(eng_ref, exec_ref)
 
-
 def test_degraded_layers_still_reported():
     """After fix, degraded_layers should still be correctly reported in result."""
     dna = _make_mtf_dna()
@@ -155,7 +150,6 @@ def test_degraded_layers_still_reported():
     assert result.degraded_layers == 1, (
         f"Expected 1 degraded layer, got {result.degraded_layers}"
     )
-
 
 def test_signal_set_provided_skips_eval():
     """When signal_set is provided, dna_to_signal_set should not be called at all."""

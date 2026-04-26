@@ -7,9 +7,12 @@ Verifies:
 - B1: Liquidation check happens before SL/TP
 - B1: After SL triggers with catastrophic loss, trading stops
 """
+
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.integration]
 
 from core.backtest.engine import BacktestEngine
 from core.strategy.dna import (
@@ -21,7 +24,6 @@ from core.strategy.dna import (
     StrategyDNA,
 )
 from core.strategy.executor import SignalSet
-
 
 def _make_dna(direction="long", leverage=1, sl=0.05, tp=0.10, pos_size=0.5):
     return StrategyDNA(
@@ -38,7 +40,6 @@ def _make_dna(direction="long", leverage=1, sl=0.05, tp=0.10, pos_size=0.5):
             leverage=leverage, direction=direction,
         ),
     )
-
 
 # ── A1: SL triggers on LOW for long positions ──
 
@@ -84,7 +85,6 @@ def test_sl_triggers_on_intraday_low_long():
     # Equity should have lost money (SL exit, not end-of-data)
     assert result.equity_curve.iloc[-1] < 99900
 
-
 def test_sl_does_not_trigger_when_low_above_sl_level():
     """SL should NOT trigger when bar's LOW stays above SL level.
 
@@ -123,7 +123,6 @@ def test_sl_does_not_trigger_when_low_above_sl_level():
     # Trade should still be open at bar 10 (SL didn't trigger)
     # Exit is via late signal at bar 25, so final equity should be close to init
     assert result.equity_curve.iloc[-1] > 99000
-
 
 # ── A1: TP triggers on HIGH for long positions ──
 
@@ -165,7 +164,6 @@ def test_tp_triggers_on_intraday_high_long():
     # Equity should have gained money (TP exit)
     assert result.equity_curve.iloc[-1] > 100500
 
-
 def test_tp_does_not_trigger_when_high_below_tp_level():
     """TP should NOT trigger when bar's HIGH stays below TP level.
 
@@ -201,7 +199,6 @@ def test_tp_does_not_trigger_when_high_below_tp_level():
     assert result.total_trades >= 1
     # Equity should be close to init (no TP profit)
     assert result.equity_curve.iloc[-1] < 100500
-
 
 # ── A1: Short position SL/TP ──
 
@@ -239,7 +236,6 @@ def test_sl_triggers_on_intraday_high_short():
     # Short SL should trigger (high=106 > 105), trade should be Closed
     assert all(t == "Closed" for t in result.trades_df["Status"].tolist())
 
-
 def test_tp_triggers_on_intraday_low_short():
     """Short position TP should trigger when bar's LOW touches TP level.
 
@@ -274,7 +270,6 @@ def test_tp_triggers_on_intraday_low_short():
     # Short TP should trigger (low=88 < 90), trade should be Closed
     assert all(t == "Closed" for t in result.trades_df["Status"].tolist())
 
-
 # ── B1: Liquidation priority ──
 
 def test_liquidation_checked_before_sl():
@@ -308,7 +303,6 @@ def test_liquidation_checked_before_sl():
     assert result.liquidated
     # Trade should be Closed
     assert result.total_trades >= 1
-
 
 def test_no_new_trades_after_catastrophic_sl_with_leverage():
     """After a catastrophic SL on leveraged position,
@@ -346,7 +340,6 @@ def test_no_new_trades_after_catastrophic_sl_with_leverage():
     # the equity should be significantly reduced
     assert result.equity_curve.iloc[-1] < 100000
 
-
 # ── Regression: existing behavior preserved ──
 
 def test_sl_with_gradual_decline():
@@ -371,7 +364,6 @@ def test_sl_with_gradual_decline():
 
     assert result.total_trades >= 1
 
-
 def test_tp_with_gradual_rise():
     """TP should trigger on gradual rise even with high/low check."""
     n = 50
@@ -393,7 +385,6 @@ def test_tp_with_gradual_rise():
     result = engine.run(dna, df)
 
     assert result.total_trades >= 1
-
 
 def test_equity_starts_at_init_cash_after_fix():
     """Equity curve should still start at init_cash after high/low fix."""

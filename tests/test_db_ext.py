@@ -9,6 +9,7 @@ Covers:
 - Migration idempotency (run twice without error)
 - Backward compatibility (existing core db.py operations still work)
 """
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
+
+pytestmark = [pytest.mark.unit]
 
 from core.persistence.db import (
     get_task,
@@ -43,21 +46,17 @@ from api.db_ext import (
     update_strategy,
 )
 
-
 # ── Fixtures ──
-
 
 @pytest.fixture
 def db_path(tmp_path: Path) -> Path:
     return tmp_path / "test_ext.db"
-
 
 @pytest.fixture
 def initialized_db(db_path: Path) -> Path:
     """Initialize with the extended schema."""
     init_db_ext(db_path)
     return db_path
-
 
 def _sample_strategy_data(**overrides: Any) -> Dict[str, Any]:
     """Build a minimal strategy record."""
@@ -77,7 +76,6 @@ def _sample_strategy_data(**overrides: Any) -> Dict[str, Any]:
     }
     base.update(overrides)
     return base
-
 
 def _sample_backtest_data(**overrides: Any) -> Dict[str, Any]:
     """Build a minimal backtest_result record."""
@@ -106,7 +104,6 @@ def _sample_backtest_data(**overrides: Any) -> Dict[str, Any]:
     base.update(overrides)
     return base
 
-
 def _sample_dataset_data(**overrides: Any) -> Dict[str, Any]:
     """Build a minimal dataset_meta record."""
     base = {
@@ -130,9 +127,7 @@ def _sample_dataset_data(**overrides: Any) -> Dict[str, Any]:
     base.update(overrides)
     return base
 
-
 # ── Test: init_db_ext ──
-
 
 class TestInitDbExt:
     def test_creates_all_six_tables(self, initialized_db: Path) -> None:
@@ -194,9 +189,7 @@ class TestInitDbExt:
         conn.close()
         assert "strategy" in table_names
 
-
 # ── Test: Backward Compatibility ──
-
 
 class TestBackwardCompatibility:
     """Existing core db.py operations must still work after migration."""
@@ -273,9 +266,7 @@ class TestBackwardCompatibility:
         conn.close()
         assert "strategy" in tables
 
-
 # ── Test: Strategy CRUD ──
-
 
 class TestStrategyCRUD:
     def test_save_and_get_strategy(self, initialized_db: Path) -> None:
@@ -413,9 +404,7 @@ class TestStrategyCRUD:
         second = get_strategy(initialized_db, "strat-001")
         assert second["updated_at"] >= first["updated_at"]
 
-
 # ── Test: Backtest Result ──
-
 
 class TestBacktestResult:
     def test_save_and_get_backtest_result(self, initialized_db: Path) -> None:
@@ -501,9 +490,7 @@ class TestBacktestResult:
         assert len(results) == 1
         assert results[0]["result_id"] == "bt-evo"
 
-
 # ── Test: Dataset Metadata CRUD ──
-
 
 class TestDatasetMetaCRUD:
     def test_save_and_get_dataset(self, initialized_db: Path) -> None:
@@ -584,9 +571,7 @@ class TestDatasetMetaCRUD:
         second = get_dataset(initialized_db, "ds-001")
         assert second["updated_at"] >= first["updated_at"]
 
-
 # ── Test: Evolution Task Extended Columns ──
-
 
 class TestEvolutionTaskExtended:
     def test_extended_columns_have_defaults(self, initialized_db: Path) -> None:

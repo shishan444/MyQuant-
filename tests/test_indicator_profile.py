@@ -1,7 +1,10 @@
 """Tests for indicator profiles and profile-aware evolution operators."""
+
 import random
 
 import pytest
+
+pytestmark = [pytest.mark.unit]
 
 from core.features.indicator_profile import PROFILES, IndicatorProfile, ConditionPreset
 from core.features.indicators import INDICATOR_REGISTRY
@@ -21,7 +24,6 @@ from core.strategy.dna import (
     SignalRole, SignalGene, LogicGenes, RiskGenes, StrategyDNA,
 )
 from core.strategy.validator import validate_dna
-
 
 # -- Profile structure tests --
 
@@ -66,7 +68,6 @@ class TestIndicatorProfiles:
                     f"{name}: condition type '{cond.type}' not in supported {reg.supported_conditions}"
                 )
 
-
 # -- Template tests --
 
 class TestStrategyTemplates:
@@ -92,7 +93,6 @@ class TestStrategyTemplates:
             template_indicators = {g["indicator"] for g in template["genes"]}
             dna_indicators = {g.indicator for g in dna.signal_genes}
             assert dna_indicators == template_indicators
-
 
 # -- Profile-aware condition generation --
 
@@ -123,7 +123,6 @@ class TestProfileAwareConditions:
         assert "type" in cond
         # Should still produce valid conditions
 
-
 # -- Profile-aware parameter mutation --
 
 class TestProfileAwareParamMutation:
@@ -150,7 +149,6 @@ class TestProfileAwareParamMutation:
         # With profile follow_probability=0.70, most mutations should stay in profile range
         assert profile_hits > 100, f"Only {profile_hits} params in profile range"
 
-
 # -- Profile-aware indicator replacement --
 
 class TestProfileAwareIndicatorMutation:
@@ -170,7 +168,6 @@ class TestProfileAwareIndicatorMutation:
             mutated = mutate_indicator(dna)
             result = validate_dna(mutated)
             assert result.is_valid, f"Mutated indicator invalid: {result.errors}"
-
 
 # -- Profile-aware signal addition --
 
@@ -195,7 +192,6 @@ class TestProfileAwareSignalAddition:
         # Most mutations should be valid; a few may fail due to
         # complex conditions (e.g. VolumeProfile role_reversal needs 'role')
         assert valid_count >= 20, f"Only {valid_count}/30 mutations were valid"
-
 
 # -- Population with templates and profiles --
 

@@ -1,6 +1,8 @@
 """Tests for MTF engine: L1 DNA extension, L2 core algorithms, L3 layer evaluator, L4 synthesis."""
 
 import pytest
+
+pytestmark = [pytest.mark.integration]
 import pandas as pd
 import numpy as np
 
@@ -8,7 +10,6 @@ from core.strategy.dna import (
     StrategyDNA, TimeframeLayer, SignalGene, SignalRole,
     LogicGenes, ExecutionGenes, RiskGenes, derive_role,
 )
-
 
 # =====================================================================
 # L1: DNA Data Structure Extension
@@ -35,7 +36,6 @@ class TestLayerRoleDerivation:
     def test_derive_role_30m_returns_execution(self):
         assert derive_role("30m") == "execution"
 
-
 class TestStrategyDNAMTFFields:
     """StrategyDNA gains mtf_mode, confluence_threshold, proximity_mult."""
 
@@ -56,7 +56,6 @@ class TestStrategyDNAMTFFields:
         assert dna.mtf_mode is None
         assert dna.confluence_threshold == 0.3
         assert dna.proximity_mult == 1.5
-
 
 class TestDNABackwardCompatibility:
     """Old DNA records deserialize correctly with new fields."""
@@ -126,7 +125,6 @@ class TestDNABackwardCompatibility:
         assert roundtripped.mtf_mode == "direction+confluence"
         assert roundtripped.confluence_threshold == 0.7
         assert roundtripped.proximity_mult == 1.2
-
 
 class TestValidatorMTFUpdates:
     """Validator accepts new roles and MTF control parameters."""
@@ -231,7 +229,6 @@ class TestValidatorMTFUpdates:
         result = validate_dna(dna)
         assert result.is_valid
 
-
 # =====================================================================
 # L2: Confluence Engine Core Algorithms
 # =====================================================================
@@ -262,7 +259,6 @@ class TestComputeSPct:
         s2 = compute_s_pct(atr=800.0, close=60000.0, proximity_mult=2.0)
         assert abs(s2 - 2 * s1) < 1e-6
 
-
 class TestBuildPriceZone:
     """Build price zone [P*(1-s%), P*(1+s%)] from price level and s%."""
 
@@ -278,7 +274,6 @@ class TestBuildPriceZone:
         low, high = build_price_zone(50000.0, 0.05)
         assert abs(low - 47500.0) < 1e-6
         assert abs(high - 52500.0) < 1e-6
-
 
 class TestMergeIntervals:
     """Merge overlapping intervals into union."""
@@ -303,7 +298,6 @@ class TestMergeIntervals:
         result = merge_intervals([(1.0, 3.0), (2.0, 5.0), (7.0, 9.0)])
         assert result == [(1.0, 5.0), (7.0, 9.0)]
 
-
 class TestIntersectIntervals:
     """Compute intersection of two interval sets."""
 
@@ -321,7 +315,6 @@ class TestIntersectIntervals:
         from core.strategy.mtf_engine import intersect_intervals
         result = intersect_intervals([(2.0, 4.0)], [(1.0, 5.0)])
         assert result == [(2.0, 4.0)]
-
 
 class TestConfluenceScore:
     """Confluence score from interval overlap and price position."""
@@ -390,7 +383,6 @@ class TestConfluenceScore:
                                           max_zone_width=6000.0)
         assert score < 0.1  # Almost no overlap
 
-
 class TestProximityScore:
     """Single-layer proximity fallback (Type B gap B)."""
 
@@ -403,7 +395,6 @@ class TestProximityScore:
         assert len(scores) == 3
         # At bar 2, price=60100, level=60000, distance=100/60000=0.00167 < 0.03 -> close
         assert scores.iloc[2] > 0.0
-
 
 class TestDirectionConflict:
     """Resolve direction conflicts among multiple structure layers."""
@@ -425,7 +416,6 @@ class TestDirectionConflict:
         layers = [("1d", direction)]
         result = resolve_direction_conflict(layers)
         pd.testing.assert_series_equal(result, direction)
-
 
 # =====================================================================
 # L3: Layer Evaluator + Context Extraction
@@ -459,7 +449,6 @@ class TestGetAllColumns:
         df = pd.DataFrame({"close": [60000.0]})
         result = _get_all_columns(df, "NONEXISTENT", {})
         assert result == []
-
 
 class TestExtractContext:
     """extract_context pulls direction, price_levels, momentum from a gene."""
@@ -533,7 +522,6 @@ class TestExtractContext:
         # gt/lt conditions don't produce price levels
         assert "price_levels" not in ctx or len(ctx.get("price_levels", [])) == 0
 
-
 class TestResampleValues:
     """resample_values correctly forward-fills numeric series without bool conversion."""
 
@@ -563,7 +551,6 @@ class TestResampleValues:
         series = pd.Series([60000.0, float("nan"), 61000.0], index=idx_4h)
         result = resample_values(series, idx_15m)
         assert len(result) == 12
-
 
 class TestEvaluateLayerWithContext:
     """evaluate_layer_with_context produces LayerResult with context data."""
@@ -656,7 +643,6 @@ class TestEvaluateLayerWithContext:
         assert lr.direction is None
         assert lr.price_levels == []
 
-
 # =====================================================================
 # L4: Cross-layer Synthesis + Decision Gate
 # =====================================================================
@@ -675,7 +661,6 @@ class TestMTFSynthesisDataclass:
         )
         assert synthesis.direction_score is not None
         assert synthesis.confluence_score is not None
-
 
 class TestCrossLayerSynthesis:
     """synthesize_cross_layer computes direction, confluence, momentum, strength."""
@@ -794,7 +779,6 @@ class TestCrossLayerSynthesis:
             layer_results, idx, exec_close, exec_atr, 1.5, dna,
         )
         assert synthesis.confluence_score.iloc[0] == 0.0
-
 
 class TestDecisionGate:
     """apply_decision_gate filters signals based on MTF synthesis."""
@@ -953,7 +937,6 @@ class TestDecisionGate:
         # Reduces should not be filtered
         assert result.reduces.iloc[0] == True
 
-
 class TestMTFMode:
     """mtf_mode controls which dimensions are active."""
 
@@ -1023,7 +1006,6 @@ class TestMTFMode:
         # No gating -> all entries pass
         assert result.entries.iloc[0] == True
 
-
 class TestDiagnostics:
     """Decision gate includes diagnostics information."""
 
@@ -1078,7 +1060,6 @@ class TestDiagnostics:
         assert "confluence_score" in diag
         assert "momentum_score" in diag
         assert "strength_multiplier" in diag
-
 
 # =====================================================================
 # Bug Fix Tests: C1, C2, M2, M3, M4
@@ -1217,7 +1198,6 @@ class TestC1MomentumConfluence:
         # Conflicting momenta should produce low/zero confluence
         assert synthesis.confluence_score.iloc[0] < 0.3, \
             "Conflicting momentum directions should produce low confluence"
-
 
 class TestM2DirectionZeroMixedMode:
     """M2: direction_score=0.0 in mixed mode should not route to short."""
