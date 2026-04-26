@@ -48,13 +48,15 @@ def create_app(
         data_dir.mkdir(parents=True, exist_ok=True)
         init_db_ext(db_path)
 
+        # Start EvolutionRunner background thread
+        from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks
+        from .routes.ws import get_manager
+
+        recover_stale_tasks(db_path)
+
         # Store paths on app state for dependency injection
         app.state.db_path = db_path
         app.state.data_dir = data_dir
-
-        # Start EvolutionRunner background thread
-        from .runner import EvolutionRunner, set_ws_push_fn
-        from .routes.ws import get_manager
 
         runner = EvolutionRunner(db_path=db_path, data_dir=data_dir)
         app.state.evolution_runner = runner

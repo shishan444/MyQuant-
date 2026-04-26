@@ -404,6 +404,13 @@ def stop_task(
     if row is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    # Direct signal via TaskController (instant response, no DB polling delay)
+    from api.runner import get_active_controllers
+    controllers = get_active_controllers()
+    controller = controllers.get(task_id)
+    if controller is not None:
+        controller.request_stop()
+
     update_task(db_path, task_id, status="stopped", stop_reason="user_stop")
     row = get_task(db_path, task_id)
     return _task_row_to_response(row)

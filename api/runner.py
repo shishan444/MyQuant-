@@ -262,12 +262,19 @@ class EvolutionRunner(threading.Thread):
         Guarantees:
         - _active_task_id is ALWAYS cleared (finally block)
         - task status is updated to 'stopped' on any unhandled exception
+        - TaskController is ALWAYS unregistered (finally block)
         """
         task_id = task_row["task_id"]
         self._active_task_id = task_id
 
+        controller = TaskController()
+        _active_controllers[task_id] = controller
+
         try:
-            self._execute_task(task_row, task_id)
+            self._execute_task(task_row, task_id, controller)
+        except TaskStopRequested:
+            logger.info("Task %s stopped via TaskController", task_id)
+            update_task(self.db_path, task_id, status="stopped", stop_reason="user_stop")
         except _StopEvolution as e:
             logger.info("Task %s stopped: %s", task_id, e)
         except Exception:
@@ -275,8 +282,9 @@ class EvolutionRunner(threading.Thread):
             update_task(self.db_path, task_id, status="stopped", stop_reason="error")
         finally:
             self._active_task_id = None
+            _active_controllers.pop(task_id, None)
 
-    def _execute_task(self, task_row: Dict[str, Any], task_id: str) -> None:
+    def _execute_task(self, task_row: Dict[str, Any], task_id: str, controller: TaskController) -> None:
         """Full task execution. All exceptions propagate to _run_task's handler."""
 
         # Mark as running
@@ -290,6 +298,9 @@ class EvolutionRunner(threading.Thread):
             "target_score": task_row["target_score"],
             "max_generations": task_row.get("max_generations", 200),
         })
+
+        update_phase(self.db_path, task_id, "initializing")
+        update_heartbeat(self.db_path, task_id)
 
         # Parse initial DNA
         try:
@@ -316,6 +327,9 @@ class EvolutionRunner(threading.Thread):
                 tf_pool = None
 
         # Load market data first, then create engine with actually loaded TFs
+        controller.check_stop()
+        update_phase(self.db_path, task_id, "data_loading")
+
         from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
 
         _symbol = task_row["symbol"]
@@ -329,6 +343,10 @@ class EvolutionRunner(threading.Thread):
         if _enhanced_df is None:
             update_task(self.db_path, task_id, status="stopped", stop_reason="no_data")
             return
+
+        controller.check_stop()
+        update_phase(self.db_path, task_id, "evolution_running")
+        update_heartbeat(self.db_path, task_id)
 
         _dfs_by_timeframe = None
         if tf_pool and len(tf_pool) > 1:
@@ -375,11 +393,9 @@ class EvolutionRunner(threading.Thread):
         def on_generation(gen: int, best_score: float, avg_score: float) -> None:
             nonlocal last_mutations, global_gen_offset
 
-            # Check stop/pause
-            from core.persistence.db import get_task
-            t = get_task(self.db_path, task_id)
-            if t is None or t["status"] not in ("running", "pending"):
-                raise _StopEvolution(t["status"] if t else "unknown")
+            # Fast cooperative cancellation via threading.Event
+            controller.check_stop()
+            update_heartbeat(self.db_path, task_id)
 
             # Update current_generation in DB (use global offset for continuous mode)
             global_gen = gen + global_gen_offset
@@ -541,10 +557,7 @@ class EvolutionRunner(threading.Thread):
         continuous = bool(task_row.get("continuous", 1))
 
         while continuous and stop_reason not in ("error",):
-            from core.persistence.db import get_task
-            t = get_task(self.db_path, task_id)
-            if not t or t["status"] not in ("running", "pending"):
-                break
+            controller.check_stop()
 
             self._population_count += 1
 
