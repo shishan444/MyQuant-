@@ -397,6 +397,14 @@ class EvolutionRunner(threading.Thread):
             controller.check_stop()
             update_heartbeat(self.db_path, task_id)
 
+            # Update structured progress
+            update_progress(self.db_path, task_id, {
+                "phase": "evolution_running",
+                "current_generation": gen + global_gen_offset,
+                "best_score": best_score,
+                "avg_score": avg_score,
+            })
+
             # Update current_generation in DB (use global offset for continuous mode)
             global_gen = gen + global_gen_offset
             import sqlite3
