@@ -65,9 +65,10 @@ interface KlineChartProps {
   mtfIndicators?: MTFIndicatorData[];
   /** Called once after chart and series are created. */
   onChartReady?: (chart: IChartApi, series: ISeriesApi<"Candlestick">) => void;
-  subChartType?: "volume" | "macd" | "rsi" | "kdj";
+  subChartType?: "volume" | "macd" | "rsi" | "kdj" | "equity";
   macdData?: { macd: Array<{ time: string; value: number }>; signal: Array<{ time: string; value: number }>; histogram: Array<{ time: string; value: number }> } | null;
   kdjData?: { k: Array<{ time: string; value: number }>; d: Array<{ time: string; value: number }>; j: Array<{ time: string; value: number }> } | null;
+  equityData?: Array<{ time: string; value: number }>;
 }
 
 export interface KlineChartHandle {
@@ -121,6 +122,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
   subChartType = "rsi",
   macdData,
   kdjData,
+  equityData,
 }, ref) {
   const mainRef = useRef<HTMLDivElement>(null);
   const subChartDivRef = useRef<HTMLDivElement>(null);
@@ -660,6 +662,7 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
 
   const memoizedMacdData = useMemo(() => macdData, [macdData]);
   const memoizedKdjData = useMemo(() => kdjData, [kdjData]);
+  const memoizedEquityData = useMemo(() => equityData ?? [], [equityData]);
   const memoizedSubChartType = useMemo(() => subChartType, [subChartType]);
 
   useEffect(() => {
@@ -818,11 +821,42 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
         ref20.setData([{ time, value: 20 }, { time: lastTime, value: 20 }]);
         createdSeries.push(ref20);
       }
+    } else if (memoizedSubChartType === "equity" && memoizedEquityData.length > 0) {
+      // Equity curve sub-chart: line series showing portfolio value over time
+      const equitySeries = subChart.addSeries(LineSeries, {
+        color: "#f59e0b",
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: "Equity",
+      });
+      equitySeries.setData(
+        memoizedEquityData.map((d) => ({ time: toTime(d.time), value: d.value })),
+      );
+      createdSeries.push(equitySeries);
+
+      // Reference line at initial capital (first value)
+      const firstVal = memoizedEquityData[0].value;
+      const eqStartTime = toTime(memoizedEquityData[0].time);
+      const eqEndTime = toTime(memoizedEquityData[memoizedEquityData.length - 1].time);
+      const refLine = subChart.addSeries(LineSeries, {
+        color: "rgba(148,163,184,0.3)",
+        lineWidth: 1,
+        lineStyle: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      refLine.setData([
+        { time: eqStartTime, value: firstVal },
+        { time: eqEndTime, value: firstVal },
+      ]);
+      createdSeries.push(refLine);
     }
 
     subChartSeriesRefs.current = createdSeries;
     subChart.timeScale().fitContent();
-  }, [memoizedSubChartType, rsiData, memoizedMacdData, memoizedKdjData, memoizedVolumeData]);
+  }, [memoizedSubChartType, rsiData, memoizedMacdData, memoizedKdjData, memoizedVolumeData, memoizedEquityData]);
 
   // Fullscreen toggle
   const handleFullscreen = useCallback(() => {

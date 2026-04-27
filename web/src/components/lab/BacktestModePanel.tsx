@@ -188,7 +188,7 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
                   {/* Sub-chart indicator selector */}
                   <div className="flex items-center gap-0.5">
                     <span className="mr-1 text-[11px] text-slate-500">副图</span>
-                    {(["volume", "macd", "rsi", "kdj"] as const).map((t) => (
+                    {(["volume", "macd", "rsi", "kdj", "equity"] as const).map((t) => (
                       <button
                         key={t}
                         type="button"
@@ -222,6 +222,10 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
                     subChartType={subChartType}
                     macdData={macdData}
                     kdjData={kdjData}
+                    equityData={equityPoints.map((p) => ({
+                      time: p.timestamp,
+                      value: p.value,
+                    }))}
                     height={420}
                   />
                 </div>

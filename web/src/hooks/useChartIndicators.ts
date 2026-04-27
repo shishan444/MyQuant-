@@ -9,7 +9,7 @@ import type { BollingerBandData } from "@/types/chart";
 // Types
 // ---------------------------------------------------------------------------
 
-export type SubChartType = "volume" | "macd" | "rsi" | "kdj";
+export type SubChartType = "volume" | "macd" | "rsi" | "kdj" | "equity";
 
 export interface UseChartIndicatorsParams {
   symbol: string;
