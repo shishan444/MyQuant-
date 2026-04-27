@@ -104,8 +104,13 @@ export const BacktestModePanel = forwardRef<BacktestModePanelHandle, BacktestMod
         .finally(() => setLoading(false));
     }
 
-    // Expose runBacktestAction to parent via ref
-    useImperativeHandle(ref, () => ({ runBacktest: runBacktestAction }), []);
+    // Expose runBacktestAction to parent via ref (useRef thunk to avoid stale closure)
+    const latestRunBacktest = useRef(runBacktestAction);
+    latestRunBacktest.current = runBacktestAction;
+
+    useImperativeHandle(ref, () => ({
+      runBacktest: () => latestRunBacktest.current(),
+    }), []);
 
     const signals: SignalData[] = useMemo(() => {
       if (!result?.signals) return [];

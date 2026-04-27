@@ -283,14 +283,17 @@ def backtest_strategy(
 
     result = engine.run(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
 
-    # Compute score
-    metrics = compute_metrics(
+    # Use engine-computed metrics (avoids redundant compute_metrics call)
+    metrics = result.metrics_dict or compute_metrics(
         result.equity_curve, total_trades=result.total_trades,
         bars_per_year=result.bars_per_year,
         trade_win_rate=result.trade_win_rate,
         trade_returns=result.trade_returns,
     )
-    score_result = score_strategy(metrics, template_name=payload.score_template)
+    score_result = score_strategy(
+        metrics, template_name=payload.score_template,
+        liquidated=result.liquidated,
+    )
 
     # Save result
     result_id = str(uuid.uuid4())
@@ -376,6 +379,8 @@ def backtest_strategy(
         run_source="lab",
         equity_curve=equity_data,
         signals=signals_data,
+        total_funding_cost=result.total_funding_cost,
+        liquidated=result.liquidated,
     )
 
 
@@ -445,12 +450,16 @@ def compare_strategies(
                 dna, enhanced_df,
                 dfs_by_timeframe=dfs_by_timeframe,
             )
-            metrics = compute_metrics(
+            metrics = bt_result.metrics_dict or compute_metrics(
                 bt_result.equity_curve,
                 total_trades=bt_result.total_trades,
+                bars_per_year=bt_result.bars_per_year,
+                trade_win_rate=bt_result.trade_win_rate,
+                trade_returns=bt_result.trade_returns,
             )
             score_result = score_strategy(
                 metrics, template_name=payload.score_template,
+                liquidated=bt_result.liquidated,
             )
 
             result_id = str(uuid.uuid4())
