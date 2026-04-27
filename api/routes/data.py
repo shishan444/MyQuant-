@@ -448,7 +448,7 @@ def get_ohlcv_by_symbol(
     timeframe: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
-    limit: int = 10000,
+    limit: int = 50000,
     data_dir: Path = Depends(get_data_dir),
 ) -> OhlcvResponse:
     """Get OHLCV data by symbol+timeframe (resolves parquet file directly)."""
@@ -502,7 +502,7 @@ def get_chart_indicators(
     rvol_period: int = 20,
     vwma_enabled: bool = False,
     vwma_period: int = 20,
-    limit: int = 800,
+    limit: int = 50000,
     macd_enabled: bool = False,
     macd_fast: int = 12,
     macd_slow: int = 26,

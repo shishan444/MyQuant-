@@ -46,7 +46,7 @@ export function ohlcvOptions(
       getOhlcvBySymbol(symbol, timeframe, {
         start: dateRange?.start || undefined,
         end: dateRange?.end || undefined,
-        limit: 10000,
+        limit: 50000,
       }),
     enabled: !!symbol && !!timeframe,
     staleTime: 60_000,
@@ -92,7 +92,7 @@ export function chartIndicatorOptions(
         rsi_period: params.rsiPeriod,
         macd_enabled: params.macdEnabled,
         kdj_enabled: params.kdjEnabled,
-        limit: 10000,
+        limit: 50000,
       }),
     enabled: options?.enabled ?? true,
     staleTime: 60_000,
