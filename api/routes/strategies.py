@@ -26,6 +26,7 @@ from api.schemas import (
     DNAModel,
     StrategyCreate,
     StrategyListResponse,
+    StrategyMetrics,
     StrategyResponse,
     StrategyUpdate,
 )
@@ -53,6 +54,13 @@ def _strategy_row_to_response(row: Dict[str, Any]) -> StrategyResponse:
         except (json.JSONDecodeError, Exception):
             dna = None
 
+    metrics = None
+    if row.get("metrics_json"):
+        try:
+            metrics = StrategyMetrics(**json.loads(row["metrics_json"]))
+        except Exception:
+            pass
+
     return StrategyResponse(
         strategy_id=row["strategy_id"],
         name=row.get("name"),
@@ -62,6 +70,7 @@ def _strategy_row_to_response(row: Dict[str, Any]) -> StrategyResponse:
         source=row.get("source", "manual"),
         source_task_id=row.get("source_task_id"),
         best_score=row.get("best_score"),
+        metrics=metrics,
         generation=row.get("generation", 0),
         parent_ids=row.get("parent_ids"),
         tags=row.get("tags"),
@@ -317,25 +326,33 @@ def backtest_strategy(
             for idx, val in eq.items()
         ]
 
-    # Build signals from trades
+    # Build signals from trades (direction-aware: short entry = sell, short exit = buy)
     signals_data = None
     if result.trades_df is not None and len(result.trades_df) > 0:
         signals_data = []
         for _, trade_row in result.trades_df.iterrows():
-            entry_side = "buy"
+            direction_str = str(trade_row.get("Direction", "Long"))
+            if direction_str == "Short":
+                entry_type, exit_type = "sell", "buy"
+                entry_label, exit_label = "卖出开仓", "买入平仓"
+            else:
+                entry_type, exit_type = "buy", "sell"
+                entry_label, exit_label = "买入开仓", "卖出平仓"
+            entry_price = float(trade_row.get("Avg Entry Price", 0))
+            exit_price = float(trade_row.get("Avg Exit Price", 0))
             signals_data.append({
-                "type": entry_side,
+                "type": entry_type,
                 "timestamp": str(trade_row.get("Entry Timestamp", "")),
-                "price": float(trade_row.get("Avg Entry Price", 0)),
+                "price": entry_price,
                 "confidence": 0.8,
-                "reason": f"Entry @ {float(trade_row.get('Avg Entry Price', 0)):.2f}",
+                "reason": f"{entry_label} @ {entry_price:.2f}",
             })
             signals_data.append({
-                "type": "sell",
+                "type": exit_type,
                 "timestamp": str(trade_row.get("Exit Timestamp", "")),
-                "price": float(trade_row.get("Avg Exit Price", 0)),
+                "price": exit_price,
                 "confidence": 0.8,
-                "reason": f"Exit @ {float(trade_row.get('Avg Exit Price', 0)):.2f}",
+                "reason": f"{exit_label} @ {exit_price:.2f}",
             })
 
     return BacktestResponse(
