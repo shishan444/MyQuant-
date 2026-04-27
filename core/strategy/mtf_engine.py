@@ -132,30 +132,36 @@ def compute_proximity_score(
 ) -> pd.Series:
     """Compute proximity score for single-layer fallback (Type B gap B).
 
-    For each bar, score = 1 - min_distance/close * (1/s_pct).
-    Returns 0.0 when price is farther than s% from any level.
+    Vectorized: builds (N, n_levels) price matrix and computes distances
+    via numpy broadcasting.
     """
     if not price_levels or s_pct <= 0:
         return pd.Series(0.0, index=current_price.index)
 
     n = len(current_price)
-    scores = np.zeros(n)
+    price_vals = current_price.values
 
-    for bar_idx in range(n):
-        price = current_price.iloc[bar_idx]
-        if price <= 0:
-            continue
-        min_rel_dist = float("inf")
-        for level_series in price_levels:
-            level = level_series.iloc[bar_idx] if bar_idx < len(level_series) else price
-            if np.isnan(level) or level <= 0:
-                continue
-            rel_dist = abs(price - level) / price
-            min_rel_dist = min(min_rel_dist, rel_dist)
-        if min_rel_dist <= s_pct:
-            scores[bar_idx] = max(0.0, 1.0 - min_rel_dist / s_pct)
-        else:
-            scores[bar_idx] = 0.0
+    # Build (n, n_levels) matrix of level values
+    level_arrays = [lv.values[:n] for lv in price_levels]
+    level_matrix = np.column_stack(level_arrays)
+
+    # Broadcasting: (n, 1) vs (n, n_levels)
+    price_broadcast = price_vals[:, np.newaxis]
+    safe_price = np.where(price_broadcast > 0, price_broadcast, 1.0)
+    rel_dists = np.abs(price_broadcast - level_matrix) / safe_price
+
+    # NaN levels -> infinite distance
+    rel_dists = np.where(np.isnan(level_matrix), np.inf, rel_dists)
+
+    # Min distance per bar
+    min_rel_dist = np.nanmin(rel_dists, axis=1)
+
+    # Score: 1 - min_dist/s_pct if within range, else 0
+    scores = np.where(
+        (min_rel_dist <= s_pct) & (price_vals > 0),
+        np.maximum(0.0, 1.0 - min_rel_dist / s_pct),
+        0.0,
+    )
 
     return pd.Series(scores, index=current_price.index)
 
@@ -454,22 +460,29 @@ def synthesize_cross_layer(
             non_exec_price_levels.append((tf, lr.price_levels))
 
     if len(non_exec_price_levels) >= 2:
-        # Per-bar confluence computation
+        # Per-bar confluence computation with pre-extracted numpy arrays
         scores = np.zeros(n)
+        exec_atr_vals = exec_atr.values
+        exec_close_vals = exec_close.values
+        # Pre-extract level numpy arrays to avoid per-bar .iloc[] overhead
+        level_arrays_by_tf = []
+        for tf, levels in non_exec_price_levels:
+            level_arrays_by_tf.append([lv.values for lv in levels])
+
         for bar_idx in range(n):
-            s_pct = compute_s_pct(exec_atr.iloc[bar_idx], exec_close.iloc[bar_idx], proximity_mult)
+            s_pct = compute_s_pct(exec_atr_vals[bar_idx], exec_close_vals[bar_idx], proximity_mult)
             layer_zones = []
-            for tf, levels in non_exec_price_levels:
+            for level_vals_list in level_arrays_by_tf:
                 zones = []
-                for level_series in levels:
-                    if bar_idx < len(level_series) and not np.isnan(level_series.iloc[bar_idx]):
-                        zone = build_price_zone(level_series.iloc[bar_idx], s_pct)
+                for lv in level_vals_list:
+                    if bar_idx < len(lv) and not np.isnan(lv[bar_idx]):
+                        zone = build_price_zone(lv[bar_idx], s_pct)
                         zones.append(zone)
                 if zones:
                     layer_zones.append(zones)
             scores[bar_idx] = compute_confluence_score(
-                layer_zones, exec_close.iloc[bar_idx],
-                max_zone_width=exec_close.iloc[bar_idx] * s_pct * 2 if s_pct > 0 else 1.0,
+                layer_zones, exec_close_vals[bar_idx],
+                max_zone_width=exec_close_vals[bar_idx] * s_pct * 2 if s_pct > 0 else 1.0,
             )
         confluence_score = pd.Series(scores, index=exec_index)
     elif len(non_exec_price_levels) == 1:
@@ -510,44 +523,48 @@ def synthesize_cross_layer(
     # When price confluence is 0 because structure/zone layers lack price_levels,
     # use momentum directional agreement as confluence score.
     if confluence_score.eq(0.0).all() and len(non_exec_momenta) >= 2:
-        momentum_confs = np.zeros(n)
         mom_matrix = np.column_stack([
             m.values[:n] for m in non_exec_momenta
         ])
-        for bar_idx in range(n):
-            vals = mom_matrix[bar_idx]
-            valid = vals[~np.isnan(vals)]
-            if len(valid) < 2:
-                continue
-            # Agreement: proportion of momenta with same sign as the majority
-            pos_count = (valid > 0).sum()
-            neg_count = (valid < 0).sum()
-            majority = max(pos_count, neg_count)
-            agreement = majority / len(valid)
-            # Only score if majority direction is clear (>50%)
-            if agreement > 0.5:
-                # Scale: full agreement=1.0, bare majority=0.3
-                momentum_confs[bar_idx] = 0.3 + 0.7 * (agreement - 0.5) / 0.5
-        momentum_confluence = pd.Series(momentum_confs, index=exec_index)
-        # Use momentum confluence as fallback
-        confluence_score = momentum_confluence
+        valid_mask = ~np.isnan(mom_matrix)
+        valid_counts = valid_mask.sum(axis=1).astype(float)
+
+        pos_counts = np.where(valid_mask, mom_matrix > 0, False).sum(axis=1).astype(float)
+        neg_counts = np.where(valid_mask, mom_matrix < 0, False).sum(axis=1).astype(float)
+        majority = np.maximum(pos_counts, neg_counts)
+
+        agreement = np.where(valid_counts >= 2, majority / valid_counts, 0.0)
+
+        # Scale: full agreement=1.0, bare majority=0.3
+        momentum_confs = np.where(
+            (agreement > 0.5) & (valid_counts >= 2),
+            0.3 + 0.7 * (agreement - 0.5) / 0.5,
+            0.0,
+        )
+        confluence_score = pd.Series(momentum_confs, index=exec_index)
     elif confluence_score.eq(0.0).all() and len(non_exec_momenta) == 1:
         # Single non-exec layer with momentum only:
-        # Use momentum strength as confluence proxy.
+        # Use momentum strength as confluence proxy (vectorized).
         mom_series = non_exec_momenta[0].values[:n]
         mom_abs_max = np.nanmax(np.abs(mom_series))
         if mom_abs_max > 0:
-            single_mom_confs = np.zeros(n)
             normalized = np.abs(mom_series) / mom_abs_max
-            for bar_idx in range(n):
-                if np.isnan(mom_series[bar_idx]):
-                    continue
-                if dna.risk_genes.direction == "long" and mom_series[bar_idx] > 0:
-                    single_mom_confs[bar_idx] = normalized[bar_idx] * 0.5
-                elif dna.risk_genes.direction == "short" and mom_series[bar_idx] < 0:
-                    single_mom_confs[bar_idx] = normalized[bar_idx] * 0.5
-                elif dna.risk_genes.direction == "mixed" and mom_series[bar_idx] != 0:
-                    single_mom_confs[bar_idx] = normalized[bar_idx] * 0.3
+            direction = dna.risk_genes.direction
+            if direction == "long":
+                direction_mask = mom_series > 0
+                scale = 0.5
+            elif direction == "short":
+                direction_mask = mom_series < 0
+                scale = 0.5
+            else:
+                direction_mask = mom_series != 0
+                scale = 0.3
+            not_nan = ~np.isnan(mom_series)
+            single_mom_confs = np.where(
+                direction_mask & not_nan,
+                normalized * scale,
+                0.0,
+            )
             confluence_score = pd.Series(single_mom_confs, index=exec_index)
 
     return MTFSynthesis(

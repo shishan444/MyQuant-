@@ -88,12 +88,12 @@ def evaluate_condition(
         window = condition.get("window", 5)
         inner = condition.get("inner", {})
         inner_signal = _evaluate_inner_condition(indicator_series, close_series, inner, df)
-        return inner_signal.rolling(window=window, min_periods=1).apply(any, raw=False).fillna(False).astype(bool)
+        return (inner_signal.astype(float).rolling(window=window, min_periods=1).sum() > 0).fillna(False).astype(bool)
     elif cond_type == "lookback_all":
         window = condition.get("window", 5)
         inner = condition.get("inner", {})
         inner_signal = _evaluate_inner_condition(indicator_series, close_series, inner, df)
-        return inner_signal.rolling(window=window, min_periods=1).apply(all, raw=False).fillna(False).astype(bool)
+        return (inner_signal.astype(float).rolling(window=window, min_periods=window).sum() == window).fillna(False).astype(bool)
     # ── Phase 4: support/resistance conditions ──
     elif cond_type == "touch_bounce":
         return _eval_touch_bounce(indicator_series, close_series, df, condition)
@@ -257,6 +257,16 @@ class _SimpleGene:
         self.field_name = field_name
 
 
+def _empty_signal_set(df: pd.DataFrame) -> SignalSet:
+    """Return an all-False SignalSet matching the DataFrame index."""
+    return SignalSet(
+        entries=pd.Series(False, index=df.index),
+        exits=pd.Series(False, index=df.index),
+        adds=pd.Series(False, index=df.index),
+        reduces=pd.Series(False, index=df.index),
+    )
+
+
 def combine_signals(signal_list: list[pd.Series], logic: str) -> pd.Series:
     """Combine multiple boolean Series with AND or OR logic."""
     if not signal_list:
@@ -276,11 +286,22 @@ def combine_signals(signal_list: list[pd.Series], logic: str) -> pd.Series:
         return signal_list[0].copy()
 
 
-def _get_indicator_column(df: pd.DataFrame, gene) -> pd.Series:
+_indicator_column_cache: dict = {}
+
+
+def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
     """Resolve an indicator column from the enhanced DataFrame.
 
     Tries exact name match first, then prefix-based search.
+    Results are cached for repeated lookups within the same generation.
     """
+    cache = _cache if _cache is not None else _indicator_column_cache
+    cache_key = (id(df), gene.indicator,
+                 tuple(sorted(gene.params.items())),
+                 gene.field_name)
+    if cache_key in cache:
+        return cache[cache_key]
+
     indicator = gene.indicator
     params = gene.params
 
@@ -395,14 +416,26 @@ def _get_indicator_column(df: pd.DataFrame, gene) -> pd.Series:
             raise ValueError(f"Cannot find column for indicator {indicator}")
 
     if col in df.columns:
-        return df[col]
+        result = df[col]
+        cache[cache_key] = result
+        return result
 
     # Fallback: prefix match
     matches = [c for c in df.columns if col in c]
     if matches:
-        return df[matches[0]]
+        result = df[matches[0]]
+        cache[cache_key] = result
+        return result
 
     raise ValueError(f"Column '{col}' not found in DataFrame. Available: {list(df.columns)}")
+
+
+def clear_indicator_cache() -> None:
+    """Clear the indicator column cache.
+
+    Should be called at the start of each generation to avoid stale references.
+    """
+    _indicator_column_cache.clear()
 
 
 def evaluate_layer(
@@ -490,27 +523,36 @@ def _resample_pulse(
 ) -> pd.Series:
     """Resample pulse signal to target index using time-window aggregation.
 
-    Execution layer signals are single-bar triggers. Instead of exact
-    timestamp matching (which loses most signals), we aggregate: for each
-    target bar, if any source bar within its time window is True, the
-    target bar is True.
+    Vectorized implementation using np.searchsorted. For each target bar,
+    if any source bar within its time window is True, the target bar is True.
     """
     if signal.empty or len(target_index) == 0:
         return pd.Series(False, index=target_index)
 
-    result = pd.Series(False, index=target_index)
+    true_timestamps = signal.index[signal.values.astype(bool)]
+    if len(true_timestamps) == 0:
+        return pd.Series(False, index=target_index)
 
-    # Build target bar boundaries for window membership
-    for i in range(len(target_index)):
-        bar_start = target_index[i]
-        bar_end = target_index[i + 1] if i + 1 < len(target_index) else bar_start + pd.Timedelta(days=1)
+    n = len(target_index)
+    bar_starts = target_index.values.astype("int64")
+    bar_ends = np.empty(n, dtype="int64")
+    bar_ends[:-1] = bar_starts[1:]
+    bar_ends[-1] = bar_starts[-1] + int(86400e9)  # 1 day in nanoseconds
 
-        # Check if any source signal falls within this target bar's window
-        mask = (signal.index >= bar_start) & (signal.index < bar_end)
-        if signal[mask].any():
-            result.iloc[i] = True
+    ts_vals = true_timestamps.values.astype("int64")
 
-    return result.astype(bool)
+    # searchsorted gives insertion point; subtract 1 to get bar index
+    indices = np.searchsorted(bar_starts, ts_vals, side="right") - 1
+
+    valid = (indices >= 0) & (indices < n)
+    result = np.zeros(n, dtype=bool)
+    if valid.any():
+        valid_idx = indices[valid]
+        valid_ts = ts_vals[valid]
+        within_bar = valid_ts < bar_ends[valid_idx]
+        result[valid_idx[within_bar]] = True
+
+    return pd.Series(result, index=target_index)
 
 
 def dna_to_signals(
@@ -748,3 +790,129 @@ def dna_to_signal_set(
         adds=adds,
         reduces=reduces,
     )
+
+
+def _gene_signature(gene) -> tuple:
+    """Create a hashable signature for a signal gene for deduplication."""
+    return (
+        gene.indicator,
+        tuple(sorted(gene.params.items())),
+        gene.role.value if hasattr(gene.role, "value") else str(gene.role),
+        gene.field_name,
+        tuple(sorted(gene.condition.items())) if gene.condition else (),
+    )
+
+
+def batch_signal_sets(
+    individuals: list[StrategyDNA],
+    enhanced_df: pd.DataFrame,
+    dfs_by_timeframe: dict | None = None,
+) -> list[SignalSet]:
+    """Batch-compute signal sets for a population with gene-level deduplication.
+
+    Instead of computing each individual's signals independently, this function:
+    1. Collects all unique gene signatures across the population
+    2. Evaluates each unique gene condition once
+    3. Assembles per-individual SignalSets from cached results
+
+    MTF individuals fall back to dna_to_signal_set() since their signal
+    computation involves cross-layer synthesis.
+
+    Args:
+        individuals: List of StrategyDNA to evaluate.
+        enhanced_df: Enhanced DataFrame with indicators.
+        dfs_by_timeframe: Multi-timeframe data dict (optional).
+
+    Returns:
+        List[SignalSet] in the same order as individuals.
+    """
+    if not individuals:
+        return []
+
+    # Step 1: Evaluate all unique gene conditions
+    gene_results: dict[tuple, pd.Series] = {}
+
+    for dna in individuals:
+        # MTF individuals use the full dna_to_signal_set path
+        if dna.is_mtf and dfs_by_timeframe is not None:
+            continue
+
+        for gene in dna.signal_genes:
+            sig = _gene_signature(gene)
+            if sig in gene_results:
+                continue
+
+            try:
+                indicator_col = _get_indicator_column(enhanced_df, gene)
+                signal = evaluate_condition(
+                    indicator_col, enhanced_df["close"], gene.condition,
+                    df=enhanced_df,
+                )
+                gene_results[sig] = signal.fillna(False)
+            except (ValueError, KeyError):
+                gene_results[sig] = pd.Series(False, index=enhanced_df.index)
+
+    # Step 2: Assemble per-individual SignalSets
+    results: list[SignalSet] = []
+    for dna in individuals:
+        # MTF: use full path
+        if dna.is_mtf and dfs_by_timeframe is not None:
+            try:
+                results.append(dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe))
+            except Exception:
+                results.append(_empty_signal_set(enhanced_df))
+            continue
+
+        # Single-TF: assemble from cached gene results
+        entry_triggers, entry_guards = [], []
+        exit_triggers, exit_guards = [], []
+        add_triggers, add_guards = [], []
+        reduce_triggers, reduce_guards = [], []
+
+        for gene in dna.signal_genes:
+            sig = _gene_signature(gene)
+            signal = gene_results.get(sig, pd.Series(False, index=enhanced_df.index))
+
+            if gene.role == SignalRole.ENTRY_TRIGGER:
+                entry_triggers.append(signal)
+            elif gene.role == SignalRole.ENTRY_GUARD:
+                entry_guards.append(signal)
+            elif gene.role == SignalRole.EXIT_TRIGGER:
+                exit_triggers.append(signal)
+            elif gene.role == SignalRole.EXIT_GUARD:
+                exit_guards.append(signal)
+            elif gene.role == SignalRole.ADD_TRIGGER:
+                add_triggers.append(signal)
+            elif gene.role == SignalRole.ADD_GUARD:
+                add_guards.append(signal)
+            elif gene.role == SignalRole.REDUCE_TRIGGER:
+                reduce_triggers.append(signal)
+            elif gene.role == SignalRole.REDUCE_GUARD:
+                reduce_guards.append(signal)
+
+        all_entry = entry_triggers + entry_guards
+        entries = combine_signals(all_entry, dna.logic_genes.entry_logic) if all_entry else pd.Series(False, index=enhanced_df.index)
+
+        all_exit = exit_triggers + exit_guards
+        exits = combine_signals(all_exit, dna.logic_genes.exit_logic) if all_exit else pd.Series(False, index=enhanced_df.index)
+
+        add_logic = getattr(dna.logic_genes, "add_logic", "AND") or "AND"
+        reduce_logic = getattr(dna.logic_genes, "reduce_logic", "AND") or "AND"
+
+        all_add = add_triggers + add_guards
+        adds = combine_signals(all_add, add_logic) if all_add else pd.Series(False, index=enhanced_df.index)
+
+        all_reduce = reduce_triggers + reduce_guards
+        reduces = combine_signals(all_reduce, reduce_logic) if all_reduce else pd.Series(False, index=enhanced_df.index)
+
+        both = entries & exits
+        entries = entries & ~both
+
+        results.append(SignalSet(
+            entries=entries,
+            exits=exits,
+            adds=adds,
+            reduces=reduces,
+        ))
+
+    return results

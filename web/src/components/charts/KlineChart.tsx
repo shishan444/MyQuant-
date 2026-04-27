@@ -314,7 +314,11 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       height: mainHeight,
       rightPriceScale: {
         ...DARK_CHART_THEME.rightPriceScale,
-        autoScale: false,
+        autoScale: true,
+        scaleMargins: {
+          top: 0.15,
+          bottom: 0.10,
+        },
       },
     });
 
@@ -382,9 +386,8 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
       setLegendValues(vals);
     });
 
-    // Note: autoScale is disabled to prevent wrong price range.
-    // Price range is manually set on initial load and via reset button.
-    // User can freely zoom/pan the price axis without auto-reset.
+    // autoScale + scaleMargins ensures signal markers are always visible
+    // fitContent() handles price range including all markers
 
     return () => {
       resizeObserver.disconnect();
@@ -636,16 +639,6 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
     // -- Fit content and set price range --
     if (!initialFitDoneRef.current && memoizedCandles.length > 0) {
       mainChart.timeScale().fitContent();
-      // Compute tight price range from candle data
-      const allPrices = memoizedCandles.flatMap((c) => [c.high, c.low]);
-      const minP = Math.min(...allPrices);
-      const maxP = Math.max(...allPrices);
-      const priceRange = maxP - minP;
-      const margin = priceRange * 0.08;
-      mainChart.priceScale("right").setVisibleRange({
-        from: minP - margin,
-        to: maxP + margin,
-      });
       initialFitDoneRef.current = true;
     }
   }, [memoizedCandles, memoizedIndicators, memoizedSignals, memoizedTriggers, memoizedBollData, memoizedVolumeData, memoizedMtfIndicators, chartSettings.boll]);
@@ -883,16 +876,6 @@ const KlineChart = forwardRef<KlineChartHandle, KlineChartProps>(function KlineC
             const chart = mainChartRef.current;
             if (!chart) return;
             chart.timeScale().fitContent();
-            // Re-fit price range after reset
-            const candles = candleSeriesRef.current?.data?.();
-            if (candles && candles.length > 0) {
-              const prices = candles.flatMap((c: { high: number; low: number }) => [c.high, c.low]);
-              const minP = Math.min(...prices);
-              const maxP = Math.max(...prices);
-              const range = maxP - minP;
-              const margin = range * 0.08;
-              chart.priceScale("right").setVisibleRange({ from: minP - margin, to: maxP + margin });
-            }
           }}
           onFullscreen={handleFullscreen}
         />

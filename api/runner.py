@@ -784,7 +784,13 @@ class EvolutionRunner(threading.Thread):
 
         except Exception:
             # Fallback: zero score (not random noise)
+            logger.warning(
+                "evaluate_dna failed for %s",
+                getattr(individual, 'strategy_id', 'unknown'),
+                exc_info=True,
+            )
             diagnostics["score"] = 0.0
+            diagnostics["error"] = True
             return diagnostics
 
     def _evaluate_population(
@@ -803,7 +809,7 @@ class EvolutionRunner(threading.Thread):
         """
         try:
             from core.backtest.engine import BacktestEngine
-            from core.strategy.executor import dna_to_signal_set
+            from core.strategy.executor import dna_to_signal_set, _empty_signal_set, clear_indicator_cache
             from core.scoring.scorer import score_strategy
 
             if enhanced_df is None:
@@ -822,19 +828,25 @@ class EvolutionRunner(threading.Thread):
                 if direction != "mixed":
                     ind.risk_genes.direction = direction
 
-            # Compute signal sets for all individuals
-            signal_sets = []
-            for ind in population:
-                sig = dna_to_signal_set(ind, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
-                signal_sets.append(sig)
+            # Clear indicator cache at start of each generation
+            clear_indicator_cache()
 
-            # Batch backtest
+            # Batch backtest with built-in signal computation
             bt = BacktestEngine()
-            bt_results = bt.batch_run(
-                population, enhanced_df,
-                dfs_by_timeframe=dfs_by_timeframe,
-                signal_sets=signal_sets,
-            )
+            try:
+                bt_results = bt.batch_run(
+                    population, enhanced_df,
+                    dfs_by_timeframe=dfs_by_timeframe,
+                )
+            except Exception:
+                logger.warning("batch_run failed, falling back to per-individual evaluation", exc_info=True)
+                return [
+                    self._evaluate_dna(
+                        ind, task_row, leverage, direction,
+                        enhanced_df=enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
+                    ).get("score", 0.0)
+                    for ind in population
+                ]
 
             template_name = task_row.get("score_template", "profit_first")
             scores = []
@@ -860,6 +872,7 @@ class EvolutionRunner(threading.Thread):
 
         except Exception:
             # Fallback to per-individual evaluation
+            logger.warning("_evaluate_population unexpected error, falling back", exc_info=True)
             return [
                 self._evaluate_dna(
                     ind, task_row, leverage, direction,

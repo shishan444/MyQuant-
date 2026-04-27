@@ -14,7 +14,7 @@ from vectorbt.portfolio.enums import NoOrder
 from vectorbt.portfolio import nb as vbt_nb
 
 from core.strategy.dna import StrategyDNA
-from core.strategy.executor import dna_to_signals, dna_to_signal_set
+from core.strategy.executor import dna_to_signals, dna_to_signal_set, batch_signal_sets, clear_indicator_cache
 
 
 @dataclass
@@ -555,10 +555,7 @@ class BacktestEngine:
         if signal_sets is not None:
             sig_sets = signal_sets
         else:
-            sig_sets = [
-                dna_to_signal_set(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
-                for dna in individuals
-            ]
+            sig_sets = batch_signal_sets(individuals, enhanced_df, dfs_by_timeframe)
 
         # 2. Stack signals into (N, M) matrices
         entries_parts = []
