@@ -325,7 +325,7 @@ function MetricsPanel({ result }: { result: BacktestResult }) {
       )}
       {result.liquidated && (
         <div className="mt-1 text-[11px] text-red-400">
-          策略触发爆仓，资金曲线已清零
+          策略触发爆仓，仓位已强制平仓
         </div>
       )}
     </div>
