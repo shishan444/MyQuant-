@@ -63,6 +63,7 @@ export interface Strategy {
   source: string;
   source_task_id?: string;
   best_score?: number;
+  metrics?: StrategyMetrics | null;
   generation: number;
   parent_ids?: string;
   tags?: string;

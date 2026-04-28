@@ -62,3 +62,16 @@ export function useDeleteStrategy() {
     onError: (err) => toast.error(`删除失败: ${err.message}`),
   });
 }
+
+export function useUpdateStrategy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: Parameters<typeof api.updateStrategy>[1] }) =>
+      api.updateStrategy(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: strategiesKeys.all });
+      toast.success("策略已更新");
+    },
+    onError: (err) => toast.error(`更新失败: ${err.message}`),
+  });
+}

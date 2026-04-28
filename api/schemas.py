@@ -142,6 +142,15 @@ class StrategyCreate(BaseModel):
     notes: Optional[str] = None
 
 
+class StrategyMetrics(BaseModel):
+    annual_return: Optional[float] = None
+    sharpe_ratio: Optional[float] = None
+    max_drawdown: Optional[float] = None
+    win_rate: Optional[float] = None
+    total_trades: Optional[int] = None
+    profit_factor: Optional[float] = None
+
+
 class StrategyResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -153,6 +162,7 @@ class StrategyResponse(BaseModel):
     source: str = "manual"
     source_task_id: Optional[str] = None
     best_score: Optional[float] = None
+    metrics: Optional[StrategyMetrics] = None
     generation: int = 0
     parent_ids: Optional[str] = None
     tags: Optional[str] = None
