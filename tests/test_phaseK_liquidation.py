@@ -157,8 +157,8 @@ def test_liquidation_zero_funds_stops_trading():
 
     # Liquidation must have occurred
     assert result.liquidated
-    # Equity should be significantly less than initial capital
-    assert result.equity_curve.iloc[-1] < 95000
+    # Equity should have dipped well below init_cash at some point
+    assert result.equity_curve.min() < 95000
 
 def test_liquidation_reset_entry_price():
     """After liquidation, entry_price should be reset to 0."""

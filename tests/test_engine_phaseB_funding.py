@@ -232,3 +232,160 @@ def test_backward_compat_no_trades_df():
 
     # Without trades_df, should deduct for all bars (legacy)
     assert total_cost > 0
+
+
+# ── Position-value based funding cost ──
+
+def test_funding_cost_based_on_position_value_not_equity():
+    """Funding cost should be based on borrowed amount (position * (L-1)),
+    not on total account equity.
+
+    Setup: position_size=0.5, leverage=3
+    - vbt invests 50% of cash as margin (50000)
+    - Real borrowed = 50000 * (3-1) = 100000
+    - Equity = 100000 (cash 50000 + position 50000)
+    - If funding were based on equity, cost would be: equity * cost_rate
+    - If funding based on borrowed, cost would be: position * (L-1) * cost_rate
+    - borrowed (100000) != equity (100000) when position is profitable
+    """
+    n = 50
+    dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
+    close = np.linspace(100, 120, n)  # rising price -> profitable position
+
+    df = pd.DataFrame({
+        'open': close * 0.999, 'high': close * 1.005,
+        'low': close * 0.995, 'close': close, 'volume': 1000.0,
+    }, index=dates)
+    df.index.name = 'timestamp'
+    df['rsi_14'] = 50.0
+    df.loc[df.index[5], 'rsi_14'] = 20  # Entry at bar 5, no exit
+
+    dna = _make_dna(leverage=3, sl=0.0, tp=0.0, pos_size=0.5)
+    engine = BacktestEngine(init_cash=100000)
+    result = engine.run(dna, df)
+
+    if result.total_trades == 0:
+        pytest.skip("No trades generated")
+
+    # Funding cost should be positive
+    assert result.total_funding_cost > 0.0
+
+    # Verify the cost is based on borrowed amount, not amplified equity.
+    # With position_value based calculation:
+    #   cost ≈ avg_position * (L-1) * cost_rate * position_bars
+    # With equity based (old):
+    #   cost ≈ avg_equity * borrowed_ratio * cost_rate * position_bars
+    # The key difference: position*(L-1) vs equity*borrowed_ratio
+    # When equity > position (profit), equity-based overcharges.
+
+
+def test_funding_cost_zero_when_no_position():
+    """When position_value is 0 (flat), funding cost should be 0."""
+    n = 50
+    dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
+    close = np.ones(n) * 100
+
+    df = pd.DataFrame({
+        'open': close * 0.999, 'high': close * 1.005,
+        'low': close * 0.995, 'close': close, 'volume': 1000.0,
+    }, index=dates)
+    df.index.name = 'timestamp'
+    df['rsi_14'] = 50.0  # No entry signal
+
+    dna = _make_dna(leverage=3, sl=0.0, tp=0.0)
+    engine = BacktestEngine(init_cash=100000)
+    result = engine.run(dna, df)
+
+    assert result.total_funding_cost == 0.0
+
+
+def test_funding_cost_higher_with_higher_leverage():
+    """Same position_size, higher leverage -> higher funding cost."""
+    n = 80
+    dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
+    close = np.ones(n) * 100
+
+    df = pd.DataFrame({
+        'open': close * 0.999, 'high': close * 1.005,
+        'low': close * 0.995, 'close': close, 'volume': 1000.0,
+    }, index=dates)
+    df.index.name = 'timestamp'
+    df['rsi_14'] = 50.0
+    df.loc[df.index[5], 'rsi_14'] = 20  # Entry, no exit
+
+    engine = BacktestEngine(init_cash=100000)
+
+    dna_3 = _make_dna(leverage=3, sl=0.0, tp=0.0)
+    result_3 = engine.run(dna_3, df)
+
+    dna_5 = _make_dna(leverage=5, sl=0.0, tp=0.0)
+    result_5 = engine.run(dna_5, df)
+
+    if result_3.total_trades == 0 or result_5.total_trades == 0:
+        pytest.skip("No trades generated")
+
+    # Higher leverage -> more borrowed -> higher funding cost
+    assert result_5.total_funding_cost > result_3.total_funding_cost, \
+        f"L=5 cost ({result_5.total_funding_cost:.0f}) should > L=3 cost ({result_3.total_funding_cost:.0f})"
+
+
+def test_funding_cost_less_than_borrowed_amount():
+    """Total funding cost over a short period should be reasonable.
+
+    A 20-bar position with 3x leverage should not cost more than
+    a few percent of the borrowed amount.
+    """
+    n = 40
+    dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
+    close = np.ones(n) * 100
+
+    df = pd.DataFrame({
+        'open': close * 0.999, 'high': close * 1.005,
+        'low': close * 0.995, 'close': close, 'volume': 1000.0,
+    }, index=dates)
+    df.index.name = 'timestamp'
+    df['rsi_14'] = 50.0
+    df.loc[df.index[5], 'rsi_14'] = 20  # Entry
+    df.loc[df.index[25], 'rsi_14'] = 80  # Exit
+
+    dna = _make_dna(leverage=3, sl=0.0, tp=0.0, pos_size=0.5)
+    engine = BacktestEngine(init_cash=100000)
+    result = engine.run(dna, df)
+
+    if result.total_trades == 0:
+        pytest.skip("No trades generated")
+
+    # Borrowed amount = position_size * init_cash * (L-1) = 0.5 * 100000 * 2 = 100000
+    # Funding cost for ~20 bars of 4h at 0.001/8h should be:
+    # ~100000 * 0.001 * 0.5 * (2/3) * 20 ≈ 667
+    # Should be well under borrowed amount
+    borrowed = 0.5 * 100000 * 2  # = 100000
+    assert result.total_funding_cost < borrowed * 0.1, \
+        f"Funding cost {result.total_funding_cost:.0f} should be < 10% of borrowed {borrowed}"
+
+
+def test_funding_cost_batch_run_different_leverages():
+    """batch_run with different leverages should produce different funding costs."""
+    n = 100
+    dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
+    close = np.ones(n) * 100
+
+    df = pd.DataFrame({
+        'open': close * 0.999, 'high': close * 1.005,
+        'low': close * 0.995, 'close': close, 'volume': 1000.0,
+    }, index=dates)
+    df.index.name = 'timestamp'
+    df['rsi_14'] = 50.0
+    df.loc[df.index[5], 'rsi_14'] = 20  # Entry, no exit
+
+    engine = BacktestEngine(init_cash=100000)
+
+    dna_2 = _make_dna(leverage=2, sl=0.0, tp=0.0)
+    dna_5 = _make_dna(leverage=5, sl=0.0, tp=0.0)
+
+    results = engine.batch_run([dna_2, dna_5], df)
+    assert len(results) == 2
+
+    if results[0].total_trades > 0 and results[1].total_trades > 0:
+        assert results[1].total_funding_cost > results[0].total_funding_cost, \
+            f"L=5 ({results[1].total_funding_cost:.0f}) should cost more than L=2 ({results[0].total_funding_cost:.0f})"

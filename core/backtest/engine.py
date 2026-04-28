@@ -41,13 +41,16 @@ class BacktestResult:
 
 @njit
 def _apply_funding_loop_nb(adjusted: np.ndarray, position_mask: np.ndarray,
-                           cost_rate: float) -> float:
+                           cost_rate: float,
+                           position_values: np.ndarray | None = None) -> float:
     """Numba-compiled inner loop for funding cost deduction.
 
     Args:
         adjusted: Float64 equity values (modified in-place).
         position_mask: Bool array, True when position is open.
         cost_rate: Per-bar funding cost rate.
+        position_values: Float64 array of position values. If provided,
+            funding is based on position_value instead of total equity.
 
     Returns:
         Total funding cost deducted.
@@ -55,7 +58,8 @@ def _apply_funding_loop_nb(adjusted: np.ndarray, position_mask: np.ndarray,
     total_cost = 0.0
     for i in range(1, len(adjusted)):
         if position_mask[i]:
-            cost = adjusted[i - 1] * cost_rate
+            base = position_values[i - 1] if position_values is not None else adjusted[i - 1]
+            cost = base * cost_rate
             total_cost += cost
             adjusted[i] -= cost
     return total_cost
@@ -64,6 +68,7 @@ def _apply_funding_loop_nb(adjusted: np.ndarray, position_mask: np.ndarray,
 def _apply_funding_costs(
     equity_curve: pd.Series, leverage: int, timeframe: str,
     trades_df: Optional[pd.DataFrame] = None,
+    position_values: Optional[np.ndarray] = None,
 ) -> tuple[pd.Series, float]:
     """Deduct leveraged funding costs only while position is open.
 
@@ -73,6 +78,9 @@ def _apply_funding_costs(
         timeframe: Bar timeframe string.
         trades_df: Trade records with 'Entry Timestamp' and 'Exit Timestamp'.
                    If None, costs are deducted for all bars (legacy behavior).
+        position_values: Array of per-bar position values. If provided,
+            funding cost is based on position_value (actual borrowed amount)
+            instead of total equity.
     """
     if leverage <= 1:
         return equity_curve, 0.0
@@ -107,8 +115,73 @@ def _apply_funding_costs(
     # else: trades_df provided but empty -> no funding costs (correct)
 
     adjusted = equity_curve.values.astype(np.float64).copy()
-    total_cost = _apply_funding_loop_nb(adjusted, position_mask, cost_rate)
+
+    # Prepare position_values for funding calculation
+    pv_for_funding = None
+    if position_values is not None:
+        pv_for_funding = position_values.astype(np.float64)
+
+    total_cost = _apply_funding_loop_nb(adjusted, position_mask, cost_rate, pv_for_funding)
     return pd.Series(adjusted, index=equity_curve.index), total_cost
+
+
+def _apply_leverage_to_equity(
+    equity_curve: pd.Series,
+    trades_df: pd.DataFrame | None,
+    leverage: float,
+    init_cash: float,
+) -> pd.Series:
+    """Amplify equity curve to reflect leverage effect.
+
+    vbt runs with position_size only (no leverage). This function
+    post-processes the curve so gains/losses are amplified by leverage.
+    """
+    if leverage <= 1 or trades_df is None or len(trades_df) == 0:
+        return equity_curve
+
+    eq_vals = equity_curve.values.astype(np.float64)
+    result = np.empty(len(eq_vals), dtype=np.float64)
+
+    # Build sorted trade intervals (entry_idx, exit_idx)
+    intervals = []
+    for _, trade in trades_df.iterrows():
+        entry_ts = trade.get("Entry Timestamp")
+        exit_ts = trade.get("Exit Timestamp")
+        if entry_ts is None:
+            continue
+        if pd.isna(exit_ts) or exit_ts is None:
+            exit_ts = equity_curve.index[-1]
+        mask = (equity_curve.index >= entry_ts) & (equity_curve.index <= exit_ts)
+        indices = np.where(mask)[0]
+        if len(indices) == 0:
+            continue
+        intervals.append((int(indices[0]), int(indices[-1])))
+
+    intervals.sort()
+
+    # Apply amplification per trade block
+    leveraged_base = float(init_cash)
+    prev_end = 0
+
+    for entry_idx, exit_idx in intervals:
+        # Flat region before this trade
+        if prev_end < entry_idx:
+            result[prev_end:entry_idx] = leveraged_base
+
+        # Amplify during position
+        vbt_entry_eq = eq_vals[entry_idx]
+        result[entry_idx:exit_idx + 1] = (
+            leveraged_base + leverage * (eq_vals[entry_idx:exit_idx + 1] - vbt_entry_eq)
+        )
+
+        leveraged_base = float(result[exit_idx])
+        prev_end = exit_idx + 1
+
+    # Fill remaining flat region
+    if prev_end < len(result):
+        result[prev_end:] = leveraged_base
+
+    return pd.Series(result, index=equity_curve.index)
 
 
 @njit
@@ -152,6 +225,9 @@ def order_func_nb(c, entry_price, is_liquidated,
     leverage = leverages[col]
     sl_stop = sl_stops[col]
     tp_stop = tp_stops[col]
+    # Scale fee/slippage by leverage so vbt charges on notional value
+    effective_fee = fee * leverage
+    effective_slippage = slippage * leverage
 
     # Already liquidated -> force close any remaining position, then allow re-entry if funds remain
     if is_liquidated[col] > 0.5:
@@ -159,8 +235,8 @@ def order_func_nb(c, entry_price, is_liquidated,
             return vbt_nb.order_nb(
                 size=np.float64(-c.position_now),
                 size_type=np.int64(0),
-                fees=fee,
-                slippage=slippage,
+                fees=effective_fee,
+                slippage=effective_slippage,
             )
         # Position closed after liquidation, check if we can re-enter
         # If no entry signal, stay out; if entry signal, check funds below
@@ -180,15 +256,15 @@ def order_func_nb(c, entry_price, is_liquidated,
 
     # Liquidation check BEFORE SL/TP (for leveraged positions)
     if leverage > 1.0 and c.position_now != 0.0:
-        maintenance = c.init_cash[0] * (1.0 - 0.9 / leverage)
+        maintenance = c.init_cash[0] * (1.0 - 0.9 / (leverage * leverage))
         if c.value_now < maintenance:
             is_liquidated[col] = 1.0
             entry_price[col] = 0.0
             return vbt_nb.order_nb(
                 size=np.float64(-c.position_now),
                 size_type=np.int64(0),
-                fees=fee,
-                slippage=slippage,
+                fees=effective_fee,
+                slippage=effective_slippage,
             )
 
     # Stop-Loss / Take-Profit check using HIGH/LOW
@@ -207,8 +283,8 @@ def order_func_nb(c, entry_price, is_liquidated,
                 return vbt_nb.order_nb(
                     size=np.float64(-c.position_now),
                     size_type=np.int64(0),
-                    fees=fee,
-                    slippage=slippage,
+                    fees=effective_fee,
+                    slippage=effective_slippage,
                 )
             # TP: bar's HIGH touches TP level
             if tp_stop > 0.0 and bar_high >= tp_level:
@@ -216,8 +292,8 @@ def order_func_nb(c, entry_price, is_liquidated,
                 return vbt_nb.order_nb(
                     size=np.float64(-c.position_now),
                     size_type=np.int64(0),
-                    fees=fee,
-                    slippage=slippage,
+                    fees=effective_fee,
+                    slippage=effective_slippage,
                 )
         else:
             # Short position
@@ -229,8 +305,8 @@ def order_func_nb(c, entry_price, is_liquidated,
                 return vbt_nb.order_nb(
                     size=np.float64(-c.position_now),
                     size_type=np.int64(0),
-                    fees=fee,
-                    slippage=slippage,
+                    fees=effective_fee,
+                    slippage=effective_slippage,
                 )
             # TP: bar's LOW touches TP level
             if tp_stop > 0.0 and bar_low <= tp_level:
@@ -238,8 +314,8 @@ def order_func_nb(c, entry_price, is_liquidated,
                 return vbt_nb.order_nb(
                     size=np.float64(-c.position_now),
                     size_type=np.int64(0),
-                    fees=fee,
-                    slippage=slippage,
+                    fees=effective_fee,
+                    slippage=effective_slippage,
                 )
 
     # Exit signal
@@ -248,8 +324,8 @@ def order_func_nb(c, entry_price, is_liquidated,
         return vbt_nb.order_nb(
             size=np.float64(-c.position_now),
             size_type=np.int64(0),
-            fees=fee,
-            slippage=slippage,
+            fees=effective_fee,
+            slippage=effective_slippage,
         )
 
     # Entry signal
@@ -270,8 +346,8 @@ def order_func_nb(c, entry_price, is_liquidated,
             size=np.float64(size_pct * dir_sign),
             size_type=np.int64(2),  # Percent
             direction=np.int64(int(actual_direction)),
-            fees=fee,
-            slippage=slippage,
+            fees=effective_fee,
+            slippage=effective_slippage,
         )
 
     # Reduce signal (partial exit) - reduce position by percentage
@@ -280,8 +356,8 @@ def order_func_nb(c, entry_price, is_liquidated,
         return vbt_nb.order_nb(
             size=np.float64(-reduce_amount),
             size_type=np.int64(0),
-            fees=fee,
-            slippage=slippage,
+            fees=effective_fee,
+            slippage=effective_slippage,
         )
 
     # Add signal (add to position)
@@ -304,8 +380,8 @@ def order_func_nb(c, entry_price, is_liquidated,
             size=np.float64(size_pct),
             size_type=np.int64(2),  # Percent
             direction=add_dir,
-            fees=fee,
-            slippage=slippage,
+            fees=effective_fee,
+            slippage=effective_slippage,
         )
 
     return NoOrder
@@ -345,7 +421,7 @@ class BacktestEngine:
 
         direction_map = {"long": 0, "short": 1, "mixed": 2}
         direction_val = direction_map.get(dna.risk_genes.direction, 0)
-        size_pct = dna.risk_genes.position_size * dna.risk_genes.leverage
+        size_pct = dna.risk_genes.position_size
         leverage = float(dna.risk_genes.leverage)
         sl_stop = float(dna.risk_genes.stop_loss) if dna.risk_genes.stop_loss else 0.0
         tp_stop = float(dna.risk_genes.take_profit) if dna.risk_genes.take_profit else 0.0
@@ -403,19 +479,44 @@ class BacktestEngine:
         if isinstance(equity_curve, pd.DataFrame):
             equity_curve = equity_curve.iloc[:, 0]
 
-        # Check if liquidation occurred
+        # Extract vbt raw cash to compute position_value = equity - cash
+        position_values_arr = None
+        try:
+            cash_curve = portfolio.cash()
+            if isinstance(cash_curve, pd.DataFrame):
+                cash_curve = cash_curve.iloc[:, 0]
+            raw_equity = portfolio.value()
+            if isinstance(raw_equity, pd.DataFrame):
+                raw_equity = raw_equity.iloc[:, 0]
+            position_values_arr = (raw_equity.values - cash_curve.values).astype(np.float64)
+        except Exception:
+            pass
+
+        # Apply leverage amplification to equity curve
+        leverage = float(dna.risk_genes.leverage)
+        trades_for_leverage = portfolio.trades.records_readable if hasattr(portfolio.trades, "records_readable") else None
+        equity_curve = _apply_leverage_to_equity(
+            equity_curve, trades_for_leverage, leverage, self.init_cash,
+        )
+
+        # Amplify position_values to match leveraged equity
+        if position_values_arr is not None and leverage > 1:
+            position_values_arr = position_values_arr * leverage
+
+        # Check if liquidation occurred (on amplified curve)
         liquidated = False
-        if dna.risk_genes.leverage > 1 and len(equity_curve) > 0:
-            maintenance = self.init_cash * (1 - 0.9 / dna.risk_genes.leverage)
+        if leverage > 1 and len(equity_curve) > 0:
+            maintenance = self.init_cash * (1 - 0.9 / leverage)
             if (equity_curve < maintenance).any():
                 liquidated = True
 
-        # Funding costs for leveraged positions (post-processing)
+        # Funding costs for leveraged positions (on amplified curve)
         timeframe = dna.execution_genes.timeframe
         trades_for_funding = portfolio.trades.records_readable if hasattr(portfolio.trades, "records_readable") else None
         equity_curve, total_funding_cost = _apply_funding_costs(
             equity_curve, dna.risk_genes.leverage, timeframe,
             trades_df=trades_for_funding,
+            position_values=position_values_arr,
         )
 
         total_trades_val = portfolio.trades.count()
@@ -612,7 +713,7 @@ class BacktestEngine:
             dtype=np.float64,
         )
         size_pcts = np.array(
-            [float(dna.risk_genes.position_size * dna.risk_genes.leverage)
+            [float(dna.risk_genes.position_size)
              for dna in individuals],
             dtype=np.float64,
         )
