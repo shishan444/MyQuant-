@@ -225,9 +225,10 @@ def order_func_nb(c, entry_price, is_liquidated,
     leverage = leverages[col]
     sl_stop = sl_stops[col]
     tp_stop = tp_stops[col]
-    # Scale fee/slippage by leverage so vbt charges on notional value
-    effective_fee = fee * leverage
-    effective_slippage = slippage * leverage
+    # Fee/slippage applied at base rate; leverage amplification is handled
+    # by _apply_leverage_to_equity in post-processing.
+    effective_fee = fee
+    effective_slippage = slippage
 
     # Already liquidated -> force close any remaining position, then allow re-entry if funds remain
     if is_liquidated[col] > 0.5:
