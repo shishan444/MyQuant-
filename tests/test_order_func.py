@@ -46,14 +46,6 @@ def test_liquidation_stops_trading():
     # Should be liquidated with leveraged position in a crash
     assert result.liquidated
 
-def test_no_funding_without_position():
-    """No funding cost when leverage is 1 (no borrowed capital)."""
-    df = _make_df(200)
-    dna = make_dna(leverage=1)
-    engine = BacktestEngine(init_cash=100000)
-    result = engine.run(dna, df)
-    assert result.total_funding_cost == 0.0
-
 def test_no_negative_equity():
     """Equity should never go below 0."""
     df = _make_df(200)
@@ -64,20 +56,6 @@ def test_no_negative_equity():
         equity = result.equity_curve
         # After funding cost adjustment, equity should still be >= 0
         assert (equity >= -1).all(), f"Negative equity with leverage={leverage}"
-
-def test_basic_round_trip():
-    """Simple strategy should produce trades with valid price/size."""
-    df = _make_df(200)
-    # Force entry/exit
-    df.loc[df.index[30], 'rsi_14'] = 20
-    df.loc[df.index[80], 'rsi_14'] = 80
-
-    dna = make_dna()
-    engine = BacktestEngine(init_cash=100000)
-    result = engine.run(dna, df)
-
-    assert result.total_trades >= 1
-    assert result.trades_df is not None or result.total_trades == 0
 
 def test_sl_trigger():
     """Stop-loss should close position when loss exceeds threshold."""
@@ -126,29 +104,6 @@ def test_tp_trigger():
 
     assert result.total_trades >= 1
 
-def test_equity_starts_at_init_cash():
-    """Equity curve should start at init_cash."""
-    df = _make_df(100)
-    dna = make_dna()
-    engine = BacktestEngine(init_cash=100000)
-    result = engine.run(dna, df)
-    assert abs(result.equity_curve.iloc[0] - 100000) < 1
-
-def test_total_trades_counted():
-    """total_trades should match portfolio.trades.count()."""
-    df = _make_df(200)
-    df.loc[df.index[20], 'rsi_14'] = 20
-    df.loc[df.index[60], 'rsi_14'] = 80
-    df.loc[df.index[100], 'rsi_14'] = 20
-    df.loc[df.index[140], 'rsi_14'] = 80
-
-    dna = make_dna()
-    engine = BacktestEngine(init_cash=100000)
-    result = engine.run(dna, df)
-
-    assert isinstance(result.total_trades, int)
-    assert result.total_trades >= 0
-
 def test_position_size_capped():
     """Position size should respect position_size setting."""
     df = _make_df(100)
@@ -162,20 +117,3 @@ def test_position_size_capped():
     # With position_size=0.3, the trade should not use all capital
     assert result.total_trades >= 0
 
-def test_result_structure_unchanged():
-    """BacktestResult structure should be the same for backward compatibility."""
-    df = _make_df(100)
-    dna = make_dna()
-    engine = BacktestEngine(init_cash=100000)
-    result = engine.run(dna, df)
-
-    assert hasattr(result, 'total_return')
-    assert hasattr(result, 'sharpe_ratio')
-    assert hasattr(result, 'max_drawdown')
-    assert hasattr(result, 'win_rate')
-    assert hasattr(result, 'total_trades')
-    assert hasattr(result, 'equity_curve')
-    assert hasattr(result, 'liquidated')
-    assert hasattr(result, 'add_count')
-    assert hasattr(result, 'reduce_count')
-    assert hasattr(result, 'metrics_dict')

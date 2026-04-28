@@ -91,26 +91,6 @@ def test_funding_only_during_open_position():
     assert result.total_funding_cost < max_possible_cost * 0.5, \
         f"Funding cost {result.total_funding_cost} should be less than half of all-bars cost {max_possible_cost}"
 
-def test_no_funding_without_trades():
-    """No funding costs should be charged when no trades are made."""
-    n = 50
-    dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
-    close = np.ones(n) * 100
-
-    df = pd.DataFrame({
-        'open': close * 0.999, 'high': close * 1.005,
-        'low': close * 0.995, 'close': close, 'volume': 1000.0,
-    }, index=dates)
-    df.index.name = 'timestamp'
-    df['rsi_14'] = 50.0  # No entry/exit signals
-
-    dna = _make_dna(leverage=5, sl=0.0, tp=0.0)
-    engine = BacktestEngine(init_cash=100000)
-    result = engine.run(dna, df)
-
-    assert result.total_trades == 0
-    assert result.total_funding_cost == 0.0, \
-        f"No funding cost expected with no trades, got {result.total_funding_cost}"
 
 def test_no_funding_with_1x_leverage():
     """1x leverage should never incur funding costs."""

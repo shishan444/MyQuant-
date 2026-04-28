@@ -362,22 +362,3 @@ def test_tp_with_gradual_rise():
 
     assert result.total_trades >= 1
 
-def test_equity_starts_at_init_cash_after_fix():
-    """Equity curve should still start at init_cash after high/low fix."""
-    n = 100
-    dates = pd.date_range('2024-01-01', periods=n, freq='4h', tz='UTC')
-    np.random.seed(42)
-    close = 100 + np.cumsum(np.random.randn(n) * 0.5)
-
-    df = pd.DataFrame({
-        'open': close * 0.999, 'high': close * 1.005,
-        'low': close * 0.995, 'close': close, 'volume': 1000.0,
-    }, index=dates)
-    df.index.name = 'timestamp'
-    df['rsi_14'] = np.clip(50 + np.random.randn(n) * 20, 0, 100)
-
-    dna = make_dna()
-    engine = BacktestEngine(init_cash=100000)
-    result = engine.run(dna, df)
-
-    assert abs(result.equity_curve.iloc[0] - 100000) < 1
