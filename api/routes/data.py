@@ -541,10 +541,10 @@ def get_chart_indicators(
         periods = [int(p.strip()) for p in ema_periods.split(",") if p.strip()]
         for period in periods:
             try:
-                ema_df = _compute_indicator(df, "EMA", {"period": period})
+                ema_cols = _compute_indicator(df, "EMA", {"period": period})
                 col_name = f"ema_{period}"
-                if col_name in ema_df.columns:
-                    series = ema_df[col_name].dropna()
+                if col_name in ema_cols:
+                    series = ema_cols[col_name].dropna()
                     result["ema"][str(period)] = [
                         {"time": str(idx), "value": float(val)}
                         for idx, val in series.items()
@@ -555,23 +555,23 @@ def get_chart_indicators(
     # Compute Bollinger Bands
     if boll_enabled:
         try:
-            bb_df = _compute_indicator(df, "BB", {"period": boll_period, "std": boll_std})
+            bb_cols = _compute_indicator(df, "BB", {"period": boll_period, "std": boll_std})
             upper_col = f"bb_upper_{boll_period}_{boll_std}"
             middle_col = f"bb_middle_{boll_period}_{boll_std}"
             lower_col = f"bb_lower_{boll_period}_{boll_std}"
-            if all(col in bb_df.columns for col in [upper_col, middle_col, lower_col]):
+            if all(col in bb_cols for col in [upper_col, middle_col, lower_col]):
                 result["boll"] = {
                     "upper": [
                         {"time": str(idx), "value": float(val)}
-                        for idx, val in bb_df[upper_col].dropna().items()
+                        for idx, val in bb_cols[upper_col].dropna().items()
                     ],
                     "middle": [
                         {"time": str(idx), "value": float(val)}
-                        for idx, val in bb_df[middle_col].dropna().items()
+                        for idx, val in bb_cols[middle_col].dropna().items()
                     ],
                     "lower": [
                         {"time": str(idx), "value": float(val)}
-                        for idx, val in bb_df[lower_col].dropna().items()
+                        for idx, val in bb_cols[lower_col].dropna().items()
                     ],
                 }
         except Exception:
@@ -580,10 +580,10 @@ def get_chart_indicators(
     # Compute RSI
     if rsi_enabled:
         try:
-            rsi_df = _compute_indicator(df, "RSI", {"period": rsi_period})
+            rsi_cols = _compute_indicator(df, "RSI", {"period": rsi_period})
             col_name = f"rsi_{rsi_period}"
-            if col_name in rsi_df.columns:
-                series = rsi_df[col_name].dropna()
+            if col_name in rsi_cols:
+                series = rsi_cols[col_name].dropna()
                 result["rsi"] = [
                     {"time": str(idx), "value": float(val)}
                     for idx, val in series.items()
@@ -594,10 +594,10 @@ def get_chart_indicators(
     # Compute RVOL (Relative Volume)
     if rvol_enabled:
         try:
-            rvol_df = _compute_indicator(df, "RVOL", {"period": rvol_period})
+            rvol_cols = _compute_indicator(df, "RVOL", {"period": rvol_period})
             col_name = f"rvol_{rvol_period}"
-            if col_name in rvol_df.columns:
-                series = rvol_df[col_name].dropna()
+            if col_name in rvol_cols:
+                series = rvol_cols[col_name].dropna()
                 result["rvol"] = [
                     {"time": str(idx), "value": float(val)}
                     for idx, val in series.items()
@@ -608,10 +608,10 @@ def get_chart_indicators(
     # Compute VWMA (Volume Weighted Moving Average)
     if vwma_enabled:
         try:
-            vwma_df = _compute_indicator(df, "VWMA", {"period": vwma_period})
+            vwma_cols = _compute_indicator(df, "VWMA", {"period": vwma_period})
             col_name = f"vwma_{vwma_period}"
-            if col_name in vwma_df.columns:
-                series = vwma_df[col_name].dropna()
+            if col_name in vwma_cols:
+                series = vwma_cols[col_name].dropna()
                 result["vwma"] = [
                     {"time": str(idx), "value": float(val)}
                     for idx, val in series.items()
@@ -622,23 +622,23 @@ def get_chart_indicators(
     # Compute MACD
     if macd_enabled:
         try:
-            macd_df = _compute_indicator(df, "MACD", {"fast": macd_fast, "slow": macd_slow, "signal": macd_signal})
+            macd_cols = _compute_indicator(df, "MACD", {"fast": macd_fast, "slow": macd_slow, "signal": macd_signal})
             macd_col = f"macd_{macd_fast}_{macd_slow}_{macd_signal}"
             signal_col = f"macd_signal_{macd_fast}_{macd_slow}_{macd_signal}"
             hist_col = f"macd_histogram_{macd_fast}_{macd_slow}_{macd_signal}"
-            if all(col in macd_df.columns for col in [macd_col, signal_col, hist_col]):
+            if all(col in macd_cols for col in [macd_col, signal_col, hist_col]):
                 result["macd"] = {
                     "macd": [
                         {"time": str(idx), "value": float(val)}
-                        for idx, val in macd_df[macd_col].dropna().items()
+                        for idx, val in macd_cols[macd_col].dropna().items()
                     ],
                     "signal": [
                         {"time": str(idx), "value": float(val)}
-                        for idx, val in macd_df[signal_col].dropna().items()
+                        for idx, val in macd_cols[signal_col].dropna().items()
                     ],
                     "histogram": [
                         {"time": str(idx), "value": float(val)}
-                        for idx, val in macd_df[hist_col].dropna().items()
+                        for idx, val in macd_cols[hist_col].dropna().items()
                     ],
                 }
         except Exception:
@@ -647,12 +647,12 @@ def get_chart_indicators(
     # Compute KDJ
     if kdj_enabled:
         try:
-            stoch_df = _compute_indicator(df, "Stochastic", {"k_period": kdj_k_period, "d_period": kdj_d_period})
+            stoch_cols = _compute_indicator(df, "Stochastic", {"k_period": kdj_k_period, "d_period": kdj_d_period})
             k_col = f"stoch_k_{kdj_k_period}_{kdj_d_period}"
             d_col = f"stoch_d_{kdj_k_period}_{kdj_d_period}"
-            if all(col in stoch_df.columns for col in [k_col, d_col]):
-                k_series = stoch_df[k_col].dropna()
-                d_series = stoch_df[d_col].dropna()
+            if all(col in stoch_cols for col in [k_col, d_col]):
+                k_series = stoch_cols[k_col].dropna()
+                d_series = stoch_cols[d_col].dropna()
                 # Align indices for J calculation
                 common_idx = k_series.index.intersection(d_series.index)
                 k_aligned = k_series.loc[common_idx]

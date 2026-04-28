@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 pytestmark = [pytest.mark.integration]
@@ -771,3 +772,450 @@ class TestHealthCheck:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
+
+
+# -- Test: Batch Import --
+
+class TestDataBatchImport:
+    @patch("MyQuant.api.routes.data.import_csv_batch")
+    def test_import_batch_success(
+        self, mock_import: MagicMock, client: TestClient, tmp_data_dir: Path
+    ) -> None:
+        """POST /api/data/import-batch with multiple CSV files."""
+        from core.data.csv_importer import CsvImportResult, ImportFormat, TimestampPrecision
+
+        mock_import.return_value = CsvImportResult(
+            dataset_id="BTCUSDT_4h",
+            symbol="BTCUSDT",
+            interval="4h",
+            rows_imported=3000,
+            format_detected=ImportFormat.BINANCE_OFFICIAL,
+            timestamp_precision=TimestampPrecision.MILLISECOND,
+            files_processed=3,
+            time_range=("2024-01-01", "2024-12-01"),
+        )
+
+        csv_content = b"1714521600000,60000,61000,59000,60500,100\n"
+        response = client.post(
+            "/api/data/import-batch",
+            files=[
+                ("files", ("BTCUSDT-4h-01.csv", csv_content, "text/csv")),
+                ("files", ("BTCUSDT-4h-02.csv", csv_content, "text/csv")),
+            ],
+            data={"symbol": "BTCUSDT", "interval": "4h"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["rows_imported"] == 3000
+        assert data["files_processed"] == 3
+
+    @patch("MyQuant.api.routes.data.import_csv_batch")
+    def test_import_batch_upserts_existing(
+        self, mock_import: MagicMock, client: TestClient, tmp_data_dir: Path
+    ) -> None:
+        """POST /api/data/import-batch should update existing dataset metadata."""
+        import pandas as pd
+        from api.db_ext import save_dataset_meta
+        from core.data.csv_importer import CsvImportResult, ImportFormat, TimestampPrecision
+
+        db_path = client.app.state.db_path
+        data_dir = client.app.state.data_dir
+
+        # Pre-create the parquet file so update path is taken
+        parquet_path = data_dir / "BTCUSDT_4h.parquet"
+        df = pd.DataFrame(
+            {"open": [60000], "high": [61000], "low": [59000], "close": [60500], "volume": [100]},
+            index=pd.DatetimeIndex(["2024-01-01"], name="timestamp"),
+        )
+        df.to_parquet(parquet_path)
+
+        save_dataset_meta(
+            db_path, dataset_id="BTCUSDT_4h", symbol="BTCUSDT",
+            interval="4h", parquet_path=str(parquet_path), row_count=100,
+        )
+
+        mock_import.return_value = CsvImportResult(
+            dataset_id="BTCUSDT_4h", symbol="BTCUSDT", interval="4h",
+            rows_imported=500, format_detected=ImportFormat.BINANCE_OFFICIAL,
+            timestamp_precision=TimestampPrecision.MILLISECOND,
+            files_processed=1, time_range=("2024-01-01", "2024-06-01"),
+        )
+
+        response = client.post(
+            "/api/data/import-batch",
+            files=[("files", ("BTCUSDT-4h.csv", b"data", "text/csv"))],
+            data={"symbol": "BTCUSDT", "interval": "4h"},
+        )
+        assert response.status_code == 200
+
+    @patch("MyQuant.api.routes.data.import_csv")
+    def test_import_upserts_existing(
+        self, mock_import: MagicMock, client: TestClient, tmp_data_dir: Path
+    ) -> None:
+        """POST /api/data/import should update existing dataset metadata."""
+        import pandas as pd
+        from api.db_ext import save_dataset_meta
+        from core.data.csv_importer import CsvImportResult, ImportFormat, TimestampPrecision
+
+        db_path = client.app.state.db_path
+        data_dir = client.app.state.data_dir
+
+        parquet_path = data_dir / "BTCUSDT_4h.parquet"
+        df = pd.DataFrame(
+            {"open": [60000], "high": [61000], "low": [59000], "close": [60500], "volume": [100]},
+            index=pd.DatetimeIndex(["2024-01-01"], name="timestamp"),
+        )
+        df.to_parquet(parquet_path)
+
+        save_dataset_meta(
+            db_path, dataset_id="BTCUSDT_4h", symbol="BTCUSDT",
+            interval="4h", parquet_path=str(parquet_path), row_count=100,
+        )
+
+        mock_import.return_value = CsvImportResult(
+            dataset_id="BTCUSDT_4h", symbol="BTCUSDT", interval="4h",
+            rows_imported=200, format_detected=ImportFormat.BINANCE_OFFICIAL,
+            timestamp_precision=TimestampPrecision.MILLISECOND,
+            time_range=("2024-01-01", "2024-03-01"),
+        )
+
+        response = client.post(
+            "/api/data/import",
+            files={"file": ("BTCUSDT-4h.csv", b"data", "text/csv")},
+            data={"symbol": "BTCUSDT", "interval": "4h"},
+        )
+        assert response.status_code == 200
+
+
+# -- Test: Available Sources --
+
+class TestAvailableSources:
+    def test_available_sources_empty(self, client: TestClient) -> None:
+        """GET /api/data/available-sources returns only fixture parquet."""
+        response = client.get("/api/data/available-sources")
+        assert response.status_code == 200
+        data = response.json()
+        # Fixture creates BTCUSDT_4h.parquet
+        symbols = [s["symbol"] for s in data["sources"]]
+        assert "BTCUSDT" in symbols
+
+    def test_available_sources_with_data(self, client: TestClient) -> None:
+        """GET /api/data/available-sources should scan parquet files."""
+        import pandas as pd
+
+        data_dir = client.app.state.data_dir
+
+        df = pd.DataFrame(
+            {"open": [60000, 61000], "high": [61000, 62000],
+             "low": [59000, 60000], "close": [60500, 61500],
+             "volume": [100, 200]},
+            index=pd.DatetimeIndex(["2024-01-01", "2024-01-02"], name="timestamp"),
+        )
+        df.to_parquet(data_dir / "ETHUSDT_1h.parquet")
+
+        response = client.get("/api/data/available-sources")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["sources"]) >= 1
+        eth = [s for s in data["sources"] if s["symbol"] == "ETHUSDT"]
+        assert len(eth) == 1
+        assert eth[0]["timeframe"] == "1h"
+
+    def test_available_sources_skips_non_matching_filename(self, client: TestClient) -> None:
+        """GET /api/data/available-sources should only match SYMBOL_TIMEFRAME pattern."""
+        import pandas as pd
+
+        data_dir = client.app.state.data_dir
+
+        df = pd.DataFrame(
+            {"open": [100], "high": [110], "low": [90], "close": [105], "volume": [50]},
+            index=pd.DatetimeIndex(["2024-01-01"], name="timestamp"),
+        )
+        # Filename without underscore separator - should be skipped
+        df.to_parquet(data_dir / "justdata.parquet")
+
+        response = client.get("/api/data/available-sources")
+        assert response.status_code == 200
+        data = response.json()
+        # justdata.parquet doesn't match SYMBOL_TIMEFRAME pattern
+        assert all(s["symbol"] != "justdata" for s in data["sources"])
+
+
+# -- Test: OHLCV by Symbol --
+
+class TestOhlcvBySymbol:
+    def test_ohlcv_by_symbol_not_found(self, client: TestClient) -> None:
+        """GET /api/data/ohlcv/{symbol}/{timeframe} with nonexistent data."""
+        response = client.get("/api/data/ohlcv/FAKEUSDT/1h")
+        assert response.status_code == 404
+
+    def test_ohlcv_by_symbol_success(self, client: TestClient) -> None:
+        """GET /api/data/ohlcv/{symbol}/{timeframe} should return OHLCV data."""
+        import pandas as pd
+
+        data_dir = client.app.state.data_dir
+
+        dates = pd.date_range("2024-01-01", periods=10, freq="4h", tz="UTC")
+        df = pd.DataFrame(
+            {"open": np.random.uniform(59000, 61000, 10),
+             "high": np.random.uniform(60000, 62000, 10),
+             "low": np.random.uniform(58000, 60000, 10),
+             "close": np.random.uniform(59000, 61000, 10),
+             "volume": np.random.uniform(100, 500, 10)},
+            index=dates,
+        )
+        df.index.name = "timestamp"
+        df.to_parquet(data_dir / "SOLUSDT_4h.parquet")
+
+        response = client.get("/api/data/ohlcv/SOLUSDT/4h")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["dataset_id"] == "SOLUSDT_4h"
+        assert len(data["data"]) == 10
+        assert "open" in data["data"][0]
+
+    def test_ohlcv_by_symbol_date_filter(self, client: TestClient) -> None:
+        """GET /api/data/ohlcv/{symbol}/{timeframe}?start=&end= should filter."""
+        import pandas as pd
+
+        data_dir = client.app.state.data_dir
+
+        dates = pd.date_range("2024-01-01", periods=100, freq="4h", tz="UTC")
+        df = pd.DataFrame(
+            {"open": [60000] * 100, "high": [61000] * 100,
+             "low": [59000] * 100, "close": [60500] * 100,
+             "volume": [100] * 100},
+            index=dates,
+        )
+        df.index.name = "timestamp"
+        df.to_parquet(data_dir / "XRPUSDT_4h.parquet")
+
+        response = client.get(
+            "/api/data/ohlcv/XRPUSDT/4h",
+            params={"start": "2024-01-05", "end": "2024-01-10"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["data"]) < 100
+
+    def test_ohlcv_by_symbol_limit(self, client: TestClient) -> None:
+        """GET /api/data/ohlcv/{symbol}/{timeframe}?limit=N should cap rows."""
+        import pandas as pd
+
+        data_dir = client.app.state.data_dir
+
+        dates = pd.date_range("2024-01-01", periods=100, freq="4h", tz="UTC")
+        df = pd.DataFrame(
+            {"open": [60000] * 100, "high": [61000] * 100,
+             "low": [59000] * 100, "close": [60500] * 100,
+             "volume": [100] * 100},
+            index=dates,
+        )
+        df.index.name = "timestamp"
+        df.to_parquet(data_dir / "DOGEUSDT_4h.parquet")
+
+        response = client.get("/api/data/ohlcv/DOGEUSDT/4h", params={"limit": 5})
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 5
+
+
+# -- Test: Chart Indicators --
+
+class TestChartIndicators:
+    def test_chart_indicators_not_found(self, client: TestClient) -> None:
+        """GET /api/data/chart-indicators/{symbol}/{timeframe} 404."""
+        response = client.get("/api/data/chart-indicators/FAKEUSDT/1h")
+        assert response.status_code == 404
+
+    def test_chart_indicators_default(self, client: TestClient) -> None:
+        """GET /api/data/chart-indicators with default params returns boll+rsi."""
+        import pandas as pd
+
+        data_dir = client.app.state.data_dir
+
+        np.random.seed(42)
+        dates = pd.date_range("2024-01-01", periods=200, freq="4h", tz="UTC")
+        closes = 60000 + np.cumsum(np.random.randn(200) * 100)
+        df = pd.DataFrame(
+            {"open": closes * 0.999, "high": closes * 1.005,
+             "low": closes * 0.995, "close": closes,
+             "volume": np.random.uniform(100, 1000, 200)},
+            index=dates,
+        )
+        df.index.name = "timestamp"
+        df.to_parquet(data_dir / "ADAUSDT_4h.parquet")
+
+        response = client.get("/api/data/chart-indicators/ADAUSDT/4h")
+        assert response.status_code == 200
+        data = response.json()
+        assert "boll" in data
+        assert "rsi" in data
+
+    def test_chart_indicators_ema(self, client: TestClient) -> None:
+        """GET /api/data/chart-indicators with ema_periods."""
+        import pandas as pd
+
+        data_dir = client.app.state.data_dir
+
+        np.random.seed(42)
+        dates = pd.date_range("2024-01-01", periods=200, freq="4h", tz="UTC")
+        closes = 60000 + np.cumsum(np.random.randn(200) * 100)
+        df = pd.DataFrame(
+            {"open": closes * 0.999, "high": closes * 1.005,
+             "low": closes * 0.995, "close": closes,
+             "volume": np.random.uniform(100, 1000, 200)},
+            index=dates,
+        )
+        df.index.name = "timestamp"
+        df.to_parquet(data_dir / "MATICUSDT_4h.parquet")
+
+        response = client.get(
+            "/api/data/chart-indicators/MATICUSDT/4h",
+            params={"ema_periods": "7,25", "boll_enabled": "false", "rsi_enabled": "false"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "7" in data["ema"]
+        assert "25" in data["ema"]
+
+    def test_chart_indicators_macd(self, client: TestClient) -> None:
+        """GET /api/data/chart-indicators with macd_enabled."""
+        import pandas as pd
+
+        data_dir = client.app.state.data_dir
+
+        np.random.seed(42)
+        dates = pd.date_range("2024-01-01", periods=200, freq="4h", tz="UTC")
+        closes = 60000 + np.cumsum(np.random.randn(200) * 100)
+        df = pd.DataFrame(
+            {"open": closes * 0.999, "high": closes * 1.005,
+             "low": closes * 0.995, "close": closes,
+             "volume": np.random.uniform(100, 1000, 200)},
+            index=dates,
+        )
+        df.index.name = "timestamp"
+        df.to_parquet(data_dir / "LINKUSDT_4h.parquet")
+
+        response = client.get(
+            "/api/data/chart-indicators/LINKUSDT/4h",
+            params={"macd_enabled": "true", "boll_enabled": "false", "rsi_enabled": "false"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["macd"] is not None
+
+    def test_chart_indicators_kdj(self, client: TestClient) -> None:
+        """GET /api/data/chart-indicators with kdj_enabled."""
+        import pandas as pd
+
+        data_dir = client.app.state.data_dir
+
+        np.random.seed(42)
+        dates = pd.date_range("2024-01-01", periods=200, freq="4h", tz="UTC")
+        closes = 60000 + np.cumsum(np.random.randn(200) * 100)
+        df = pd.DataFrame(
+            {"open": closes * 0.999, "high": closes * 1.005,
+             "low": closes * 0.995, "close": closes,
+             "volume": np.random.uniform(100, 1000, 200)},
+            index=dates,
+        )
+        df.index.name = "timestamp"
+        df.to_parquet(data_dir / "AVAXUSDT_4h.parquet")
+
+        response = client.get(
+            "/api/data/chart-indicators/AVAXUSDT/4h",
+            params={"kdj_enabled": "true", "boll_enabled": "false", "rsi_enabled": "false"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["kdj"] is not None
+        assert "k" in data["kdj"]
+        assert "d" in data["kdj"]
+        assert "j" in data["kdj"]
+
+    def test_chart_indicators_rvol_vwma(self, client: TestClient) -> None:
+        """GET /api/data/chart-indicators with rvol+vwma enabled."""
+        import pandas as pd
+
+        data_dir = client.app.state.data_dir
+
+        np.random.seed(42)
+        dates = pd.date_range("2024-01-01", periods=200, freq="4h", tz="UTC")
+        closes = 60000 + np.cumsum(np.random.randn(200) * 100)
+        df = pd.DataFrame(
+            {"open": closes * 0.999, "high": closes * 1.005,
+             "low": closes * 0.995, "close": closes,
+             "volume": np.random.uniform(100, 1000, 200)},
+            index=dates,
+        )
+        df.index.name = "timestamp"
+        df.to_parquet(data_dir / "DOTUSDT_4h.parquet")
+
+        response = client.get(
+            "/api/data/chart-indicators/DOTUSDT/4h",
+            params={
+                "rvol_enabled": "true", "vwma_enabled": "true",
+                "boll_enabled": "false", "rsi_enabled": "false",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["rvol"] is not None
+        assert data["vwma"] is not None
+
+
+# -- Test: Safe Timestamp / Date Filter helpers --
+
+class TestDateFilterHelpers:
+    def test_safe_timestamp_valid(self):
+        """_safe_timestamp should parse valid date strings."""
+        from api.routes.data import _safe_timestamp
+
+        ts = _safe_timestamp("2024-01-15", tz_aware=False)
+        assert ts is not None
+        assert ts.year == 2024
+
+    def test_safe_timestamp_utc(self):
+        """_safe_timestamp with tz_aware=True should add UTC."""
+        from api.routes.data import _safe_timestamp
+
+        ts = _safe_timestamp("2024-06-01T00:00:00", tz_aware=True)
+        assert ts is not None
+        assert str(ts.tz) == "UTC"
+
+    def test_safe_timestamp_none(self):
+        """_safe_timestamp should return None for empty input."""
+        from api.routes.data import _safe_timestamp
+
+        assert _safe_timestamp(None, False) is None
+        assert _safe_timestamp("", False) is None
+
+    def test_safe_timestamp_invalid(self):
+        """_safe_timestamp should return None for invalid input."""
+        from api.routes.data import _safe_timestamp
+
+        assert _safe_timestamp("not-a-date", False) is None
+
+    def test_apply_date_filter(self):
+        """_apply_date_filter should correctly filter DataFrame."""
+        import pandas as pd
+        from api.routes.data import _apply_date_filter
+
+        dates = pd.date_range("2024-01-01", periods=30, freq="D")
+        df = pd.DataFrame({"close": range(30)}, index=dates)
+        df.index.name = "timestamp"
+
+        filtered = _apply_date_filter(df, "2024-01-10", "2024-01-20")
+        assert len(filtered) == 11  # inclusive both ends
+
+    def test_apply_date_filter_invalid_dates_ignored(self):
+        """_apply_date_filter should silently skip invalid dates."""
+        import pandas as pd
+        from api.routes.data import _apply_date_filter
+
+        dates = pd.date_range("2024-01-01", periods=10, freq="D")
+        df = pd.DataFrame({"close": range(10)}, index=dates)
+        df.index.name = "timestamp"
+
+        filtered = _apply_date_filter(df, "garbage", None)
+        assert len(filtered) == 10  # No filter applied
