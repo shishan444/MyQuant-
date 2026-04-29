@@ -146,6 +146,60 @@ STRATEGY_TEMPLATES = [
 ]
 
 
+# Indicators suitable for DIRECTION genes: all support price_above/price_below
+_DIRECTION_INDICATORS = ["EMA", "SMA", "WMA", "DEMA", "TEMA", "VWAP", "PSAR",
+                         "BB", "Keltner", "Donchian", "VWMA"]
+
+
+def _create_direction_gene() -> SignalGene:
+    """Create a DIRECTION gene with profile-aware indicator selection.
+
+    Supports all indicators that have price_above/price_below conditions,
+    not just EMA/SMA. Uses indicator profiles for parameter guidance when
+    available.
+    """
+    indicator_name = random.choice(_DIRECTION_INDICATORS)
+    reg = INDICATOR_REGISTRY.get(indicator_name)
+    profile = PROFILES.get(indicator_name)
+
+    # Build params
+    if profile and profile.recommended_params and random.random() < profile.follow_probability:
+        params = {}
+        for pname, pdef in reg.params.items():
+            if pname in profile.recommended_params and profile.recommended_params[pname]:
+                raw = random.choice(profile.recommended_params[pname])
+                params[pname] = int(raw) if pdef.type == "int" else float(raw)
+            else:
+                params[pname] = int(pdef.default) if pdef.type == "int" else float(pdef.default)
+    else:
+        params = {}
+        for pname, pdef in (reg.params.items() if reg else []):
+            val = random.uniform(pdef.min, pdef.max)
+            params[pname] = int(round(val / pdef.step) * pdef.step) if pdef.type == "int" \
+                else round(round(val / pdef.step) * pdef.step, 2)
+
+    # DIRECTION genes only use price_above or price_below
+    condition = {"type": random.choice(["price_above", "price_below"])}
+
+    # For band indicators, pick a specific field
+    field_name = None
+    if reg and len(reg.output_fields) > 1:
+        # Prefer upper/lower for band indicators
+        band_fields = [f for f in reg.output_fields if f in ("upper", "lower")]
+        if band_fields:
+            field_name = random.choice(band_fields)
+        else:
+            field_name = random.choice(reg.output_fields)
+
+    return SignalGene(
+        indicator=indicator_name,
+        params=params,
+        role=SignalRole.DIRECTION,
+        field_name=field_name,
+        condition=condition,
+    )
+
+
 def _dna_from_template(
     template: dict,
     timeframe: str = "4h",
@@ -155,7 +209,7 @@ def _dna_from_template(
     timeframe_pool: list | None = None,
 ) -> StrategyDNA:
     """Create a StrategyDNA from a classic strategy template."""
-    actual_direction = random.choice(["long", "short"]) if direction == "mixed" else direction
+    actual_direction = direction
     signals = []
     for g in template["genes"]:
         signals.append(SignalGene(
@@ -165,6 +219,10 @@ def _dna_from_template(
             field_name=g.get("field"),
             condition=dict(g["condition"]),
         ))
+
+    # Auto-add a DIRECTION gene for mixed strategies
+    if actual_direction == "mixed":
+        signals.append(_create_direction_gene())
 
     logic = template["logic"]
 
@@ -270,8 +328,8 @@ def create_random_dna(
         profiled: If True, use indicator profiles for guided generation.
                   If False, generate completely random signals (free exploration).
     """
-    # "mixed" is a task-level constraint, resolve to actual gene value
-    actual_direction = random.choice(["long", "short"]) if direction == "mixed" else direction
+    # "mixed" is preserved; DIRECTION gene handles long/short decisions
+    actual_direction = direction
 
     available_indicators = list(indicator_pool) if indicator_pool else list(INDICATOR_REGISTRY.keys())
     trigger_indicators = [
@@ -314,6 +372,10 @@ def create_random_dna(
     if random.random() < 0.4:
         signals.append(_make_signal(SignalRole.EXIT_GUARD, all_indicators))
 
+    # Auto-add a DIRECTION gene for mixed strategies
+    if actual_direction == "mixed":
+        signals.append(_create_direction_gene())
+
     entry_logic = random.choice(["AND", "OR"])
     exit_logic = random.choice(["AND", "OR"])
 
@@ -333,13 +395,19 @@ def create_random_dna(
     # Validate and retry if needed
     result = validate_dna(dna)
     if not result.is_valid:
+        fallback_signals = [
+            SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, None,
+                       {"type": "lt", "threshold": 30}),
+            SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, None,
+                       {"type": "gt", "threshold": 70}),
+        ]
+        if actual_direction == "mixed":
+            fallback_signals.append(SignalGene(
+                "EMA", {"period": 50}, SignalRole.DIRECTION, None,
+                {"type": "price_above"},
+            ))
         dna = StrategyDNA(
-            signal_genes=[
-                SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER, None,
-                           {"type": "lt", "threshold": 30}),
-                SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER, None,
-                           {"type": "gt", "threshold": 70}),
-            ],
+            signal_genes=fallback_signals,
             logic_genes=LogicGenes(entry_logic="AND", exit_logic="OR"),
             risk_genes=RiskGenes(stop_loss=0.05, position_size=0.3,
                                  leverage=leverage, direction=actual_direction),
