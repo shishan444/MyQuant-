@@ -240,9 +240,7 @@ class EvolutionEngine:
             # Enforce task-level constraints on all individuals before evaluation
             for ind in population:
                 ind.risk_genes.leverage = self.leverage
-                # mixed mode: allow evolution to explore both directions
-                if self.direction != "mixed":
-                    ind.risk_genes.direction = self.direction
+                ind.risk_genes.direction = self.direction
 
             # Evaluate all individuals
             scored = []

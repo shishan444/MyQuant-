@@ -580,16 +580,6 @@ class EvolutionRunner(threading.Thread):
 
             self._population_count += 1
 
-            # Rotate direction for diversity in continuous mode
-            original_direction = task_row.get("direction", "long")
-            if original_direction == "mixed":
-                directions = ["long", "short"]
-                direction = directions[self._population_count % 2]
-                logger.info(
-                    "Task %s: rotating direction to '%s' for population #%d",
-                    task_id, direction, self._population_count + 1,
-                )
-
             logger.info(
                 "Task %s: starting population #%d (stop_reason=%s)",
                 task_id, self._population_count + 1, stop_reason,
@@ -702,9 +692,7 @@ class EvolutionRunner(threading.Thread):
         """
         # Force override task-level constraints before backtesting
         individual.risk_genes.leverage = leverage
-        # mixed mode: allow evolution to explore both directions
-        if direction != "mixed":
-            individual.risk_genes.direction = direction
+        individual.risk_genes.direction = direction
 
         diagnostics = {
             "used_real_data": False,
@@ -825,8 +813,7 @@ class EvolutionRunner(threading.Thread):
             # Enforce constraints on all individuals before evaluation
             for ind in population:
                 ind.risk_genes.leverage = leverage
-                if direction != "mixed":
-                    ind.risk_genes.direction = direction
+                ind.risk_genes.direction = direction
 
             # Clear indicator cache at start of each generation
             clear_indicator_cache()
