@@ -517,7 +517,7 @@ def mutate_logic(dna: StrategyDNA) -> StrategyDNA:
 
 
 def mutate_add_signal(dna: StrategyDNA) -> StrategyDNA:
-    """Add a random guard signal gene to the strategy (base or layer)."""
+    """Add a random guard or DIRECTION signal gene to the strategy (base or layer)."""
     data = dna.to_dict()
     data["strategy_id"] = _new_id()
     data["parent_ids"] = [dna.strategy_id]
@@ -529,9 +529,25 @@ def mutate_add_signal(dna: StrategyDNA) -> StrategyDNA:
     if not gene_pool["genes"]:
         return StrategyDNA.from_dict(data)
 
-    # Check if we already have guards
+    # Check existing roles
     has_entry_guard = any(sg.get("role") == "entry_guard" for sg in gene_pool["genes"])
     has_exit_guard = any(sg.get("role") == "exit_guard" for sg in gene_pool["genes"])
+    has_direction = any(sg.get("role") == "direction" for sg in gene_pool["genes"])
+
+    # For mixed strategies, chance to add DIRECTION gene if missing
+    is_mixed = data.get("risk_genes", {}).get("direction") == "mixed"
+    if is_mixed and not has_direction and random.random() < 0.2:
+        from core.evolution.population import _create_direction_gene
+        gene = _create_direction_gene()
+        new_gene = {
+            "indicator": gene.indicator,
+            "params": gene.params,
+            "role": "direction",
+            "field": gene.field_name,
+            "condition": gene.condition,
+        }
+        gene_pool["genes"].append(new_gene)
+        return StrategyDNA.from_dict(data)
 
     # Decide which guard to add (prefer missing one)
     if not has_entry_guard and (has_exit_guard or random.random() < 0.5):
@@ -663,6 +679,13 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
     child_signals.extend(entry_a if entry_a else [a_genes[0]] if a_genes else [])
     child_signals.extend(exit_b if exit_b else [b_genes[-1]] if b_genes else [])
 
+    # Inherit DIRECTION gene: prefer from random parent, keep at most one
+    direction_a = [g for g in a_genes if g.role == SignalRole.DIRECTION]
+    direction_b = [g for g in b_genes if g.role == SignalRole.DIRECTION]
+    direction_source = random.choice([direction_a, direction_b])
+    if direction_source:
+        child_signals.append(direction_source[0])
+
     if not child_signals:
         child_signals = list(a_genes)
 
@@ -713,6 +736,12 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
                                  [la.signal_genes[0]] if la.signal_genes else [])
             layer_signals.extend(layer_exit_b if layer_exit_b else
                                  [lb.signal_genes[-1]] if lb.signal_genes else [])
+            # Inherit DIRECTION gene from random parent in this layer
+            layer_dir_a = [g for g in la.signal_genes if g.role == SignalRole.DIRECTION]
+            layer_dir_b = [g for g in lb.signal_genes if g.role == SignalRole.DIRECTION]
+            layer_dir_source = random.choice([layer_dir_a, layer_dir_b])
+            if layer_dir_source:
+                layer_signals.append(layer_dir_source[0])
             if not layer_signals:
                 layer_signals = list(la.signal_genes)
             layer_logic = random.choice([la.logic_genes, lb.logic_genes])
