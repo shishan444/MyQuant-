@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import numpy as np
+import logging
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
@@ -15,6 +16,8 @@ from vectorbt.portfolio import nb as vbt_nb
 
 from core.strategy.dna import StrategyDNA
 from core.strategy.executor import dna_to_signals, dna_to_signal_set, batch_signal_sets, clear_indicator_cache
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -440,6 +443,12 @@ class BacktestEngine:
             direction_shifted = sig_set.entry_direction.shift(1).fillna(1.0)
             direction_signal_2d = direction_shifted.values.astype(np.float64).reshape(-1, 1)
         else:
+            if direction_val >= 1.5:  # mixed but no direction signal
+                logger.warning(
+                    "direction='mixed' but no entry_direction signal; "
+                    "defaulting to long. strategy_id=%s",
+                    getattr(dna, "strategy_id", None),
+                )
             direction_signal_2d = np.ones_like(entries_2d)
 
         pf = vbt.Portfolio.from_order_func(

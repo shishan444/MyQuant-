@@ -784,11 +784,21 @@ def dna_to_signal_set(
     both = entries & exits
     entries = entries & ~both
 
+    # Generate entry_direction for mixed mode
+    entry_direction = None
+    if getattr(dna.risk_genes, "direction", None) == "mixed":
+        momentum = close.pct_change(5)
+        entry_direction = pd.Series(
+            np.where(momentum >= 0, 1.0, -1.0),
+            index=enhanced_df.index,
+        )
+
     return SignalSet(
         entries=entries,
         exits=exits,
         adds=adds,
         reduces=reduces,
+        entry_direction=entry_direction,
     )
 
 
@@ -908,11 +918,21 @@ def batch_signal_sets(
         both = entries & exits
         entries = entries & ~both
 
+        # Generate entry_direction for mixed mode
+        entry_direction = None
+        if getattr(dna.risk_genes, "direction", None) == "mixed":
+            momentum = close.pct_change(5)
+            entry_direction = pd.Series(
+                np.where(momentum >= 0, 1.0, -1.0),
+                index=enhanced_df.index,
+            )
+
         results.append(SignalSet(
             entries=entries,
             exits=exits,
             adds=adds,
             reduces=reduces,
+            entry_direction=entry_direction,
         ))
 
     return results

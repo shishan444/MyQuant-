@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 # ── Enums ──
@@ -65,7 +65,7 @@ class SignalGeneModel(BaseModel):
     indicator: str
     params: Dict[str, Any]
     role: SignalRole
-    field: Optional[str] = None
+    field: Optional[str] = Field(None, validation_alias=AliasChoices("field_name", "field"))
     condition: Dict[str, Any] = Field(default_factory=dict)
 
 

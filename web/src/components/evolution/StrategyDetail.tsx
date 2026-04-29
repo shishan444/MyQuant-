@@ -178,7 +178,11 @@ export function StrategyDetail({
           </span>
         )}
         <span>
-          {(dna.risk_genes.direction ?? "long") === "long" ? "做多" : "做空"}
+          {dna.risk_genes.direction === "short"
+            ? "做空"
+            : dna.risk_genes.direction === "mixed"
+              ? "混合"
+              : "做多"}
         </span>
       </div>
 

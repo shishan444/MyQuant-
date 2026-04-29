@@ -41,7 +41,7 @@ import { useCreateStrategy, useStrategies } from "@/hooks/useStrategies";
 import { useAvailableSources } from "@/hooks/useDatasets";
 import { useChartIndicators } from "@/hooks/useChartIndicators";
 import type { SubChartType } from "@/hooks/useChartIndicators";
-import { SYMBOL_OPTIONS, TIMEFRAME_SELECT_OPTIONS, LEVERAGE_OPTIONS } from "@/lib/constants";
+import { SYMBOL_OPTIONS, TIMEFRAME_SELECT_OPTIONS, LEVERAGE_OPTIONS, DIRECTION_OPTIONS } from "@/lib/constants";
 import type {
   RuleCondition,
   RuleValidateResponse,
@@ -127,6 +127,10 @@ export function Lab() {
     end: routeState?.dataEnd ?? "",
   });
   const [btLeverage, setBtLeverage] = useState(1);
+  const [btDirection, setBtDirection] = useState<string>("long");
+  const [btStopLoss, setBtStopLoss] = useState(0.05);
+  const [btTakeProfit, setBtTakeProfit] = useState(0.1);
+  const [btPositionSize, setBtPositionSize] = useState(0.3);
   const [btFee, setBtFee] = useState(0.001);
   const [btSlippage, setBtSlippage] = useState(0.0005);
   const [btInitCash, setBtInitCash] = useState(100000);
@@ -196,6 +200,10 @@ export function Lab() {
         setBacktestSymbol(strategy.symbol);
         setBacktestTimeframe(strategy.timeframe);
         setBtLeverage(strategy.dna.risk_genes?.leverage ?? 1);
+        setBtDirection(strategy.dna.risk_genes?.direction ?? "long");
+        setBtStopLoss(strategy.dna.risk_genes?.stop_loss ?? 0.05);
+        setBtTakeProfit(strategy.dna.risk_genes?.take_profit ?? 0.1);
+        setBtPositionSize(strategy.dna.risk_genes?.position_size ?? 0.3);
         setSelectedStrategyId(strategy.strategy_id);
         setBtConfigCollapsed(false);
       }
@@ -421,8 +429,8 @@ export function Lab() {
       const generatedDna = {
         signal_genes: [...entrySignals, ...exitSignals],
         logic_genes: { entry_logic: "AND", exit_logic: "OR" },
-        execution_genes: { timeframe, symbol: pair, leverage: 1, direction: "long" },
-        risk_genes: { stop_loss: 0.05, take_profit: 0.1, position_size: 0.3 },
+        execution_genes: { timeframe, symbol: pair },
+        risk_genes: { stop_loss: 0.05, take_profit: 0.1, position_size: 0.3, leverage: 1, direction: "long" },
       };
       await createStrategyMutation.mutateAsync({
         name: data.name,
@@ -528,8 +536,8 @@ export function Lab() {
                     <span>{backtestTimeframe.toUpperCase()}</span>
                     {backtestDna && (
                       <>
-                        <span>{backtestDna.risk_genes?.leverage ?? 1}x</span>
-                        <span>{backtestDna.risk_genes?.direction ?? "long"}</span>
+                        <span>{btLeverage}x</span>
+                        <span>{DIRECTION_OPTIONS.find((o) => o.value === btDirection)?.label ?? "做多"}</span>
                       </>
                     )}
                   </div>
@@ -666,6 +674,24 @@ export function Lab() {
                     {btAdvancedOpen && (
                       <div className="mt-2 flex flex-wrap items-center gap-4">
                         <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-text-muted">方向</span>
+                          <Select
+                            value={btDirection}
+                            onValueChange={(v) => setBtDirection(v)}
+                          >
+                            <SelectTrigger className="h-7 w-20 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {DIRECTION_OPTIONS.map((o) => (
+                                <SelectItem key={o.value} value={o.value}>
+                                  {o.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex items-center gap-1.5">
                           <span className="text-xs text-text-muted">杠杆</span>
                           <Select
                             value={String(btLeverage)}
@@ -718,6 +744,42 @@ export function Lab() {
                             className="h-7 w-28 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
                           />
                         </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-text-muted">止损</span>
+                          <input
+                            type="number"
+                            step={0.01}
+                            min={0}
+                            max={0.5}
+                            value={btStopLoss}
+                            onChange={(e) => setBtStopLoss(Number(e.target.value))}
+                            className="h-7 w-16 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-text-muted">止盈</span>
+                          <input
+                            type="number"
+                            step={0.01}
+                            min={0}
+                            max={1}
+                            value={btTakeProfit}
+                            onChange={(e) => setBtTakeProfit(Number(e.target.value))}
+                            className="h-7 w-16 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-text-muted">仓位</span>
+                          <input
+                            type="number"
+                            step={0.1}
+                            min={0.1}
+                            max={1}
+                            value={btPositionSize}
+                            onChange={(e) => setBtPositionSize(Number(e.target.value))}
+                            className="h-7 w-16 rounded-md border border-border-default bg-bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent-gold"
+                          />
+                        </div>
                       </div>
                     )}
                   </div>
@@ -754,7 +816,14 @@ export function Lab() {
                   ref={backtestPanelRef}
                   dna={{
                     ...backtestDna,
-                    risk_genes: { ...backtestDna.risk_genes, leverage: btLeverage },
+                    risk_genes: {
+                      ...backtestDna.risk_genes,
+                      leverage: btLeverage,
+                      direction: btDirection,
+                      stop_loss: btStopLoss,
+                      take_profit: btTakeProfit,
+                      position_size: btPositionSize,
+                    },
                   }}
                   symbol={backtestSymbol}
                   timeframe={backtestTimeframe}

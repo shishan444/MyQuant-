@@ -284,14 +284,31 @@ def test_short_still_works():
 
     assert isinstance(result.total_return, float)
 
-def test_single_tf_mixed_no_direction_signal():
-    """Single-TF mixed strategy: entry_direction should be None (no trend layer)."""
+def test_single_tf_mixed_has_direction_signal():
+    """Single-TF mixed strategy: entry_direction should be generated from momentum."""
     dna = _make_single_tf_mixed_dna("mixed")
-    df = _make_ohlcv(200)
-    df["rsi_14"] = 50.0
+    df = _make_trending_data()
 
     sig = dna_to_signal_set(dna, df)
-    # Single TF has no trend layer, so entry_direction should be None
-    assert sig.entry_direction is None, (
-        "Single-TF strategy should have entry_direction=None"
+    assert sig.entry_direction is not None, (
+        "Single-TF mixed strategy should generate entry_direction from momentum"
+    )
+    # Should have both +1 and -1 values (up and down trend)
+    assert (sig.entry_direction > 0).any(), "Should have positive direction (uptrend)"
+    assert (sig.entry_direction < 0).any(), "Should have negative direction (downtrend)"
+
+
+def test_single_tf_mixed_differs_from_long():
+    """Single-TF mixed strategy should differ from long-only on trending data."""
+    df = _make_trending_data()
+    engine = BacktestEngine(init_cash=100000)
+
+    result_mixed = engine.run(_make_single_tf_mixed_dna("mixed"), df)
+    result_long = engine.run(_make_single_tf_mixed_dna("long"), df)
+
+    different = abs(result_mixed.total_return - result_long.total_return) > 0.001
+    assert different, (
+        f"Single-TF mixed should differ from long. "
+        f"Mixed return={result_mixed.total_return:.4f}, "
+        f"Long return={result_long.total_return:.4f}"
     )
