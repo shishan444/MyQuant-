@@ -49,6 +49,7 @@ class SignalRole(Enum):
     ADD_GUARD = "add_guard"           # filters add conditions
     REDUCE_TRIGGER = "reduce_trigger" # triggers position reduce
     REDUCE_GUARD = "reduce_guard"     # filters reduce conditions
+    DIRECTION = "direction"           # determines long/short direction for mixed strategies
 
 
 def derive_role(timeframe: str) -> str:

@@ -47,6 +47,7 @@ class SignalRole(str, Enum):
     ADD_GUARD = "add_guard"
     REDUCE_TRIGGER = "reduce_trigger"
     REDUCE_GUARD = "reduce_guard"
+    DIRECTION = "direction"
 
 
 class ScoreTemplate(str, Enum):
