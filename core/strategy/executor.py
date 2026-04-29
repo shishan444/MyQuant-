@@ -451,6 +451,7 @@ def evaluate_layer(
     exit_triggers, exit_guards = [], []
     add_triggers, add_guards = [], []
     reduce_triggers, reduce_guards = [], []
+    direction_genes = []
 
     for gene in layer.signal_genes:
         try:
@@ -474,6 +475,12 @@ def evaluate_layer(
                 reduce_triggers.append(signal)
             elif gene.role == SignalRole.REDUCE_GUARD:
                 reduce_guards.append(signal)
+            elif gene.role == SignalRole.DIRECTION:
+                gene_direction = pd.Series(
+                    np.where(signal, 1.0, -1.0),
+                    index=df.index,
+                )
+                direction_genes.append(gene_direction)
         except ValueError:
             continue
 
@@ -497,11 +504,15 @@ def evaluate_layer(
     both = entries & exits
     entries = entries & ~both
 
+    # Build entry_direction from DIRECTION genes if present
+    entry_direction = direction_genes[0] if direction_genes else None
+
     return SignalSet(
         entries=entries,
         exits=exits,
         adds=adds,
         reduces=reduces,
+        entry_direction=entry_direction,
     )
 
 
@@ -740,6 +751,7 @@ def dna_to_signal_set(
     exit_triggers, exit_guards = [], []
     add_triggers, add_guards = [], []
     reduce_triggers, reduce_guards = [], []
+    direction_genes = []
 
     for gene in dna.signal_genes:
         try:
@@ -763,6 +775,13 @@ def dna_to_signal_set(
                 reduce_triggers.append(signal)
             elif gene.role == SignalRole.REDUCE_GUARD:
                 reduce_guards.append(signal)
+            elif gene.role == SignalRole.DIRECTION:
+                # DIRECTION gene: True -> +1 (long), False -> -1 (short)
+                gene_direction = pd.Series(
+                    np.where(signal, 1.0, -1.0),
+                    index=enhanced_df.index,
+                )
+                direction_genes.append(gene_direction)
         except ValueError:
             continue
 
@@ -787,11 +806,16 @@ def dna_to_signal_set(
     # Generate entry_direction for mixed mode
     entry_direction = None
     if getattr(dna.risk_genes, "direction", None) == "mixed":
-        momentum = close.pct_change(5)
-        entry_direction = pd.Series(
-            np.where(momentum >= 0, 1.0, -1.0),
-            index=enhanced_df.index,
-        )
+        if direction_genes:
+            # Use DIRECTION gene signals (priority over momentum)
+            entry_direction = direction_genes[0]
+        else:
+            # Fallback: momentum-based
+            momentum = close.pct_change(5)
+            entry_direction = pd.Series(
+                np.where(momentum >= 0, 1.0, -1.0),
+                index=enhanced_df.index,
+            )
 
     return SignalSet(
         entries=entries,
@@ -878,6 +902,7 @@ def batch_signal_sets(
         exit_triggers, exit_guards = [], []
         add_triggers, add_guards = [], []
         reduce_triggers, reduce_guards = [], []
+        direction_genes = []
 
         for gene in dna.signal_genes:
             sig = _gene_signature(gene)
@@ -899,6 +924,12 @@ def batch_signal_sets(
                 reduce_triggers.append(signal)
             elif gene.role == SignalRole.REDUCE_GUARD:
                 reduce_guards.append(signal)
+            elif gene.role == SignalRole.DIRECTION:
+                gene_direction = pd.Series(
+                    np.where(signal, 1.0, -1.0),
+                    index=enhanced_df.index,
+                )
+                direction_genes.append(gene_direction)
 
         all_entry = entry_triggers + entry_guards
         entries = combine_signals(all_entry, dna.logic_genes.entry_logic) if all_entry else pd.Series(False, index=enhanced_df.index)
@@ -921,11 +952,16 @@ def batch_signal_sets(
         # Generate entry_direction for mixed mode
         entry_direction = None
         if getattr(dna.risk_genes, "direction", None) == "mixed":
-            momentum = close.pct_change(5)
-            entry_direction = pd.Series(
-                np.where(momentum >= 0, 1.0, -1.0),
-                index=enhanced_df.index,
-            )
+            if direction_genes:
+                # Use DIRECTION gene signals (priority over momentum)
+                entry_direction = direction_genes[0]
+            else:
+                # Fallback: momentum-based
+                momentum = enhanced_df["close"].pct_change(5)
+                entry_direction = pd.Series(
+                    np.where(momentum >= 0, 1.0, -1.0),
+                    index=enhanced_df.index,
+                )
 
         results.append(SignalSet(
             entries=entries,
