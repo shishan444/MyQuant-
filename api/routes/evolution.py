@@ -228,9 +228,7 @@ def create_task(
 
     # Force override leverage/direction on seed DNA with task-level constraints
     dna.risk_genes.leverage = payload.leverage
-    # mixed mode: don't override direction, allow evolution to explore both
-    if payload.direction != "mixed":
-        dna.risk_genes.direction = payload.direction
+    dna.risk_genes.direction = payload.direction
 
     # Validate data availability
     import re
