@@ -82,17 +82,13 @@ def _dna_dict(direction: str = "long", leverage: int = 1) -> Dict[str, Any]:
 
 
 # ── Fixtures ──
+# db_path inherited from conftest.py
 
 @pytest.fixture
 def tmp_data_dir(tmp_path: Path) -> Path:
     data_dir = tmp_path / "data"
     _make_parquet(data_dir, n=500)
     return data_dir
-
-
-@pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    return tmp_path / "test_e2e.db"
 
 
 @pytest.fixture

@@ -4,6 +4,8 @@ All data generation is delegated to tests.helpers.data_factory.
 Individual test files may define local fixtures with custom parameters.
 """
 
+from pathlib import Path
+
 import pytest
 
 
@@ -17,3 +19,47 @@ from tests.helpers.data_factory import (
     make_mtf_dna,
     make_ema_dna,
 )
+
+
+# ---------------------------------------------------------------------------
+# Shared infrastructure fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def tmp_data_dir(tmp_path: Path) -> Path:
+    """Create a temporary data directory with a minimal BTCUSDT_4h parquet.
+
+    Most API/runner tests need at least one parquet file to avoid "no data" errors.
+    Tests that need larger/custom data can override this fixture locally.
+    """
+    import pandas as pd
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    dummy_df = pd.DataFrame(
+        {"open": [60000], "high": [61000], "low": [59000],
+         "close": [60500], "volume": [100]},
+        index=pd.DatetimeIndex(["2024-01-01"], name="timestamp"),
+    )
+    dummy_df.to_parquet(data_dir / "BTCUSDT_4h.parquet")
+    return data_dir
+
+
+@pytest.fixture
+def db_path(tmp_path: Path) -> Path:
+    """Return a temporary SQLite database path."""
+    return tmp_path / "test.db"
+
+
+@pytest.fixture
+def api_client(db_path: Path, tmp_data_dir: Path):
+    """Create a FastAPI TestClient with test configuration.
+
+    Yields the client within a lifespan context so startup/shutdown events fire.
+    """
+    from MyQuant.api.app import create_app
+    from fastapi.testclient import TestClient
+
+    app = create_app(db_path=db_path, data_dir=tmp_data_dir)
+    with TestClient(app) as c:
+        yield c

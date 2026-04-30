@@ -14,20 +14,13 @@ pytestmark = [pytest.mark.unit]
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from core.strategy.dna import StrategyDNA, RiskGenes, ExecutionGenes, SignalGene, SignalRole
 from core.trading.position import PositionManager, Position
+from core.strategy.dna import StrategyDNA
+from tests.helpers.data_factory import make_dna, make_pm
 
 
 def _make_dna_json(direction="long", leverage=1) -> str:
-    gene = SignalGene(
-        indicator="EMA", params={"period": 10},
-        role=SignalRole.ENTRY_TRIGGER, condition={"type": "price_above"},
-    )
-    dna = StrategyDNA(
-        signal_genes=[gene],
-        risk_genes=RiskGenes(leverage=leverage, direction=direction),
-        execution_genes=ExecutionGenes(timeframe="4h"),
-    )
+    dna = make_dna(direction=direction, leverage=leverage)
     return dna.to_json()
 
 
@@ -280,3 +273,154 @@ class TestRunnerStatePersistence:
         assert pm2.position.side == "long"
         assert pm2.position.entry_price == 100.0
         assert pm2.balance < 100000
+
+
+# ---------------------------------------------------------------------------
+# Test: Full route state transitions
+# ---------------------------------------------------------------------------
+
+class TestTradingAPIStateTransitions:
+    """Test all trading API route state transitions."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, tmp_path):
+        from api.app import create_app
+        from api.db_ext import init_db_ext
+        self.db_path = tmp_path / "test.db"
+        self.data_dir = tmp_path / "market"
+        self.data_dir.mkdir()
+        init_db_ext(self.db_path)
+        self.app = create_app(db_path=self.db_path, data_dir=self.data_dir)
+
+    def _create_task(self, client):
+        """Helper: create a trading task and return task_id."""
+        resp = client.post("/api/trading/tasks", json={
+            "dna_json": _make_dna_json(),
+            "symbol": "BTCUSDT",
+            "timeframe": "4h",
+        })
+        assert resp.status_code == 201
+        return resp.json()["task_id"]
+
+    def test_stop_pending_task(self):
+        from fastapi.testclient import TestClient
+        with TestClient(self.app) as client:
+            task_id = self._create_task(client)
+            resp = client.post(f"/api/trading/tasks/{task_id}/stop")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "stopped"
+            assert data["stop_reason"] == "user_stop"
+
+    @pytest.mark.parametrize("initial_status,expected_code", [
+        ("stopped", 400),
+        ("completed", 400),
+    ])
+    def test_stop_invalid_status_returns_400(self, initial_status, expected_code):
+        from fastapi.testclient import TestClient
+        from api.db_ext import update_paper_trading_task
+        with TestClient(self.app) as client:
+            task_id = self._create_task(client)
+            update_paper_trading_task(self.db_path, task_id, status=initial_status)
+            resp = client.post(f"/api/trading/tasks/{task_id}/stop")
+            assert resp.status_code == expected_code
+
+    def test_pause_pending_task(self):
+        """Pausing a pending task is allowed (status not running)."""
+        from fastapi.testclient import TestClient
+        with TestClient(self.app) as client:
+            task_id = self._create_task(client)
+            resp = client.post(f"/api/trading/tasks/{task_id}/pause")
+            assert resp.status_code == 400  # can only pause running tasks
+
+    @pytest.mark.parametrize("status", ["pending", "running", "stopped"])
+    def test_resume_only_works_for_paused(self, status):
+        from fastapi.testclient import TestClient
+        from api.db_ext import update_paper_trading_task
+        with TestClient(self.app) as client:
+            task_id = self._create_task(client)
+            if status != "pending":
+                update_paper_trading_task(self.db_path, task_id, status=status)
+            resp = client.post(f"/api/trading/tasks/{task_id}/resume")
+            if status == "paused":
+                assert resp.status_code == 200
+            else:
+                assert resp.status_code == 400
+
+    def test_pause_and_resume_flow(self):
+        """Full pause/resume flow via DB manipulation."""
+        from fastapi.testclient import TestClient
+        from api.db_ext import update_paper_trading_task
+        with TestClient(self.app) as client:
+            task_id = self._create_task(client)
+
+            # Simulate running state
+            update_paper_trading_task(self.db_path, task_id, status="running")
+
+            # Pause
+            resp = client.post(f"/api/trading/tasks/{task_id}/pause")
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "paused"
+
+            # Resume
+            resp = client.post(f"/api/trading/tasks/{task_id}/resume")
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "pending"
+
+    def test_trades_empty_for_new_task(self):
+        from fastapi.testclient import TestClient
+        with TestClient(self.app) as client:
+            task_id = self._create_task(client)
+            resp = client.get(f"/api/trading/tasks/{task_id}/trades")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["trades"] == []
+            assert data["total"] == 0
+
+    def test_trades_with_records(self):
+        from fastapi.testclient import TestClient
+        from api.db_ext import save_paper_trade
+        with TestClient(self.app) as client:
+            task_id = self._create_task(client)
+
+            save_paper_trade(
+                self.db_path,
+                task_id=task_id, bar_time="2024-01-01T00:00:00",
+                side="long", action="open", price=100.0, quantity=10.0,
+            )
+            save_paper_trade(
+                self.db_path,
+                task_id=task_id, bar_time="2024-01-01T04:00:00",
+                side="long", action="close", price=110.0, quantity=10.0,
+                pnl=100.0, reason="signal",
+            )
+
+            resp = client.get(f"/api/trading/tasks/{task_id}/trades")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["total"] == 2
+            assert data["trades"][0]["action"] == "close"  # DESC order
+
+    def test_trades_limit_parameter(self):
+        from fastapi.testclient import TestClient
+        from api.db_ext import save_paper_trade
+        with TestClient(self.app) as client:
+            task_id = self._create_task(client)
+
+            for i in range(5):
+                save_paper_trade(
+                    self.db_path,
+                    task_id=task_id,
+                    bar_time=f"2024-01-01T{i*4:02d}:00:00",
+                    side="long", action="open", price=100.0, quantity=1.0,
+                )
+
+            resp = client.get(f"/api/trading/tasks/{task_id}/trades?limit=3")
+            assert resp.status_code == 200
+            assert len(resp.json()["trades"]) == 3
+
+    def test_trades_for_nonexistent_task_returns_404(self):
+        from fastapi.testclient import TestClient
+        with TestClient(self.app) as client:
+            resp = client.get("/api/trading/tasks/no-exist/trades")
+            assert resp.status_code == 404

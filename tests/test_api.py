@@ -28,37 +28,12 @@ from fastapi.testclient import TestClient
 from MyQuant.api.app import create_app
 
 # ── Fixtures ──
+# tmp_data_dir, db_path, api_client inherited from conftest.py
 
 @pytest.fixture
-def tmp_data_dir(tmp_path: Path) -> Path:
-    """Create a temporary data directory with a minimal parquet file."""
-    import pandas as pd
-
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    # Create minimal parquet file for BTCUSDT_4h so evolution task creation passes
-    dummy_df = pd.DataFrame(
-        {"open": [60000], "high": [61000], "low": [59000],
-         "close": [60500], "volume": [100]},
-        index=pd.DatetimeIndex(["2024-01-01"], name="timestamp"),
-    )
-    dummy_df.to_parquet(data_dir / "BTCUSDT_4h.parquet")
-    return data_dir
-
-@pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    """Return a temporary database path."""
-    return tmp_path / "test_api.db"
-
-@pytest.fixture
-def client(db_path: Path, tmp_data_dir: Path):
-    """Create a TestClient with test configuration.
-
-    Yields the client within a lifespan context so startup/shutdown events fire.
-    """
-    app = create_app(db_path=db_path, data_dir=tmp_data_dir)
-    with TestClient(app) as c:
-        yield c
+def client(api_client):
+    """Alias for api_client from conftest."""
+    return api_client
 
 def _sample_dna_dict(indicator: str = "RSI", period: int = 14) -> Dict[str, Any]:
     """Build a minimal valid StrategyDNA dict with configurable indicator."""

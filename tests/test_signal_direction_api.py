@@ -25,6 +25,7 @@ from MyQuant.api.app import create_app
 
 
 # ── Fixtures ──
+# db_path inherited from conftest.py
 
 @pytest.fixture
 def tmp_data_dir(tmp_path: Path) -> Path:
@@ -50,11 +51,6 @@ def tmp_data_dir(tmp_path: Path) -> Path:
     df.index.name = "timestamp"
     df.to_parquet(data_dir / "BTCUSDT_4h.parquet")
     return data_dir
-
-
-@pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    return tmp_path / "test_signal_dir.db"
 
 
 @pytest.fixture

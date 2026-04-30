@@ -29,7 +29,8 @@ from core.trading.position import PositionManager, _RATE_PER_8H
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers (local overrides for PM-specific defaults)
+# Note: For general-purpose DNA/PM creation, use tests.helpers.data_factory
 # ---------------------------------------------------------------------------
 
 def _make_dna(

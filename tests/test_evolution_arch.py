@@ -26,14 +26,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.persistence.db import _connect, get_task, init_db, save_task, update_task
-from core.strategy.dna import (
-    ExecutionGenes,
-    LogicGenes,
-    RiskGenes,
-    SignalGene,
-    SignalRole,
-    StrategyDNA,
-)
+from tests.helpers.data_factory import make_dna
 
 pytestmark = [pytest.mark.integration]
 
@@ -42,24 +35,8 @@ pytestmark = [pytest.mark.integration]
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def _make_dna() -> StrategyDNA:
-    return StrategyDNA(
-        signal_genes=[
-            SignalGene(
-                indicator="RSI", params={"period": 14},
-                role=SignalRole.ENTRY_TRIGGER,
-                condition={"type": "lt", "threshold": 30},
-            ),
-            SignalGene(
-                indicator="RSI", params={"period": 14},
-                role=SignalRole.EXIT_TRIGGER,
-                condition={"type": "gt", "threshold": 70},
-            ),
-        ],
-        logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
-        execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
-        risk_genes=RiskGenes(stop_loss=0.05, take_profit=0.10, position_size=0.3),
-    )
+def _make_dna() -> "StrategyDNA":
+    return make_dna()
 
 
 @pytest.fixture
@@ -68,13 +45,6 @@ def tmp_db(tmp_path: Path) -> Path:
     from api.db_ext import init_db_ext
     init_db_ext(db_path)
     return db_path
-
-
-@pytest.fixture
-def tmp_data_dir(tmp_path: Path) -> Path:
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    return data_dir
 
 
 def _create_task(db_path: Path, task_id: str = "test-task-001") -> Dict[str, Any]:

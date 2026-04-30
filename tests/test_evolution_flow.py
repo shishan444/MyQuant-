@@ -19,14 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core.persistence.db import get_task, init_db, save_task, update_task
-from core.strategy.dna import (
-    ExecutionGenes,
-    LogicGenes,
-    RiskGenes,
-    SignalGene,
-    SignalRole,
-    StrategyDNA,
-)
+from tests.helpers.data_factory import make_dna
 
 pytestmark = [pytest.mark.integration]
 
@@ -35,26 +28,8 @@ pytestmark = [pytest.mark.integration]
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_dna() -> StrategyDNA:
-    return StrategyDNA(
-        signal_genes=[
-            SignalGene(
-                indicator="RSI",
-                params={"period": 14},
-                role=SignalRole.ENTRY_TRIGGER,
-                condition={"type": "lt", "threshold": 30},
-            ),
-            SignalGene(
-                indicator="RSI",
-                params={"period": 14},
-                role=SignalRole.EXIT_TRIGGER,
-                condition={"type": "gt", "threshold": 70},
-            ),
-        ],
-        logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
-        execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
-        risk_genes=RiskGenes(stop_loss=0.05, take_profit=0.10, position_size=0.3),
-    )
+def _make_dna() -> "StrategyDNA":
+    return make_dna()
 
 
 def _sample_evolution_create() -> Dict[str, Any]:
@@ -90,28 +65,8 @@ def _sample_evolution_create() -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Fixtures (tmp_data_dir, db_path from conftest.py)
 # ---------------------------------------------------------------------------
-
-@pytest.fixture
-def tmp_data_dir(tmp_path: Path) -> Path:
-    import pandas as pd
-
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    dummy_df = pd.DataFrame(
-        {"open": [60000], "high": [61000], "low": [59000],
-         "close": [60500], "volume": [100]},
-        index=pd.DatetimeIndex(["2024-01-01"], name="timestamp"),
-    )
-    dummy_df.to_parquet(data_dir / "BTCUSDT_4h.parquet")
-    return data_dir
-
-
-@pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    return tmp_path / "test_flow.db"
-
 
 @pytest.fixture
 def client(db_path: Path, tmp_data_dir: Path):
