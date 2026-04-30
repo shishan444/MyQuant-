@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { TrendingUp, Pause, Eye } from "lucide-react";
+import { TrendingUp, Pause, Play, Square, Eye } from "lucide-react";
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
 import { StatCard } from "@/components/StatCard";
@@ -16,89 +16,31 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn, formatCurrency, formatPercent } from "@/lib/utils";
+import {
+  useTradingTasks,
+  useTradingTrades,
+  useStopTradingTask,
+  usePauseTradingTask,
+  useResumeTradingTask,
+  useTradingWebSocket,
+} from "@/hooks/useTrading";
+import type { TradingTask } from "@/services/trading";
 
 type TrendDirection = "up" | "down" | "neutral";
-type TimeRange = "1w" | "1m" | "all";
 type PositionSide = "long" | "short" | "flat";
-
-interface RunningStrategy {
-  id: string;
-  name: string;
-  runningDays: number;
-  signalCount: number;
-  currentAmount: number;
-  returnRate: number;
-  position: PositionSide;
-}
-
-interface Position {
-  id: string;
-  strategyName: string;
-  side: PositionSide;
-  openPrice: number;
-  currentPrice: number;
-  pnl: number;
-  takeProfit: number;
-  stopLoss: number;
-}
-
-const MOCK_RUNNING_STRATEGIES: RunningStrategy[] = [
-  {
-    id: "1",
-    name: "BTC EMA 交叉策略",
-    runningDays: 15,
-    signalCount: 8,
-    currentAmount: 108500,
-    returnRate: 0.085,
-    position: "long",
-  },
-  {
-    id: "2",
-    name: "ETH RSI 超卖反弹",
-    runningDays: 7,
-    signalCount: 3,
-    currentAmount: 96200,
-    returnRate: -0.038,
-    position: "short",
-  },
-  {
-    id: "3",
-    name: "SOL 布林带突破",
-    runningDays: 22,
-    signalCount: 12,
-    currentAmount: 103100,
-    returnRate: 0.031,
-    position: "flat",
-  },
-];
-
-const MOCK_POSITIONS: Position[] = [
-  {
-    id: "1",
-    strategyName: "BTC EMA 交叉策略",
-    side: "long",
-    openPrice: 95000,
-    currentPrice: 101200,
-    pnl: 6200,
-    takeProfit: 105000,
-    stopLoss: 92000,
-  },
-  {
-    id: "2",
-    strategyName: "ETH RSI 超卖反弹",
-    side: "short",
-    openPrice: 2200,
-    currentPrice: 2116,
-    pnl: 84,
-    takeProfit: 2000,
-    stopLoss: 2350,
-  },
-];
 
 const POSITION_BADGE_MAP: Record<PositionSide, { label: string; className: string }> = {
   long: { label: "多头", className: "text-profit border-profit/30" },
   short: { label: "空头", className: "text-loss border-loss/30" },
   flat: { label: "空仓", className: "text-text-muted border-border-default" },
+};
+
+const STATUS_BADGE_MAP: Record<string, { label: string; className: string }> = {
+  pending: { label: "等待中", className: "text-accent-gold border-accent-gold/30" },
+  running: { label: "运行中", className: "text-profit border-profit/30" },
+  paused: { label: "已暂停", className: "text-accent-gold border-accent-gold/30" },
+  stopped: { label: "已停止", className: "text-loss border-loss/30" },
+  completed: { label: "已完成", className: "text-text-muted border-border-default" },
 };
 
 function getReturnTrend(value: number): TrendDirection {
@@ -107,34 +49,40 @@ function getReturnTrend(value: number): TrendDirection {
   return "neutral";
 }
 
+function toPositionSide(side: string | null): PositionSide {
+  if (side === "long") return "long";
+  if (side === "short") return "short";
+  return "flat";
+}
+
 export function Trading() {
-  const [timeRange, setTimeRange] = useState<TimeRange>("1m");
-  const [strategies] = useState<RunningStrategy[]>(MOCK_RUNNING_STRATEGIES);
-  const [positions] = useState<Position[]>(MOCK_POSITIONS);
+  const { data: taskList, isLoading } = useTradingTasks();
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
-  const hasRunningStrategies = strategies.length > 0;
+  const tasks = taskList?.tasks ?? [];
+  const activeTaskId =
+    selectedTaskId ?? tasks.find((t) => t.status === "running")?.task_id ?? null;
 
-  const portfolioStats = useMemo(() => {
-    const initialCapital = 100000;
-    const currentTotal = strategies.reduce((sum, s) => sum + s.currentAmount, 0);
-    const totalReturn = (currentTotal - initialCapital * strategies.length) / (initialCapital * strategies.length);
-    return {
-      initialCapital,
-      current: currentTotal,
-      totalReturn,
-      vsBtc: totalReturn - 0.042,
-    };
-  }, [strategies]);
+  useTradingWebSocket(activeTaskId);
 
-  if (!hasRunningStrategies) {
+  if (isLoading) {
+    return (
+      <PageTransition>
+        <div className="flex items-center justify-center h-64">
+          <span className="text-text-muted">加载中...</span>
+        </div>
+      </PageTransition>
+    );
+  }
+
+  if (tasks.length === 0) {
     return (
       <PageTransition>
         <EmptyState
           icon={TrendingUp}
-          title="还没有运行中的模拟交易策略"
-          description="添加策略开始模拟交易，实时跟踪策略表现和持仓状态。"
+          title="还没有模拟交易任务"
+          description="前往策略库选择策略开始模拟交易，实时跟踪策略表现和持仓状态。"
           actions={[
-            { label: "添加策略", onClick: () => {} },
             {
               label: "前往策略库",
               onClick: () => {},
@@ -149,163 +97,95 @@ export function Trading() {
   return (
     <PageTransition>
       <div className="flex flex-col gap-4">
-        {/* 顶部操作栏 */}
+        {/* Header */}
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-text-primary">模拟交易</h2>
-          <Button size="sm" className="gap-1.5">
-            添加策略
-          </Button>
         </div>
 
-        {/* 资金曲线汇总卡片 */}
-        <GlassCard hover={false}>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-text-secondary">资金曲线汇总</h3>
-            <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
-          </div>
-
-          {/* 图表占位区域 */}
-          <div className="flex h-48 items-center justify-center rounded-lg bg-[#0a0a0f]/50 mb-4">
-            <p className="text-sm text-text-muted">资金曲线将在此展示</p>
-          </div>
-
-          {/* 底部统计栏 */}
-          <div className="grid grid-cols-4 gap-3">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-text-secondary">初始资金</span>
-              <span className="text-sm font-num text-text-primary">
-                {formatCurrency(portfolioStats.initialCapital)}
-              </span>
-            </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-text-secondary">当前资金</span>
-              <span className="text-sm font-num text-text-primary">
-                {formatCurrency(portfolioStats.current)}
-              </span>
-            </div>
-            <StatCard
-              label="总收益"
-              value={formatPercent(portfolioStats.totalReturn)}
-              trend={getReturnTrend(portfolioStats.totalReturn)}
-              className="p-2"
-            />
-            <StatCard
-              label="vs BTC"
-              value={formatPercent(portfolioStats.vsBtc)}
-              trend={getReturnTrend(portfolioStats.vsBtc)}
-              className="p-2"
-            />
-          </div>
-        </GlassCard>
-
-        {/* 运行中的策略 */}
+        {/* Running strategies grid */}
         <div>
           <h3 className="mb-3 text-sm font-medium text-text-secondary">
-            运行中的策略 ({strategies.length})
+            交易任务 ({tasks.length})
           </h3>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {strategies.map((strategy) => (
-              <RunningStrategyCard key={strategy.id} strategy={strategy} />
+            {tasks.map((task) => (
+              <TaskCard
+                key={task.task_id}
+                task={task}
+                isSelected={task.task_id === activeTaskId}
+                onSelect={() => setSelectedTaskId(task.task_id)}
+              />
             ))}
           </div>
         </div>
 
-        {/* 持仓详情表格 */}
-        {positions.length > 0 && (
-          <div>
-            <h3 className="mb-3 text-sm font-medium text-text-secondary">
-              持仓详情
-            </h3>
-            <div className="rounded-lg border border-border-default overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-[#0f0f18] hover:bg-[#0f0f18]">
-                    <TableHead className="text-text-secondary">策略</TableHead>
-                    <TableHead className="text-text-secondary">方向</TableHead>
-                    <TableHead className="text-text-secondary">开仓价</TableHead>
-                    <TableHead className="text-text-secondary">当前价</TableHead>
-                    <TableHead className="text-text-secondary">盈亏</TableHead>
-                    <TableHead className="text-text-secondary">止盈</TableHead>
-                    <TableHead className="text-text-secondary">止损</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {positions.map((pos) => (
-                    <PositionRow key={pos.id} position={pos} />
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </div>
-        )}
+        {/* Selected task detail */}
+        {activeTaskId && <TaskDetail taskId={activeTaskId} />}
       </div>
     </PageTransition>
   );
 }
 
-interface TimeRangeSelectorProps {
-  value: TimeRange;
-  onChange: (value: TimeRange) => void;
+// ---------------------------------------------------------------------------
+// Task Card
+// ---------------------------------------------------------------------------
+
+interface TaskCardProps {
+  task: TradingTask;
+  isSelected: boolean;
+  onSelect: () => void;
 }
 
-function TimeRangeSelector({ value, onChange }: TimeRangeSelectorProps) {
-  const options: { label: string; value: TimeRange }[] = [
-    { label: "1周", value: "1w" },
-    { label: "1月", value: "1m" },
-    { label: "全部", value: "all" },
-  ];
+function TaskCard({ task, isSelected, onSelect }: TaskCardProps) {
+  const stopMut = useStopTradingTask();
+  const pauseMut = usePauseTradingTask();
+  const resumeMut = useResumeTradingTask();
+
+  const posSide = toPositionSide(task.position_side);
+  const posBadge = POSITION_BADGE_MAP[posSide];
+  const statusBadge = STATUS_BADGE_MAP[task.status] ?? STATUS_BADGE_MAP.stopped;
+  const returnRate = task.initial_cash > 0
+    ? (task.total_pnl || 0) / task.initial_cash
+    : 0;
+  const trend = getReturnTrend(returnRate);
+  const isRunning = task.status === "running";
+  const isPaused = task.status === "paused";
+  const isActive = isRunning || isPaused || task.status === "pending";
 
   return (
-    <div className="flex items-center gap-1 rounded-md bg-[#0a0a0f]/50 p-0.5">
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          onClick={() => onChange(opt.value)}
-          className={cn(
-            "rounded px-2 py-1 text-xs transition-colors",
-            value === opt.value
-              ? "bg-accent-gold/20 text-accent-gold"
-              : "text-text-muted hover:text-text-secondary"
-          )}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-interface RunningStrategyCardProps {
-  strategy: RunningStrategy;
-}
-
-function RunningStrategyCard({ strategy }: RunningStrategyCardProps) {
-  const trend: TrendDirection = getReturnTrend(strategy.returnRate);
-  const positionBadge = POSITION_BADGE_MAP[strategy.position];
-
-  return (
-    <GlassCard className="flex flex-col gap-3" hover={false}>
-      {/* 策略头部 */}
+    <GlassCard
+      className={cn("flex flex-col gap-3 cursor-pointer transition-all", isSelected && "ring-1 ring-accent-gold/30")}
+      hover={false}
+      onClick={onSelect}
+    >
+      {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex flex-col gap-0.5">
           <span className="text-sm font-medium text-text-primary">
-            {strategy.name}
+            {task.strategy_name || task.symbol}
           </span>
           <span className="text-xs text-text-muted">
-            运行 {strategy.runningDays} 天 / {strategy.signalCount} 个信号
+            {task.symbol} / {task.timeframe} / {task.leverage}x
           </span>
         </div>
-        <Badge variant="outline" className={cn("h-5 text-[10px]", positionBadge.className)}>
-          {positionBadge.label}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          <Badge variant="outline" className={cn("h-5 text-[10px]", statusBadge.className)}>
+            {statusBadge.label}
+          </Badge>
+          {posSide !== "flat" && (
+            <Badge variant="outline" className={cn("h-5 text-[10px]", posBadge.className)}>
+              {posBadge.label}
+            </Badge>
+          )}
+        </div>
       </div>
 
-      {/* 金额与收益率 */}
+      {/* Balance & PnL */}
       <div className="flex items-end justify-between">
         <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-text-secondary">当前金额</span>
+          <span className="text-xs text-text-secondary">余额</span>
           <span className="text-base font-num font-semibold text-text-primary">
-            {formatCurrency(strategy.currentAmount)}
+            {formatCurrency(task.balance ?? task.initial_cash)}
           </span>
         </div>
         <span
@@ -316,13 +196,12 @@ function RunningStrategyCard({ strategy }: RunningStrategyCardProps) {
             trend === "neutral" && "text-text-primary"
           )}
         >
-          {formatPercent(strategy.returnRate)}
+          {formatPercent(returnRate)}
         </span>
       </div>
 
-      {/* 收益率进度条 */}
       <Progress
-        value={Math.min(Math.abs(strategy.returnRate) * 100, 100)}
+        value={Math.min(Math.abs(returnRate) * 100, 100)}
         className={cn(
           "h-1.5",
           trend === "up" && "[&>[data-slot=progress-indicator]]:bg-profit",
@@ -331,69 +210,171 @@ function RunningStrategyCard({ strategy }: RunningStrategyCardProps) {
         )}
       />
 
-      {/* 操作按钮 */}
-      <div className="flex items-center gap-2 pt-1">
-        <Button variant="outline" size="xs" className="gap-1 text-xs">
-          <Pause className="h-3 w-3" />
-          暂停
-        </Button>
-        <Button variant="ghost" size="xs" className="gap-1 text-xs text-text-secondary">
-          <Eye className="h-3 w-3" />
-          详情
-        </Button>
+      {/* Stats */}
+      <div className="flex items-center gap-3 text-xs text-text-muted">
+        <span>{task.total_trades} 笔交易</span>
+        <span>{task.win_count} 胜 / {task.loss_count} 负</span>
       </div>
+
+      {/* Actions */}
+      {isActive && (
+        <div className="flex items-center gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+          {isRunning && (
+            <Button
+              variant="outline"
+              size="xs"
+              className="gap-1 text-xs"
+              onClick={() => pauseMut.mutate(task.task_id)}
+            >
+              <Pause className="h-3 w-3" />
+              暂停
+            </Button>
+          )}
+          {isPaused && (
+            <Button
+              variant="outline"
+              size="xs"
+              className="gap-1 text-xs"
+              onClick={() => resumeMut.mutate(task.task_id)}
+            >
+              <Play className="h-3 w-3" />
+              恢复
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="xs"
+            className="gap-1 text-xs text-loss"
+            onClick={() => stopMut.mutate(task.task_id)}
+          >
+            <Square className="h-3 w-3" />
+            停止
+          </Button>
+        </div>
+      )}
     </GlassCard>
   );
 }
 
-interface PositionRowProps {
-  position: Position;
+// ---------------------------------------------------------------------------
+// Task Detail Panel
+// ---------------------------------------------------------------------------
+
+function TaskDetail({ taskId }: { taskId: string }) {
+  const { data: tradeData } = useTradingTrades(taskId, 20);
+
+  // Find the task from the task list
+  // We rely on the parent's query cache for the task data
+  const trades = tradeData?.trades ?? [];
+
+  return (
+    <div>
+      <h3 className="mb-3 text-sm font-medium text-text-secondary">
+        交易记录
+      </h3>
+      {trades.length === 0 ? (
+        <div className="flex items-center justify-center h-24 rounded-lg border border-border-default">
+          <span className="text-sm text-text-muted">暂无交易记录</span>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border-default overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-[#0f0f18] hover:bg-[#0f0f18]">
+                <TableHead className="text-text-secondary">时间</TableHead>
+                <TableHead className="text-text-secondary">方向</TableHead>
+                <TableHead className="text-text-secondary">操作</TableHead>
+                <TableHead className="text-text-secondary">价格</TableHead>
+                <TableHead className="text-text-secondary">数量</TableHead>
+                <TableHead className="text-text-secondary">盈亏</TableHead>
+                <TableHead className="text-text-secondary">原因</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {trades.map((trade) => (
+                <TradeRow key={trade.id} trade={trade} />
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
 }
 
-function PositionRow({ position }: PositionRowProps) {
-  const pnlTrend: TrendDirection = getReturnTrend(position.pnl);
-  const sideBadge = POSITION_BADGE_MAP[position.side];
+interface TradeRowProps {
+  trade: {
+    id: number;
+    bar_time: string;
+    side: string;
+    action: string;
+    price: number;
+    quantity: number;
+    pnl: number | null;
+    reason: string | null;
+  };
+}
+
+function TradeRow({ trade }: TradeRowProps) {
+  const pnlTrend = trade.pnl !== null ? getReturnTrend(trade.pnl) : "neutral";
+  const actionLabel: Record<string, string> = {
+    open: "开仓",
+    close: "平仓",
+    add: "加仓",
+    reduce: "减仓",
+  };
+  const sideLabel: Record<string, string> = {
+    long: "多",
+    short: "空",
+    "": "-",
+  };
 
   return (
     <TableRow>
       <TableCell>
-        <span className="text-sm text-text-primary">{position.strategyName}</span>
+        <span className="text-xs text-text-muted">
+          {trade.bar_time.slice(0, 19).replace("T", " ")}
+        </span>
       </TableCell>
       <TableCell>
-        <Badge variant="outline" className={cn("h-5 text-[10px]", sideBadge.className)}>
-          {sideBadge.label}
-        </Badge>
+        <span className="text-sm text-text-primary">
+          {sideLabel[trade.side] ?? trade.side}
+        </span>
       </TableCell>
       <TableCell>
-        <span className="font-num text-sm text-text-primary">
-          {formatCurrency(position.openPrice)}
+        <span className="text-sm text-text-primary">
+          {actionLabel[trade.action] ?? trade.action}
         </span>
       </TableCell>
       <TableCell>
         <span className="font-num text-sm text-text-primary">
-          {formatCurrency(position.currentPrice)}
+          {formatCurrency(trade.price)}
         </span>
       </TableCell>
       <TableCell>
-        <span
-          className={cn(
-            "font-num text-sm font-medium",
-            pnlTrend === "up" && "text-profit",
-            pnlTrend === "down" && "text-loss",
-            pnlTrend === "neutral" && "text-text-primary"
-          )}
-        >
-          {formatCurrency(position.pnl)}
+        <span className="font-num text-sm text-text-primary">
+          {trade.quantity.toFixed(4)}
         </span>
       </TableCell>
       <TableCell>
-        <span className="font-num text-sm text-profit">
-          {formatCurrency(position.takeProfit)}
-        </span>
+        {trade.pnl !== null ? (
+          <span
+            className={cn(
+              "font-num text-sm font-medium",
+              pnlTrend === "up" && "text-profit",
+              pnlTrend === "down" && "text-loss",
+              pnlTrend === "neutral" && "text-text-primary"
+            )}
+          >
+            {formatCurrency(trade.pnl)}
+          </span>
+        ) : (
+          <span className="text-text-muted">-</span>
+        )}
       </TableCell>
       <TableCell>
-        <span className="font-num text-sm text-loss">
-          {formatCurrency(position.stopLoss)}
+        <span className="text-xs text-text-muted">
+          {trade.reason ?? "-"}
         </span>
       </TableCell>
     </TableRow>
