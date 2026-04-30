@@ -1,142 +1,93 @@
 """Scoring template definitions.
 
-Templates use 11 dimensions for comprehensive strategy evaluation:
-- Core: annual_return, sharpe_ratio, max_drawdown, win_rate, calmar_ratio
-- Extended: sortino_ratio, profit_factor, max_consecutive_losses, monthly_consistency, r_squared
+Three differentiated templates use 5 core dimensions:
+- annual_return, sharpe_ratio, max_drawdown, profit_factor, monthly_consistency
+
+Legacy template names are automatically mapped to the new templates.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, Optional
 
 
 @dataclass
 class ScoringTemplate:
-    """A scoring template with dimension weights and threshold."""
+    """A scoring template with dimension weights, threshold, and optional hard constraints."""
     name: str
     weights: Dict[str, float]
     threshold: float
+    hard_constraints: Optional[Dict[str, float]] = None
 
 
 SCORING_TEMPLATES: Dict[str, ScoringTemplate] = {
-    "balanced": ScoringTemplate(
-        name="balanced",
-        weights={
-            "annual_return": 0.15,
-            "sharpe_ratio": 0.15,
-            "max_drawdown": 0.15,
-            "win_rate": 0.10,
-            "calmar_ratio": 0.10,
-            "sortino_ratio": 0.10,
-            "profit_factor": 0.10,
-            "max_consecutive_losses": 0.05,
-            "monthly_consistency": 0.05,
-            "r_squared": 0.05,
-        },
-        threshold=65.0,
-    ),
-    "aggressive": ScoringTemplate(
-        name="aggressive",
+    # -- Core templates --
+    "explorer": ScoringTemplate(
+        name="explorer",
         weights={
             "annual_return": 0.25,
-            "sharpe_ratio": 0.15,
+            "alpha": 0.15,
+            "sharpe_ratio": 0.20,
+            "profit_factor": 0.15,
             "max_drawdown": 0.10,
-            "win_rate": 0.10,
-            "calmar_ratio": 0.10,
-            "sortino_ratio": 0.05,
-            "profit_factor": 0.10,
-            "max_consecutive_losses": 0.05,
-            "monthly_consistency": 0.05,
-            "r_squared": 0.05,
+            "monthly_consistency": 0.10,
+            "trade_count_penalty": 0.05,
         },
-        threshold=55.0,
+        threshold=50.0,
     ),
-    "conservative": ScoringTemplate(
-        name="conservative",
+    "optimizer": ScoringTemplate(
+        name="optimizer",
         weights={
-            "annual_return": 0.05,
-            "sharpe_ratio": 0.15,
-            "max_drawdown": 0.25,
-            "win_rate": 0.10,
-            "calmar_ratio": 0.15,
-            "sortino_ratio": 0.10,
-            "profit_factor": 0.05,
-            "max_consecutive_losses": 0.10,
-            "monthly_consistency": 0.03,
-            "r_squared": 0.02,
-        },
-        threshold=75.0,
-    ),
-    # Legacy aliases (mapped to new templates)
-    "profit_first": ScoringTemplate(
-        name="profit_first",
-        weights={
-            "annual_return": 0.25,
-            "sharpe_ratio": 0.15,
-            "max_drawdown": 0.10,
-            "win_rate": 0.10,
-            "calmar_ratio": 0.10,
-            "sortino_ratio": 0.05,
-            "profit_factor": 0.10,
-            "max_consecutive_losses": 0.05,
-            "monthly_consistency": 0.05,
-            "r_squared": 0.05,
-        },
-        threshold=55.0,
-    ),
-    "steady": ScoringTemplate(
-        name="steady",
-        weights={
+            "sharpe_ratio": 0.25,
             "annual_return": 0.15,
-            "sharpe_ratio": 0.15,
-            "max_drawdown": 0.15,
-            "win_rate": 0.10,
-            "calmar_ratio": 0.10,
-            "sortino_ratio": 0.10,
+            "alpha": 0.10,
+            "monthly_consistency": 0.20,
             "profit_factor": 0.10,
-            "max_consecutive_losses": 0.05,
-            "monthly_consistency": 0.05,
-            "r_squared": 0.05,
+            "max_drawdown": 0.15,
+            "trade_count_penalty": 0.05,
         },
         threshold=65.0,
+        hard_constraints={
+            "annual_return": 0.10,   # annual return < 10% -> zero score
+            "max_drawdown": -0.60,   # drawdown > 60% -> zero score
+        },
     ),
-    "risk_first": ScoringTemplate(
-        name="risk_first",
+    "max_return": ScoringTemplate(
+        name="max_return",
         weights={
-            "annual_return": 0.05,
+            "annual_return": 0.40,
+            "alpha": 0.15,
+            "profit_factor": 0.20,
             "sharpe_ratio": 0.15,
-            "max_drawdown": 0.25,
-            "win_rate": 0.10,
-            "calmar_ratio": 0.15,
-            "sortino_ratio": 0.10,
-            "profit_factor": 0.05,
-            "max_consecutive_losses": 0.10,
-            "monthly_consistency": 0.03,
-            "r_squared": 0.02,
+            "trade_count_penalty": 0.10,
         },
-        threshold=75.0,
+        threshold=40.0,
     ),
-    "custom": ScoringTemplate(
-        name="custom",
-        weights={
-            "annual_return": 0.12,
-            "sharpe_ratio": 0.12,
-            "max_drawdown": 0.12,
-            "win_rate": 0.12,
-            "calmar_ratio": 0.12,
-            "sortino_ratio": 0.10,
-            "profit_factor": 0.10,
-            "max_consecutive_losses": 0.10,
-            "monthly_consistency": 0.05,
-            "r_squared": 0.05,
-        },
-        threshold=70.0,
-    ),
+}
+
+# Legacy template name -> new template name mapping
+_TEMPLATE_ALIASES: Dict[str, str] = {
+    "balanced": "optimizer",
+    "steady": "optimizer",
+    "custom": "optimizer",
+    "aggressive": "explorer",
+    "profit_first": "explorer",
+    "conservative": "optimizer",
+    "risk_first": "optimizer",
 }
 
 
 def get_template(name: str) -> ScoringTemplate:
-    """Get a scoring template by name."""
-    if name not in SCORING_TEMPLATES:
-        raise ValueError(f"Unknown template: {name}. Available: {list(SCORING_TEMPLATES.keys())}")
-    return SCORING_TEMPLATES[name]
+    """Get a scoring template by name (supports aliases)."""
+    # Resolve alias
+    resolved = _TEMPLATE_ALIASES.get(name, name)
+    if resolved not in SCORING_TEMPLATES:
+        raise ValueError(
+            f"Unknown template: {name}. Available: {list(SCORING_TEMPLATES.keys())}"
+        )
+    return SCORING_TEMPLATES[resolved]
+
+
+def list_template_names() -> list[str]:
+    """Return all valid template names (core + aliases)."""
+    return list(SCORING_TEMPLATES.keys()) + list(_TEMPLATE_ALIASES.keys())

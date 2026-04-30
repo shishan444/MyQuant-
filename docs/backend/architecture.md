@@ -37,8 +37,8 @@
           ▼                 ▼    │    ▼                   ▼
 ┌─────────────┐  ┌──────────────┐│ ┌──────────────┐ ┌──────────────┐
 │ 数据层 (B2)  │  │ 评分 (B7)    ││ │ 验证 (B8)    │ │ 发现 (B9)    │
-│ Parquet CRUD │  │ 10 维打分    ││ │ 假设/场景    │ │ 决策树/KNN   │
-│ MTF 加载     │  │ 模板权重     ││ │ 10 种场景    │ │              │
+│ Parquet CRUD │  │ 6维+Alpha   ││ │ 假设/场景    │ │ 决策树/KNN   │
+│ MTF 加载     │  │ 3模板+硬约束 ││ │ 10 种场景    │ │              │
 └──────┬──────┘  └──────┬───────┘│ └──────────────┘ └──────────────┘
        │                │        │
        │  ┌─────────────▼────────▼──────────────────────────────┐
@@ -59,14 +59,15 @@
 │               │  vectorbt + Numba    │
 │               │  双向交易 + SL/TP    │
 │               │  资金费率 + 爆仓     │
+│               │  基准收益 + Alpha    │
 │               └──────────┬──────────┘
-│                          │ BacktestResult
+│                          │ BacktestResult (含 alpha/market_annual_return)
 │                          ▼
 │               ┌─────────────────────┐     ┌─────────────────────┐
 │               │  进化引擎 (B6)       │◄───►│   SQLite 持久化      │
 │               │  遗传算法 13 变异    │     │   (B10)              │
 │               │  自适应 1/5 规则     │     │   5 张表             │
-│               │  冠军追踪            │     │   checkpoint 恢复    │
+│               │  种群排序暴露        │     │   checkpoint 恢复    │
 │               └─────────────────────┘     └─────────────────────┘
 ```
 
@@ -79,9 +80,9 @@
 | B3 指标与信号 | 56 种技术指标计算 + 信号构建器 | **翻译器**：把指标数值翻译成布尔交易信号 |
 | B4 策略 DNA | 四层基因编码 + 信号转换 + MTF 引擎路由 | **核心类型**：所有模块围绕 StrategyDNA 运转 |
 | B4.1 MTF 引擎 | 多时间周期共振评分 + 决策门控 | **上下文增强**：在布尔信号基础上叠加方向/共振/动量评分 |
-| B5 回测引擎 | vectorbt 交易模拟 + 风控 + Walk-Forward | **裁判**：用历史数据验证策略的可行性和收益 |
-| B6 进化引擎 | 手写遗传算法框架 | **搜索引擎**：在 DNA 空间中自动发现高分策略 |
-| B7 评分系统 | 10 维度评分 + 模板权重 + 惩罚机制 | **标尺**：把回测结果变成可比较的标量分数 |
+| B5 回测引擎 | vectorbt 交易模拟 + 风控 + Walk-Forward + 基准收益计算 | **裁判**：用历史数据验证策略的可行性和收益，自动计算市场基准 |
+| B6 进化引擎 | 手写遗传算法框架 + 种群排序暴露 | **搜索引擎**：在 DNA 空间中自动发现高分策略 |
+| B7 评分系统 | 6 维分段线性评分 + Alpha 超额收益 + 3 套差异化模板 + 硬约束 | **标尺**：把回测结果变成可比较的标量分数，含市场基准感知 |
 | B8 验证与场景 | 假设验证 + 10 种场景检测 | **预检**：用户手动构建假设时验证逻辑是否成立 |
 | B9 规则发现 | 决策树 + KNN 相似案例 | **辅助**：从数据中发现交易规则，非主链路 |
 | B10 持久化 | SQLite 5 张表 CRUD + checkpoint | **记忆**：保存进化任务、策略、回测结果 |
@@ -114,7 +115,7 @@
    ├─ load_mtf_data() 加载额外周期数据 (MTF 模式)
    └─ 产出 dfs_by_timeframe: Dict[str, DataFrame]
       │
-5. 进化主循环 (engine.py:232)
+5. 进化主循环 (engine.py:196)
    │
    ├─ init_population() 初始化种群 (15 个体)
    │   ├─ 40% 模板突变 (7 种经典策略模板)
@@ -125,32 +126,34 @@
       │
       ├─ 评估: 每个个体走 "DNA -> 信号 -> 回测 -> 评分"
       │   │
-      │   ├─ dna_to_signal_set() (executor.py:530)
+      │   ├─ dna_to_signal_set() (executor.py)
       │   │   ├─ mtf_mode != None -> run_mtf_engine()
       │   │   │   ├─ evaluate_layer_with_context() (时机 + 上下文)
       │   │   │   ├─ synthesize_cross_layer() (direction/confluence 评分)
       │   │   │   └─ apply_decision_gate() (门控过滤)
       │   │   └─ 否则 -> 旧 AND/OR 路径
       │   │
-      │   ├─ BacktestEngine.run() (engine.py:460)
+      │   ├─ BacktestEngine.run() / batch_run()
       │   │   ├─ from_order_func() (Numba JIT 交易执行)
       │   │   ├─ _apply_funding_costs() (杠杆费率)
-      │   │   └─ _check_liquidation() (爆仓检查)
+      │   │   ├─ _check_liquidation() (爆仓检查)
+      │   │   └─ compute_metrics(benchmark_close=close) (基准收益+Alpha)
       │   │
-      │   └─ score_strategy() (scorer.py:16)
-      │       └─ 10 维度加权评分 -> 总分 0-100
+      │   └─ score_strategy() (scorer.py:27)
+      │       └─ 6 维分段线性 + Alpha + 模板加权 -> 总分 0-100
       │
+      ├─ self._population = sorted(scored)  [种群排序暴露]
       ├─ 选择: 锦标赛选择 tournsize=3
       ├─ 交叉: 功能分区 (entry from A, exit from B)
       ├─ 变异: random.choices(mutation_pool, n_mutations)
-      │   └─ 13 种算子按停滞程度调整权重
+      │   └─ 13 种算子按停滞程度 + 模板偏置调整权重
       ├─ 新鲜血液: 3-5 个随机个体
       ├─ 多样性维护: 替换重复个体
       │
-      └─ 每代回调 (runner.py:209-362):
+      └─ 每代回调 (runner.py on_generation):
           ├─ save_history() 记录分数曲线
           ├─ save_snapshot() 保存完整种群
-          ├─ ChampionTracker 更新冠军
+          ├─ ChampionTracker 原子更新冠军 (score+metrics+dimension_scores)
           ├─ 自动提取 strategy_threshold 以上的策略
           └─ WebSocket 推送 generation_complete
               │
@@ -305,6 +308,7 @@ MTF 策略从 DNA 到 SignalSet 的完整决策链：
 - **不做因子研究**：不支持 Alpha 因子挖掘和因子组合
 - **MTF 引擎已知限制**：`_build_exec_signal_set` 用扁平 AND 组合 state 和 pulse 信号（应改为 gate+trigger 模式）；动量 confluence 用 `> 0` 判断方向，对 RSI 等有界指标不正确（应用 `> 50`）
 - **进化搜索的局限**：种群默认 15 个体，搜索空间有限；没有岛屿模型或协同进化
+- **Alpha 维度的局限**：benchmark 使用无杠杆买入持有，3x 杠杆策略在牛市天然有正 Alpha（杠杆放大了收益）。这不是真正的"选股能力"，而是杠杆成本。更精确的 Alpha 应该用同杠杆买入持有作基准，但当前未实现
 
 ## 数据库模型
 

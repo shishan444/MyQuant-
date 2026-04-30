@@ -40,6 +40,8 @@ class BacktestResult:
     reduce_count: int = 0
     metrics_dict: dict | None = None
     degraded_layers: int = 0
+    market_annual_return: float = 0.0
+    alpha: float = 0.0
 
 
 @njit
@@ -561,6 +563,7 @@ class BacktestEngine:
             bars_per_year=bars_per_year,
             trade_win_rate=trade_win_rate,
             trade_returns=trade_returns,
+            benchmark_close=enhanced_df["close"],
         )
 
         sharpe = metrics["sharpe_ratio"]
@@ -592,6 +595,8 @@ class BacktestEngine:
             reduce_count=reduce_count,
             metrics_dict=metrics,
             degraded_layers=degraded,
+            market_annual_return=metrics.get("market_annual_return", 0.0),
+            alpha=metrics.get("alpha", 0.0),
         )
 
     def run(

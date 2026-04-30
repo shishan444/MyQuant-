@@ -21,9 +21,9 @@ BTC/ETH 量化交易策略进化工具 -- 用手写遗传算法自动发现、�
 | B3 | 技术指标与信号 | `core/features/` + `core/features/patterns/` (8 files) | 56 个指标统一计算引擎、蜡烛图形态识别（10+ 种）、信号构建器（DNA->交易信号）、指标注册表 | 高 | 已完成 2026-04-23 |
 | B4 | 策略 DNA | `core/strategy/` (4 files) | 策略基因编码（四层基因 + 三角色系统 + MTF 控制参数）、DNA->信号转换（双路由）、多时间周期多层 DNA 支持、双向交易 | 高 | 已完成 2026-04-25 |
 | B4.1 | MTF 共振引擎 | `core/strategy/mtf_engine.py` (789 行) | 双轨道三阶段管线：层评估+上下文提取、跨层综合（direction/confluence/momentum评分）、决策门控 | 高 | 已完成 2026-04-25 |
-| B5 | 回测引擎 | `core/backtest/` (3 files) | vectorbt from_order_func 回测执行、双向交易（long/short/mixed）、Walk-Forward 验证、杠杆/做空/资金费率处理 | 高 | 已完成 2026-04-25 |
-| B6 | 进化引擎 | `core/evolution/` (7 files) | 手写遗传算法框架：种群管理、6+7 变异算子、锦标赛选择、自适应 1/5 规则、MTF 层感知多样性维护、冠军追踪、血统记录 | 高 | 已完成 2026-04-25 |
-| B7 | 评分系统 | `core/scoring/` (5 files) | 多维度策略评分（收益/风险/稳定性/效率）、归一化、评分模板（收益优先/风险优先/均衡） | 高 | 已完成 2026-04-23 |
+| B5 | 回测引擎 | `core/backtest/` (3 files) | vectorbt from_order_func 回测执行、双向交易（long/short/mixed）、Walk-Forward 验证、杠杆/做空/资金费率处理、基准收益计算（Alpha 数据源） | 高 | 已完成 2026-04-30 |
+| B6 | 进化引擎 | `core/evolution/` (7 files) | 手写遗传算法框架：种群管理、6+7 变异算子、锦标赛选择、自适应 1/5 规则、MTF 层感知多样性维护、种群排序暴露、ChampionTracker 原子更新 | 高 | 已完成 2026-04-30 |
+| B7 | 评分系统 | `core/scoring/` (4 files) | 6 维分段线性评分（annual_return/sharpe/max_drawdown/profit_factor/monthly_consistency/alpha）+ 3 套差异化模板（explorer/optimizer/max_return）+ 硬约束 + Sigmoid 交易数量惩罚 + 市场基准感知 | 高 | 已完成 2026-04-30 |
 | B8 | 验证与场景 | `core/validation/` + `core/validation/scene/` (16 files) | 假设验证引擎、规则条件评估、10 种场景验证（均值回归/突破/支撑阻力/跨周期/成交量异动等） | 中 | 已完成 2026-04-23 |
 | B9 | 规则发现 | `core/discovery/` (7 files) | 决策树策略发现、KNN 相似案例检索、标签生成、统计验证、特征编码 | 中 | 已完成 2026-04-23 |
 | B10 | 持久化 | `core/persistence/` (3 files) | SQLite 3 张表 CRUD、checkpoint 快照恢复（evolution_task/generation_snapshot/evolution_history） | 高 | 已完成 2026-04-23 |

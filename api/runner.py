@@ -757,7 +757,7 @@ class EvolutionRunner(threading.Thread):
 
             # Use pre-computed metrics from BacktestEngine (avoids double computation)
             metrics = bt_result.metrics_dict
-            template_name = task_row.get("score_template", "profit_first")
+            template_name = task_row.get("score_template", "explorer")
             score_result = score_strategy(metrics, template_name, liquidated=bt_result.liquidated)
 
             diagnostics["score"] = score_result["total_score"]
@@ -835,7 +835,7 @@ class EvolutionRunner(threading.Thread):
                     for ind in population
                 ]
 
-            template_name = task_row.get("score_template", "profit_first")
+            template_name = task_row.get("score_template", "explorer")
             scores = []
             for i, (ind, bt_result) in enumerate(zip(population, bt_results)):
                 metrics = bt_result.metrics_dict

@@ -144,6 +144,11 @@ def _tournament_select(
 
 # Template-aware mutation bias overlay
 _TEMPLATE_MUTATION_BIAS = {
+    # Core templates
+    "explorer":   {"params": 1.5, "indicator": 1.2, "risk": 0.5},
+    "optimizer":  {"params": 1.0, "indicator": 1.0, "risk": 1.0},
+    "max_return": {"params": 1.8, "indicator": 1.5, "risk": 0.3},
+    # Legacy aliases
     "profit_first": {"params": 1.5, "indicator": 1.2, "risk": 0.5},
     "aggressive":   {"params": 1.5, "indicator": 1.2, "risk": 0.5},
     "steady":       {"params": 1.0, "indicator": 1.0, "risk": 1.0},
@@ -167,7 +172,7 @@ class EvolutionEngine:
     def __init__(
         self,
         target_score: float = 80.0,
-        template_name: str = "profit_first",
+        template_name: str = "explorer",
         population_size: int = 15,
         max_generations: int = 200,
         patience: int = 15,
@@ -277,6 +282,10 @@ class EvolutionEngine:
 
             # Record for adaptive mutation
             adaptive_mut.record(best_score)
+
+            # Expose scored population (sorted descending) so callbacks can
+            # reliably access the best individual via _population[0].
+            self._population = [ind for ind, _ in scored]
 
             # Callback
             if on_generation:

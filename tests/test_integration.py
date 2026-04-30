@@ -61,7 +61,7 @@ class TestFullPipeline:
         score_result = score_strategy(metrics, template_name="profit_first")
         assert "total_score" in score_result
         assert 0.0 <= score_result["total_score"] <= 100.0
-        assert score_result["template_name"] == "profit_first"
+        assert score_result["template_name"] == "explorer"
 
     def test_ema_short_full_pipeline(self):
         """EMA short strategy through the complete scoring chain."""
@@ -79,7 +79,7 @@ class TestFullPipeline:
 
         metrics = compute_metrics(result.equity_curve, total_trades=result.total_trades)
         score_result = score_strategy(metrics, template_name="risk_first")
-        assert score_result["template_name"] == "risk_first"
+        assert score_result["template_name"] == "optimizer"  # risk_first -> optimizer
 
     def test_zero_trades_gives_zero_score(self):
         """Strategy with no signals should produce zero score."""
@@ -204,7 +204,8 @@ class TestScoringTemplates:
         from core.scoring.scorer import score_strategy
         result = score_strategy(sample_metrics, template_name=template_name)
         assert 0.0 <= result["total_score"] <= 100.0
-        assert result["template_name"] == template_name
+        # Aliases are resolved to core template names
+        assert result["template_name"] in ("explorer", "optimizer", "max_return")
         assert isinstance(result["dimension_scores"], dict)
 
     def test_liquidated_strategy_gets_zero_score(self, sample_metrics):

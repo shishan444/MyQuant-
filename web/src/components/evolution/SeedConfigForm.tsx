@@ -83,7 +83,7 @@ export function SeedConfigForm({
   symbolOptions,
 }: SeedConfigFormProps) {
   const [symbol, setSymbol] = useState("BTCUSDT");
-  const [scoreTemplate, setScoreTemplate] = useState("profit_first");
+  const [scoreTemplate, setScoreTemplate] = useState("explorer");
   const [advOpen, setAdvOpen] = useState(false);
   const [populationSize, setPopulationSize] = useState(15);
   const [maxGenerations, setMaxGenerations] = useState(200);

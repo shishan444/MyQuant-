@@ -152,10 +152,14 @@ export function ProgressPanel({
         )}
         <div className={cn(
           "flex items-center gap-1 text-[11px]",
-          task.direction === "short" ? "text-red-400" : "text-emerald-400"
+          task.direction === "short"
+            ? "text-red-400"
+            : task.direction === "mixed"
+              ? "text-purple-400"
+              : "text-emerald-400"
         )}>
           <CheckCircle className="h-3 w-3" />
-          <span>{task.direction === "short" ? "做空" : "做多"}</span>
+          <span>{task.direction === "short" ? "做空" : task.direction === "mixed" ? "混合" : "做多"}</span>
         </div>
       </div>
 
@@ -174,7 +178,10 @@ export function ProgressPanel({
             <div className="border-t border-slate-700/30 px-3 py-2">
               <div className="flex items-center gap-3 text-xs text-slate-500">
                 <span>
-                  {(task.champion_dna.risk_genes?.direction ?? "long") === "long" ? "做多" : "做空"}
+                  {(() => {
+                    const d = task.champion_dna.risk_genes?.direction ?? "long";
+                    return d === "short" ? "做空" : d === "mixed" ? "混合" : "做多";
+                  })()}
                 </span>
                 <span>
                   止损 {((task.champion_dna.risk_genes?.stop_loss ?? 0.03) * 100).toFixed(1)}%

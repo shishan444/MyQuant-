@@ -1,68 +1,119 @@
-"""Normalize raw metrics to 0-100 scores."""
+"""Normalize raw metrics to 0-100 scores using piecewise linear mapping."""
 from __future__ import annotations
 
-import math
+from typing import List, Tuple
+
+# ---------------------------------------------------------------------------
+# Piecewise linear breakpoints for each scoring dimension
+# ---------------------------------------------------------------------------
+
+# annual_return: steepest gradient in [0%, 50%] (the core range)
+_RETURN_BREAKPOINTS: List[Tuple[float, float]] = [
+    (-1.0, 0.0),   # total loss
+    (0.0, 10.0),   # break-even
+    (0.10, 30.0),  # 10% return
+    (0.30, 60.0),  # 30% return
+    (0.50, 80.0),  # 50% return
+    (1.0, 95.0),   # 100% return
+    (3.0, 100.0),  # 300% return (cap)
+]
+
+# sharpe_ratio: steepest gradient in [0.5, 1.5]
+_SHARPE_BREAKPOINTS: List[Tuple[float, float]] = [
+    (-1.0, 0.0),
+    (0.0, 5.0),
+    (0.5, 20.0),
+    (1.0, 50.0),
+    (1.5, 75.0),
+    (2.0, 90.0),
+    (3.0, 100.0),
+]
+
+# max_drawdown: pure linear, using absolute drawdown (0 = perfect, 0.80 = zero)
+_DRAWDOWN_BREAKPOINTS: List[Tuple[float, float]] = [
+    (0.00, 100.0),   # 0% dd = perfect
+    (0.10, 80.0),    # 10% dd
+    (0.20, 60.0),    # 20% dd
+    (0.30, 40.0),    # 30% dd
+    (0.50, 15.0),    # 50% dd
+    (0.80, 0.0),     # 80% dd = zero
+]
+
+# profit_factor: steep rise above 1.0
+_PROFIT_FACTOR_BREAKPOINTS: List[Tuple[float, float]] = [
+    (0.0, 0.0),
+    (0.5, 10.0),
+    (1.0, 30.0),
+    (1.5, 60.0),
+    (2.0, 80.0),
+    (3.0, 100.0),
+]
+
+# alpha: excess return over unleveraged buy-and-hold benchmark
+_ALPHA_BREAKPOINTS: List[Tuple[float, float]] = [
+    (-0.50, 0.0),    # severely underperforms benchmark
+    (-0.20, 15.0),   # clearly underperforms
+    (0.00, 40.0),    # matches benchmark
+    (0.20, 60.0),    # outperforms by 20%
+    (0.50, 80.0),    # outperforms by 50%
+    (1.00, 95.0),    # outperforms by 100%
+    (3.00, 100.0),   # outperforms by 300%+
+]
+
+
+def piecewise_normalize(
+    value: float,
+    breakpoints: List[Tuple[float, float]],
+) -> float:
+    """Piecewise linear normalization.
+
+    breakpoints: list of (input_val, output_val) tuples, must be sorted
+    by input_val. Values outside the range are clamped to the endpoints.
+    """
+    if value <= breakpoints[0][0]:
+        return breakpoints[0][1]
+    if value >= breakpoints[-1][0]:
+        return breakpoints[-1][1]
+    for i in range(len(breakpoints) - 1):
+        x0, y0 = breakpoints[i]
+        x1, y1 = breakpoints[i + 1]
+        if x0 <= value <= x1:
+            t = (value - x0) / (x1 - x0)
+            return y0 + t * (y1 - y0)
+    return breakpoints[-1][1]
 
 
 def normalize(metric_name: str, value: float) -> float:
     """Map a raw metric value to a 0-100 score.
 
-    Normalization rules:
-    - annual_return: log mapping [-100%, +500%] -> [0, 100]
-    - sharpe_ratio: linear map [0, 3.0] -> [0, 100], >= 3.0 = 100
-    - max_drawdown: 0% drawdown = 100, >= 50% drawdown = 0
-    - win_rate: linear map [30%, 70%] -> [0, 100]
-    - calmar_ratio: linear map [0, 5.0] -> [0, 100], >= 5.0 = 100
+    Core dimensions use piecewise linear normalization for precise
+    sensitivity control. Legacy dimensions kept for backward compatibility.
     """
     if metric_name == "annual_return":
-        # Logarithmic mapping: log1p(value + 1) / log1p(6) * 100
-        # Maps [-1, +5] -> [0, 100] with good discrimination across wide range
-        # -1.0 (total loss) => 0, 0.0 => ~38.9, 1.0 => ~61.1, 5.0 => 100
-        if value <= -1.0:
-            score = 0.0
-        else:
-            score = min(100.0, math.log1p(value + 1.0) / math.log1p(6.0) * 100)
+        score = piecewise_normalize(value, _RETURN_BREAKPOINTS)
     elif metric_name == "sharpe_ratio":
-        # Map [0, 3.0] to [0, 100]
-        score = min(value / 3.0, 1.0) * 100
-        if value < 0:
-            score = max(0, 50 + value * 10)
+        score = piecewise_normalize(value, _SHARPE_BREAKPOINTS)
     elif metric_name == "max_drawdown":
-        # 0% drawdown = 100, >= 50% = 0
-        # value is negative (e.g. -0.60 means 60% drawdown)
-        # Linear: 0% dd → 100, 50% dd → 0
-        score = (1.0 + value) * 100  # -0.60 → 40, but we want < 10 for -0.60
-        score = max(0, min(100, score))
-        # Use squared penalty for large drawdowns
-        if value < -0.20:
-            score = score * (1.0 + value)  # Extra penalty for large dd
-    elif metric_name == "win_rate":
-        # Map [0.3, 0.7] to [0, 100]
-        score = (value - 0.3) / 0.4 * 100
-    elif metric_name == "calmar_ratio":
-        # Map [0, 5.0] to [0, 100]
-        score = min(value / 5.0, 1.0) * 100
-    elif metric_name == "sortino_ratio":
-        # Map [0, 4.0] to [0, 100]
-        score = min(value / 4.0, 1.0) * 100
-        if value < 0:
-            score = max(0, 50 + value * 10)
+        score = piecewise_normalize(abs(value), _DRAWDOWN_BREAKPOINTS)
     elif metric_name == "profit_factor":
-        # Map [0, 3.0] to [0, 100]
-        if value <= 0:
-            score = 0.0
-        elif value < 1.0:
-            score = value * 30  # PF < 1 is poor
-        else:
-            score = min(30 + (value - 1.0) / 2.0 * 70, 100.0)
-    elif metric_name == "max_consecutive_losses":
-        # 0 losses = 100, >= 10 losses = 0
-        score = max(0, 100 - value * 10)
+        score = piecewise_normalize(value, _PROFIT_FACTOR_BREAKPOINTS)
+    elif metric_name == "alpha":
+        score = piecewise_normalize(value, _ALPHA_BREAKPOINTS)
     elif metric_name == "monthly_consistency":
         # Already 0-1, scale to 0-100
         score = value * 100
+    # Legacy dimensions (kept for backward compatibility with metrics.py output)
+    elif metric_name == "win_rate":
+        score = (value - 0.3) / 0.4 * 100
+    elif metric_name == "calmar_ratio":
+        score = min(value / 5.0, 1.0) * 100
+    elif metric_name == "sortino_ratio":
+        score = min(value / 4.0, 1.0) * 100
+        if value < 0:
+            score = max(0, 50 + value * 10)
+    elif metric_name == "max_consecutive_losses":
+        score = max(0, 100 - value * 10)
     elif metric_name == "r_squared":
-        # Already 0-1, scale to 0-100
         score = max(0.0, value) * 100
     else:
         score = 50.0

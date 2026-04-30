@@ -59,7 +59,7 @@ export function AutoConfigForm({
   const [indicatorPool, setIndicatorPool] = useState<string[]>(
     INDICATOR_GROUPS.flatMap((g) => g.items)
   );
-  const [scoreTemplate, setScoreTemplate] = useState("profit_first");
+  const [scoreTemplate, setScoreTemplate] = useState("explorer");
   const [advOpen, setAdvOpen] = useState(false);
   const [populationSize, setPopulationSize] = useState(15);
   const [maxGenerations, setMaxGenerations] = useState(200);

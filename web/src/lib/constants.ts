@@ -224,6 +224,10 @@ export const CONDITION_OPTIONS = [
 // ---------------------------------------------------------------------------
 
 export const SCORE_TEMPLATE_LABELS: Record<string, string> = {
+  explorer: "收益探索",
+  optimizer: "稳健收益",
+  max_return: "极致收益",
+  // Legacy aliases
   profit_first: "收益优先",
   steady: "稳健优先",
   risk_first: "风控优先",
@@ -231,19 +235,19 @@ export const SCORE_TEMPLATE_LABELS: Record<string, string> = {
 
 export const OPTIMIZE_TARGETS = [
   {
-    value: "profit_first",
-    label: "收益优先",
-    description: "年化收益 35% | 夏普 25% | 最大回撤 25% | 胜率 15%",
+    value: "explorer",
+    label: "收益探索",
+    description: "年化35% | 夏普20% | 盈亏比15% | 回撤15% | 适合探索新策略",
   },
   {
-    value: "steady",
-    label: "稳健优先",
-    description: "年化收益 20% | 夏普 35% | 最大回撤 35% | 卡玛 10%",
+    value: "optimizer",
+    label: "稳健收益",
+    description: "夏普25% | 年化20% | 月度稳定20% | 适合实盘生产",
   },
   {
-    value: "risk_first",
-    label: "风控优先",
-    description: "年化收益 10% | 夏普 30% | 最大回撤 40% | 卡玛 20%",
+    value: "max_return",
+    label: "极致收益",
+    description: "年化50% | 盈亏比25% | 无回撤惩罚 | 适合激进投资",
   },
 ] as const;
 

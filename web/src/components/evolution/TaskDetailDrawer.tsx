@@ -140,7 +140,7 @@ function OverviewTab({
     { label: "交易对", value: task.symbol },
     { label: "周期", value: task.timeframe_pool?.join("+") ?? TIMEFRAME_LABELS[task.timeframe] ?? task.timeframe },
     { label: "杠杆", value: `${task.leverage}x` },
-    { label: "方向", value: task.direction === "short" ? "做空" : "做多" },
+    { label: "方向", value: task.direction === "short" ? "做空" : task.direction === "mixed" ? "混合" : "做多" },
     { label: "评分模板", value: SCORE_TEMPLATE_LABELS[task.score_template] ?? task.score_template },
     { label: "种群大小", value: String(task.population_size) },
     { label: "目标分数", value: String(task.target_score) },

@@ -11,6 +11,7 @@ def compute_metrics(
     bars_per_year: int = 365 * 6,  # 4h bars per year
     trade_win_rate: float | None = None,
     trade_returns: np.ndarray | None = None,
+    benchmark_close: pd.Series | None = None,
 ) -> dict:
     """Compute raw performance metrics.
 
@@ -23,10 +24,12 @@ def compute_metrics(
         bars_per_year: Number of bars in one year (default: 6 * 365 for 4h).
         trade_win_rate: Win rate from closed trades (0-1). None if unavailable.
         trade_returns: Array of per-trade returns (PnL / init_cash). None if unavailable.
+        benchmark_close: Benchmark close prices (unleveraged buy-and-hold baseline).
+            Must cover the same date range as equity_curve.
 
     Returns:
         Dict with annual_return, sharpe_ratio, max_drawdown, win_rate,
-        calmar_ratio, total_trades.
+        calmar_ratio, total_trades, alpha, market_annual_return, backtest_years.
     """
     if len(equity_curve) < 2 or total_trades == 0:
         return {
@@ -42,6 +45,9 @@ def compute_metrics(
             "monthly_consistency": 0.0,
             "r_squared": 0.0,
             "total_bars": len(equity_curve),
+            "market_annual_return": 0.0,
+            "alpha": 0.0,
+            "backtest_years": 0.0,
         }
 
     # Annual return (from equity curve - standard)
@@ -145,6 +151,14 @@ def compute_metrics(
         if ss_tot > 0:
             r_squared = float(max(0.0, 1.0 - ss_res / ss_tot))
 
+    # Alpha: excess return over unleveraged buy-and-hold benchmark
+    market_annual_return = 0.0
+    alpha = 0.0
+    if benchmark_close is not None and len(benchmark_close) >= 2:
+        bm_total_return = (benchmark_close.iloc[-1] / benchmark_close.iloc[0]) - 1
+        market_annual_return = (1 + bm_total_return) ** (1 / max(years, 0.01)) - 1 if years > 0 else 0.0
+        alpha = annual_return - market_annual_return
+
     return {
         "annual_return": float(annual_return),
         "sharpe_ratio": float(sharpe_ratio),
@@ -158,4 +172,7 @@ def compute_metrics(
         "monthly_consistency": float(monthly_consistency),
         "r_squared": float(r_squared),
         "total_bars": len(equity_curve),
+        "market_annual_return": float(market_annual_return),
+        "alpha": float(alpha),
+        "backtest_years": float(years),
     }
