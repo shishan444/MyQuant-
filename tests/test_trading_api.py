@@ -1,0 +1,282 @@
+"""Tests for paper trading DB CRUD, API routes, and runner state.
+
+Covers:
+1. DB migration creates paper_trading_task and paper_trade tables
+2. CRUD operations for paper trading tasks
+3. API routes (create, list, get, stop, pause, resume)
+4. Runner state save/restore (PositionManager <-> DB)
+"""
+import json
+import pytest
+
+pytestmark = [pytest.mark.unit]
+
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+
+from core.strategy.dna import StrategyDNA, RiskGenes, ExecutionGenes, SignalGene, SignalRole
+from core.trading.position import PositionManager, Position
+
+
+def _make_dna_json(direction="long", leverage=1) -> str:
+    gene = SignalGene(
+        indicator="EMA", params={"period": 10},
+        role=SignalRole.ENTRY_TRIGGER, condition={"type": "price_above"},
+    )
+    dna = StrategyDNA(
+        signal_genes=[gene],
+        risk_genes=RiskGenes(leverage=leverage, direction=direction),
+        execution_genes=ExecutionGenes(timeframe="4h"),
+    )
+    return dna.to_json()
+
+
+# ---------------------------------------------------------------------------
+# Test: DB Migration
+# ---------------------------------------------------------------------------
+
+class TestPaperTradingMigration:
+
+    def test_tables_created(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        from api.db_ext import init_db_ext
+        init_db_ext(db_path)
+
+        from core.persistence.db import _connect
+        with _connect(db_path) as conn:
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+        assert "paper_trading_task" in tables
+        assert "paper_trade" in tables
+
+    def test_idempotent_migration(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        from api.db_ext import init_db_ext
+        init_db_ext(db_path)
+        init_db_ext(db_path)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Test: DB CRUD
+# ---------------------------------------------------------------------------
+
+class TestPaperTradingCRUD:
+
+    @pytest.fixture(autouse=True)
+    def setup_db(self, tmp_path):
+        self.db_path = tmp_path / "test.db"
+        from api.db_ext import init_db_ext
+        init_db_ext(self.db_path)
+
+    def test_save_and_get_task(self):
+        from api.db_ext import save_paper_trading_task, get_paper_trading_task
+        dna_json = _make_dna_json()
+        save_paper_trading_task(
+            self.db_path,
+            task_id="test-001",
+            dna_json=dna_json,
+            symbol="BTCUSDT",
+            timeframe="4h",
+        )
+        row = get_paper_trading_task(self.db_path, "test-001")
+        assert row is not None
+        assert row["status"] == "pending"
+        assert row["symbol"] == "BTCUSDT"
+        assert row["initial_cash"] == 100_000
+
+    def test_get_nonexistent_task(self):
+        from api.db_ext import get_paper_trading_task
+        row = get_paper_trading_task(self.db_path, "no-such-id")
+        assert row is None
+
+    def test_update_task(self):
+        from api.db_ext import save_paper_trading_task, update_paper_trading_task, get_paper_trading_task
+        save_paper_trading_task(
+            self.db_path, task_id="t1", dna_json=_make_dna_json(),
+        )
+        update_paper_trading_task(
+            self.db_path, "t1", status="running", balance=95000,
+        )
+        row = get_paper_trading_task(self.db_path, "t1")
+        assert row["status"] == "running"
+        assert row["balance"] == 95000
+
+    def test_list_tasks(self):
+        from api.db_ext import save_paper_trading_task, list_paper_trading_tasks
+        for i in range(3):
+            save_paper_trading_task(
+                self.db_path, task_id=f"t{i}", dna_json=_make_dna_json(),
+            )
+        tasks = list_paper_trading_tasks(self.db_path)
+        assert len(tasks) == 3
+
+    def test_list_tasks_by_status(self):
+        from api.db_ext import save_paper_trading_task, update_paper_trading_task, list_paper_trading_tasks
+        save_paper_trading_task(self.db_path, task_id="t1", dna_json=_make_dna_json())
+        save_paper_trading_task(self.db_path, task_id="t2", dna_json=_make_dna_json())
+        update_paper_trading_task(self.db_path, "t1", status="running")
+        pending = list_paper_trading_tasks(self.db_path, status="pending")
+        assert len(pending) == 1
+        assert pending[0]["task_id"] == "t2"
+
+    def test_save_and_list_trades(self):
+        from api.db_ext import save_paper_trading_task, save_paper_trade, list_paper_trades
+        save_paper_trading_task(
+            self.db_path, task_id="t1", dna_json=_make_dna_json(),
+        )
+        save_paper_trade(
+            self.db_path,
+            task_id="t1", bar_time="2024-01-01T00:00:00",
+            side="long", action="open", price=100.0, quantity=10.0,
+        )
+        save_paper_trade(
+            self.db_path,
+            task_id="t1", bar_time="2024-01-01T04:00:00",
+            side="long", action="close", price=110.0, quantity=10.0,
+            pnl=100.0, reason="signal",
+        )
+        trades = list_paper_trades(self.db_path, "t1")
+        assert len(trades) == 2
+        assert trades[0]["action"] == "close"  # DESC order
+
+
+# ---------------------------------------------------------------------------
+# Test: API Routes
+# ---------------------------------------------------------------------------
+
+class TestTradingAPIRoutes:
+
+    @pytest.fixture(autouse=True)
+    def setup(self, tmp_path):
+        from api.app import create_app
+        self.db_path = tmp_path / "test.db"
+        self.data_dir = tmp_path / "market"
+        self.app = create_app(db_path=self.db_path, data_dir=self.data_dir)
+        self.client = MagicMock()  # Use TestClient would be better but avoid full startup
+
+    def test_create_and_get_task_via_api(self):
+        from fastapi.testclient import TestClient
+        with TestClient(self.app) as client:
+            dna_json = _make_dna_json()
+            resp = client.post("/api/trading/tasks", json={
+                "dna_json": dna_json,
+                "symbol": "BTCUSDT",
+                "timeframe": "4h",
+                "initial_cash": 50000,
+                "leverage": 3,
+            })
+            assert resp.status_code == 201
+            data = resp.json()
+            assert data["status"] == "pending"
+            assert data["symbol"] == "BTCUSDT"
+            assert data["initial_cash"] == 50000
+            assert data["leverage"] == 3
+            task_id = data["task_id"]
+
+            # Get task
+            resp2 = client.get(f"/api/trading/tasks/{task_id}")
+            assert resp2.status_code == 200
+            assert resp2.json()["task_id"] == task_id
+
+    def test_list_tasks(self):
+        from fastapi.testclient import TestClient
+        with TestClient(self.app) as client:
+            for i in range(3):
+                client.post("/api/trading/tasks", json={
+                    "dna_json": _make_dna_json(),
+                })
+            resp = client.get("/api/trading/tasks")
+            assert resp.status_code == 200
+            assert len(resp.json()["tasks"]) == 3
+
+    def test_get_nonexistent_task_returns_404(self):
+        from fastapi.testclient import TestClient
+        with TestClient(self.app) as client:
+            resp = client.get("/api/trading/tasks/no-exist")
+            assert resp.status_code == 404
+
+    def test_runner_status(self):
+        from fastapi.testclient import TestClient
+        with TestClient(self.app) as client:
+            resp = client.get("/api/trading/runner-status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "is_alive" in data
+
+
+# ---------------------------------------------------------------------------
+# Test: Runner state persistence
+# ---------------------------------------------------------------------------
+
+class TestRunnerStatePersistence:
+
+    def test_save_and_restore_flat_state(self, tmp_path):
+        """PM with no position saves and restores correctly."""
+        from api.db_ext import init_db_ext, save_paper_trading_task, get_paper_trading_task
+        from core.trading.runner import TradingRunner
+
+        db_path = tmp_path / "test.db"
+        init_db_ext(db_path)
+
+        dna_json = _make_dna_json()
+        save_paper_trading_task(
+            db_path, task_id="t1", dna_json=dna_json, initial_cash=100000,
+        )
+
+        dna = StrategyDNA.from_json(dna_json)
+        pm = PositionManager(dna, init_cash=100000)
+
+        runner = TradingRunner(db_path=db_path, data_dir=tmp_path / "data")
+        runner._save_pm_state(pm, "t1")
+
+        row = get_paper_trading_task(db_path, "t1")
+        assert row["balance"] == 100000
+        assert row["position_side"] is None
+        assert row["total_trades"] == 0
+
+        # Restore
+        pm2 = PositionManager(dna, init_cash=100000)
+        runner._restore_pm_state(pm2, row)
+        assert pm2.balance == 100000
+        assert pm2.position is None
+
+    def test_save_and_restore_position_state(self, tmp_path):
+        """PM with open position saves and restores correctly."""
+        from api.db_ext import init_db_ext, save_paper_trading_task, update_paper_trading_task, get_paper_trading_task
+        from core.trading.runner import TradingRunner
+
+        db_path = tmp_path / "test.db"
+        init_db_ext(db_path)
+
+        dna_json = _make_dna_json()
+        save_paper_trading_task(
+            db_path, task_id="t1", dna_json=dna_json,
+            initial_cash=100000, fee=0.0,
+        )
+
+        dna = StrategyDNA.from_json(dna_json)
+        pm = PositionManager(dna, init_cash=100000, fee=0.0)
+        # Open a position
+        pm.process_bar(
+            bar_time="2024-01-01T00:00:00",
+            bar_high=101.0, bar_low=99.0, bar_close=100.0,
+            entry_signal=True, direction=1.0,
+        )
+        assert pm.position is not None
+
+        runner = TradingRunner(db_path=db_path, data_dir=tmp_path / "data")
+        runner._save_pm_state(pm, "t1")
+
+        row = get_paper_trading_task(db_path, "t1")
+        assert row["position_side"] == "long"
+        assert row["position_entry"] == 100.0
+        assert row["balance"] < 100000  # margin deducted
+
+        # Restore
+        pm2 = PositionManager(dna, init_cash=100000, fee=0.0)
+        runner._restore_pm_state(pm2, row)
+        assert pm2.position is not None
+        assert pm2.position.side == "long"
+        assert pm2.position.entry_price == 100.0
+        assert pm2.balance < 100000

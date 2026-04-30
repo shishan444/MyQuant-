@@ -51,6 +51,10 @@ class SignalRole(str, Enum):
 
 
 class ScoreTemplate(str, Enum):
+    EXPLORER = "explorer"
+    OPTIMIZER = "optimizer"
+    MAX_RETURN = "max_return"
+    # Legacy aliases (auto-mapped in templates.py)
     PROFIT_FIRST = "profit_first"
     STEADY = "steady"
     RISK_FIRST = "risk_first"
@@ -203,7 +207,7 @@ class BacktestRequest(BaseModel):
     init_cash: float = 100000.0
     fee: float = 0.001
     slippage: float = 0.0005
-    score_template: str = "profit_first"
+    score_template: str = "explorer"
     data_start: Optional[str] = None
     data_end: Optional[str] = None
     timeframe_pool: Optional[List[str]] = None
@@ -227,7 +231,7 @@ class BacktestResponse(BaseModel):
     win_rate: float = 0.0
     total_trades: int = 0
     total_score: float = 0.0
-    template_name: str = "profit_first"
+    template_name: str = "explorer"
     dimension_scores: Optional[Dict[str, Any]] = None
     run_source: str = "lab"
     equity_curve: Optional[List[Dict[str, Any]]] = None
@@ -244,7 +248,7 @@ class CompareRequest(BaseModel):
     init_cash: float = 100000.0
     fee: float = 0.001
     slippage: float = 0.0005
-    score_template: str = "profit_first"
+    score_template: str = "explorer"
     data_start: Optional[str] = None
     data_end: Optional[str] = None
 
@@ -276,7 +280,7 @@ class EvolutionTaskCreate(BaseModel):
     symbol: str
     timeframe: str
     target_score: float = 80.0
-    score_template: str = "profit_first"
+    score_template: str = "explorer"
     population_size: int = 15
     max_generations: int = 200
     elite_ratio: float = 0.5
@@ -428,3 +432,77 @@ class HealthResponse(BaseModel):
     status: str
     version: str = "0.9.0"
     timestamp: str = ""
+
+
+# ── Paper Trading Models ──
+
+
+class PaperTradingTaskCreate(BaseModel):
+    """Request to create a paper trading task."""
+    dna_json: str = Field(..., description="StrategyDNA as JSON string")
+    symbol: str = Field(default="BTCUSDT")
+    timeframe: str = Field(default="4h")
+    initial_cash: float = Field(default=100_000, gt=0)
+    fee: float = Field(default=0.001, ge=0)
+    leverage: int = Field(default=1, ge=1, le=10)
+    direction: str = Field(default="long", pattern="^(long|short|mixed)$")
+    score_template: str = Field(default="explorer")
+    strategy_name: Optional[str] = None
+
+
+class PaperTradingTaskResponse(BaseModel):
+    task_id: str
+    status: str
+    strategy_name: Optional[str] = None
+    symbol: str
+    timeframe: str
+    initial_cash: float
+    fee: float
+    leverage: int
+    direction: str
+    score_template: str
+    created_at: str
+    updated_at: str
+    started_at: Optional[str] = None
+    stopped_at: Optional[str] = None
+    stop_reason: Optional[str] = None
+    # Position
+    position_side: Optional[str] = None
+    position_entry: Optional[float] = None
+    position_quantity: Optional[float] = None
+    position_margin: Optional[float] = None
+    position_funding: Optional[float] = None
+    # Account
+    balance: Optional[float] = None
+    unrealized_pnl: float = 0.0
+    # Stats
+    total_trades: int = 0
+    total_pnl: float = 0.0
+    win_count: int = 0
+    loss_count: int = 0
+    # Last bar
+    last_bar_time: Optional[str] = None
+    last_bar_close: Optional[float] = None
+
+
+class PaperTradingTaskListResponse(BaseModel):
+    tasks: List[PaperTradingTaskResponse]
+    total: int
+
+
+class PaperTradeResponse(BaseModel):
+    id: int
+    task_id: str
+    bar_time: str
+    side: str
+    action: str
+    price: float
+    quantity: float
+    pnl: Optional[float] = None
+    fee_paid: float = 0.0
+    reason: Optional[str] = None
+
+
+class PaperTradeListResponse(BaseModel):
+    trades: List[PaperTradeResponse]
+    total: int

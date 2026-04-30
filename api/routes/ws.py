@@ -139,3 +139,63 @@ async def evolution_ws(websocket: WebSocket, task_id: str) -> None:
         pass
     finally:
         manager.remove(task_id, websocket)
+
+
+# ---------------------------------------------------------------------------
+# Paper Trading WS endpoint
+# ---------------------------------------------------------------------------
+
+def _get_trading_snapshot(websocket: WebSocket, task_id: str) -> Optional[Dict[str, Any]]:
+    """Read paper trading task from DB and return a WS snapshot message."""
+    try:
+        db_path = websocket.app.state.db_path
+        from api.db_ext import get_paper_trading_task
+        row = get_paper_trading_task(db_path, task_id)
+        if row is None:
+            return None
+        status = row.get("status", "")
+        if status not in ("running", "paused", "pending", "completed"):
+            return None
+        return {
+            "type": "task_snapshot",
+            "task_id": task_id,
+            "status": status,
+            "position_side": row.get("position_side"),
+            "balance": row.get("balance"),
+            "total_trades": row.get("total_trades", 0),
+            "total_pnl": row.get("total_pnl", 0.0),
+        }
+    except Exception:
+        return None
+
+
+@router.websocket("/ws/trading/{task_id}")
+async def trading_ws(websocket: WebSocket, task_id: str) -> None:
+    """WebSocket for real-time paper trading position updates.
+
+    Protocol:
+      Server -> Client:
+        {"type": "subscribed", "task_id": "..."}
+        {"type": "task_snapshot", ...}  (on reconnect)
+        {"type": "task_started", ...}
+        {"type": "position_update", "position": {...}, "equity": ..., ...}
+    """
+    await websocket.accept()
+    manager.add(task_id, websocket)
+
+    try:
+        await websocket.send_json({"type": "subscribed", "task_id": task_id})
+
+        snapshot = _get_trading_snapshot(websocket, task_id)
+        if snapshot:
+            await websocket.send_json(snapshot)
+
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type", "")
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.remove(task_id, websocket)

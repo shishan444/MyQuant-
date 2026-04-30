@@ -250,9 +250,188 @@ def init_db_ext(db_path: Path) -> None:
         if 9 not in applied:
             _record_version(conn, 9)
 
+        # 9. Paper trading tables (migration 010)
+        _create_paper_trading_tables(conn)
+        if 10 not in applied:
+            _record_version(conn, 10)
+
         conn.commit()
     finally:
         conn.close()
+
+
+# ===================================================================
+# Paper Trading tables (migration 010)
+# ===================================================================
+
+def _create_paper_trading_tables(conn: sqlite3.Connection) -> None:
+    """Create paper_trading_task and paper_trade tables (idempotent)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS paper_trading_task (
+            task_id          TEXT PRIMARY KEY,
+            status           TEXT NOT NULL DEFAULT 'pending',
+            strategy_name    TEXT,
+            symbol           TEXT NOT NULL DEFAULT 'BTCUSDT',
+            timeframe        TEXT NOT NULL DEFAULT '4h',
+            initial_cash     REAL NOT NULL DEFAULT 100000,
+            fee              REAL NOT NULL DEFAULT 0.001,
+            leverage         INTEGER NOT NULL DEFAULT 1,
+            direction        TEXT NOT NULL DEFAULT 'long',
+            dna_json         TEXT NOT NULL,
+            score_template   TEXT DEFAULT 'explorer',
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL,
+            started_at       TEXT,
+            stopped_at       TEXT,
+            stop_reason      TEXT,
+            -- Position state (for recovery)
+            position_side     TEXT,
+            position_entry    REAL,
+            position_quantity REAL,
+            position_margin   REAL,
+            position_funding  REAL DEFAULT 0,
+            -- Account state
+            balance          REAL,
+            unrealized_pnl   REAL DEFAULT 0,
+            -- Stats
+            total_trades     INTEGER DEFAULT 0,
+            total_pnl        REAL DEFAULT 0,
+            win_count        INTEGER DEFAULT 0,
+            loss_count       INTEGER DEFAULT 0,
+            -- Last processed bar
+            last_bar_time    TEXT,
+            last_bar_close   REAL,
+            -- Heartbeat
+            heartbeat_at     TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS paper_trade (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id     TEXT NOT NULL,
+            bar_time    TEXT NOT NULL,
+            side        TEXT NOT NULL,
+            action      TEXT NOT NULL,
+            price       REAL NOT NULL,
+            quantity    REAL NOT NULL,
+            pnl         REAL,
+            fee_paid    REAL DEFAULT 0,
+            reason      TEXT,
+            FOREIGN KEY (task_id) REFERENCES paper_trading_task(task_id)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_paper_trade_task
+        ON paper_trade(task_id, bar_time)
+    """)
+
+
+# -- Paper Trading Task CRUD --
+
+def save_paper_trading_task(
+    db_path: Path,
+    *,
+    task_id: str,
+    dna_json: str,
+    symbol: str = "BTCUSDT",
+    timeframe: str = "4h",
+    initial_cash: float = 100_000,
+    fee: float = 0.001,
+    leverage: int = 1,
+    direction: str = "long",
+    score_template: str = "explorer",
+    strategy_name: Optional[str] = None,
+) -> None:
+    now = _now()
+    with _connect(db_path) as conn:
+        conn.execute(
+            """INSERT INTO paper_trading_task
+               (task_id, status, strategy_name, symbol, timeframe,
+                initial_cash, fee, leverage, direction, dna_json,
+                score_template, created_at, updated_at, balance)
+               VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (task_id, strategy_name, symbol, timeframe,
+             initial_cash, fee, leverage, direction, dna_json,
+             score_template, now, now, initial_cash),
+        )
+        conn.commit()
+
+
+def get_paper_trading_task(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
+    with _connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM paper_trading_task WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def update_paper_trading_task(db_path: Path, task_id: str, **kwargs) -> None:
+    if not kwargs:
+        return
+    kwargs["updated_at"] = _now()
+    sets = ", ".join(f"{k} = ?" for k in kwargs)
+    vals = list(kwargs.values()) + [task_id]
+    with _connect(db_path) as conn:
+        conn.execute(
+            f"UPDATE paper_trading_task SET {sets} WHERE task_id = ?", vals
+        )
+        conn.commit()
+
+
+def list_paper_trading_tasks(
+    db_path: Path, status: Optional[str] = None, limit: int = 50, offset: int = 0,
+) -> List[Dict[str, Any]]:
+    with _connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM paper_trading_task WHERE status = ? "
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (status, limit, offset),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM paper_trading_task ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def save_paper_trade(
+    db_path: Path,
+    *,
+    task_id: str,
+    bar_time: str,
+    side: str,
+    action: str,
+    price: float,
+    quantity: float,
+    pnl: Optional[float] = None,
+    fee_paid: float = 0.0,
+    reason: Optional[str] = None,
+) -> None:
+    with _connect(db_path) as conn:
+        conn.execute(
+            """INSERT INTO paper_trade
+               (task_id, bar_time, side, action, price, quantity, pnl, fee_paid, reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (task_id, bar_time, side, action, price, quantity, pnl, fee_paid, reason),
+        )
+        conn.commit()
+
+
+def list_paper_trades(
+    db_path: Path, task_id: str, limit: int = 100,
+) -> List[Dict[str, Any]]:
+    with _connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM paper_trade WHERE task_id = ? "
+            "ORDER BY bar_time DESC LIMIT ?",
+            (task_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ===================================================================
@@ -493,7 +672,7 @@ def save_backtest_result(
     win_rate: float = 0.0,
     total_trades: int = 0,
     total_score: float = 0.0,
-    template_name: str = "profit_first",
+    template_name: str = "explorer",
     dimension_scores: Optional[str] = None,
     equity_curve: Optional[str] = None,
     trades_json: Optional[str] = None,

@@ -19,6 +19,7 @@ from .routes import validate as validate_route
 from .routes import chart_config
 from .routes import scene as scene_route
 from .routes import discovery as discovery_route
+from .routes import trading as trading_route
 from .schemas import HealthResponse
 
 
@@ -54,12 +55,20 @@ def create_app(
 
         recover_stale_tasks(db_path)
 
+        # Start TradingRunner background thread
+        from core.trading.runner import TradingRunner, set_trading_ws_push_fn, recover_stale_trading_tasks
+
+        recover_stale_trading_tasks(db_path)
+
         # Store paths on app state for dependency injection
         app.state.db_path = db_path
         app.state.data_dir = data_dir
 
         runner = EvolutionRunner(db_path=db_path, data_dir=data_dir)
         app.state.evolution_runner = runner
+
+        trading_runner = TradingRunner(db_path=db_path, data_dir=data_dir)
+        app.state.trading_runner = trading_runner
 
         # Wire WS push: runner -> manager.push (async) via asyncio.run_coroutine_threadsafe
         event_loop = asyncio.get_event_loop()
@@ -81,18 +90,23 @@ def create_app(
                 logger.warning("WS push coroutine failed", exc_info=True)
 
         set_ws_push_fn(_ws_push)
+        set_trading_ws_push_fn(_ws_push)
         runner.start()
+        trading_runner.start()
 
         yield
 
-        # Shutdown: disconnect WS push first, then stop runner
+        # Shutdown: disconnect WS push first, then stop runners
         set_ws_push_fn(None)
+        set_trading_ws_push_fn(None)
         runner.stop()
+        trading_runner.stop()
         runner.join(timeout=5.0)
+        trading_runner.join(timeout=5.0)
 
     app = FastAPI(
         title="MyQuant API",
-        version="0.14.0",
+        version="0.16.0",
         lifespan=lifespan,
     )
 
@@ -111,6 +125,7 @@ def create_app(
     app.include_router(evolution.router)
     app.include_router(data.router)
     app.include_router(ws.router)
+    app.include_router(trading_route.router)
     app.include_router(validate_route.router)
     app.include_router(chart_config.router)
     app.include_router(scene_route.router)
@@ -121,7 +136,7 @@ def create_app(
     def health_check() -> HealthResponse:
         return HealthResponse(
             status="ok",
-            version="0.14.0",
+            version="0.16.0",
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 
