@@ -45,7 +45,7 @@ class TestFetchKlinesReturnsDataframe:
     @patch("core.data.fetcher.Client")
     def test_returns_dataframe(self, mock_client_cls: MagicMock) -> None:
         mock_instance = MagicMock()
-        mock_instance.get_historical_klines.return_value = _make_kline_rows(3)
+        mock_instance.futures_historical_klines.return_value = _make_kline_rows(3)
         mock_client_cls.return_value = mock_instance
 
         df = fetch_klines(symbol="BTCUSDT", interval="4h")
@@ -57,7 +57,7 @@ class TestFetchKlinesReturnsDataframe:
     @patch("core.data.fetcher.Client")
     def test_column_types(self, mock_client_cls: MagicMock) -> None:
         mock_instance = MagicMock()
-        mock_instance.get_historical_klines.return_value = _make_kline_rows(2)
+        mock_instance.futures_historical_klines.return_value = _make_kline_rows(2)
         mock_client_cls.return_value = mock_instance
 
         df = fetch_klines()
@@ -69,7 +69,7 @@ class TestFetchKlinesReturnsDataframe:
     @patch("core.data.fetcher.Client")
     def test_client_called_with_correct_args(self, mock_client_cls: MagicMock) -> None:
         mock_instance = MagicMock()
-        mock_instance.get_historical_klines.return_value = _make_kline_rows(1)
+        mock_instance.futures_historical_klines.return_value = _make_kline_rows(1)
         mock_client_cls.return_value = mock_instance
 
         fetch_klines(
@@ -81,7 +81,7 @@ class TestFetchKlinesReturnsDataframe:
         )
 
         mock_client_cls.assert_called_once_with("key", "secret")
-        mock_instance.get_historical_klines.assert_called_once_with(
+        mock_instance.futures_historical_klines.assert_called_once_with(
             symbol="ETHUSDT",
             interval="1d",
             start_str="1 year ago UTC",
@@ -100,7 +100,7 @@ class TestFetchKlinesRemovesDuplicates:
         rows_with_dup = rows[:2] + [dup_row] + rows[2:]
 
         mock_instance = MagicMock()
-        mock_instance.get_historical_klines.return_value = rows_with_dup
+        mock_instance.futures_historical_klines.return_value = rows_with_dup
         mock_client_cls.return_value = mock_instance
 
         df = fetch_klines()
@@ -117,7 +117,7 @@ class TestFetchKlinesDatetimeIndex:
     @patch("core.data.fetcher.Client")
     def test_creates_datetime_index(self, mock_client_cls: MagicMock) -> None:
         mock_instance = MagicMock()
-        mock_instance.get_historical_klines.return_value = _make_kline_rows(2)
+        mock_instance.futures_historical_klines.return_value = _make_kline_rows(2)
         mock_client_cls.return_value = mock_instance
 
         df = fetch_klines()

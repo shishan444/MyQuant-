@@ -1,4 +1,4 @@
-"""Binance K-line data fetcher."""
+"""Binance Futures K-line data fetcher."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ def fetch_klines(
     api_key: str = "",
     api_secret: str = "",
 ) -> pd.DataFrame:
-    """Fetch historical K-line data from Binance.
+    """Fetch historical K-line data from Binance Futures.
 
     Args:
         symbol: Trading pair (e.g. "BTCUSDT").
@@ -38,7 +38,7 @@ def fetch_klines(
     if end_str:
         kwargs["end_str"] = end_str
 
-    klines = client.get_historical_klines(**kwargs)
+    klines = client.futures_historical_klines(**kwargs)
 
     df = pd.DataFrame(klines, columns=[
         "timestamp", "open", "high", "low", "close", "volume",
