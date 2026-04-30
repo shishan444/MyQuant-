@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.db_ext import (
     save_paper_trading_task,
@@ -183,9 +183,8 @@ def get_trades(
 
 
 @router.get("/runner-status")
-def runner_status(db_path: Path = Depends(get_db_path)) -> dict:
-    from api.app import app
-    runner = getattr(app.state, "trading_runner", None)
+def runner_status(request: Request) -> dict:
+    runner = getattr(request.app.state, "trading_runner", None)
     if runner:
         return runner.get_status()
     return {"is_alive": False, "active_task_id": None}
