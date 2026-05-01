@@ -201,8 +201,8 @@ class TestRunnerStateSaveRestore:
         assert row["position_side"] == "long"
         assert row["position_entry"] == 100.0
 
-    def test_restore_flat_state_skips_when_no_position(self, trading_db: Path):
-        """When position_side is None, _restore_pm_state is a no-op."""
+    def test_restore_flat_state_restores_balance(self, trading_db: Path):
+        """When position_side is None, balance is still restored from DB."""
         from api.db_ext import save_paper_trading_task, update_paper_trading_task, get_paper_trading_task
         from core.trading.runner import TradingRunner
 
@@ -217,8 +217,8 @@ class TestRunnerStateSaveRestore:
         runner = TradingRunner(db_path=trading_db, data_dir=trading_db.parent / "data")
         runner._restore_pm_state(pm, row)
 
-        # balance stays at init_cash because restore is no-op for flat state
-        assert pm.balance == 100_000
+        # balance is restored from DB even when flat
+        assert pm.balance == 95000
         assert pm.position is None
 
     def test_restore_position_state(self, trading_db: Path):

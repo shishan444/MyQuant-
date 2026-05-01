@@ -451,6 +451,30 @@ def list_paper_trades(
         return [dict(r) for r in rows]
 
 
+def delete_paper_trades_from(
+    db_path: Path, task_id: str, from_bar_time: Optional[str] = None,
+) -> int:
+    """Delete paper_trade records for replay dedup.
+
+    If from_bar_time is provided, deletes records where bar_time >= from_bar_time.
+    Otherwise deletes all records for the task.
+    Returns number of deleted rows.
+    """
+    with _connect(db_path) as conn:
+        if from_bar_time is not None:
+            result = conn.execute(
+                "DELETE FROM paper_trade WHERE task_id = ? AND bar_time >= ?",
+                (task_id, from_bar_time),
+            )
+        else:
+            result = conn.execute(
+                "DELETE FROM paper_trade WHERE task_id = ?",
+                (task_id,),
+            )
+        conn.commit()
+        return result.rowcount
+
+
 # ===================================================================
 # Strategy CRUD
 # ===================================================================

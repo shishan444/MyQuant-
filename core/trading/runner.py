@@ -139,25 +139,23 @@ class TradingRunner(threading.Thread):
             self._run_task(task)
 
     def _find_pending_task(self) -> Optional[Dict[str, Any]]:
-        conn = sqlite3.connect(str(self.db_path))
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT * FROM paper_trading_task "
-            "WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
-        ).fetchone()
-        conn.close()
-        return dict(row) if row else None
+        from core.persistence.db import _connect
+        with _connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM paper_trading_task "
+                "WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
+            ).fetchone()
+            return dict(row) if row else None
 
     def _get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
-        conn = sqlite3.connect(str(self.db_path))
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT * FROM paper_trading_task WHERE task_id = ?", (task_id,)
-        ).fetchone()
-        conn.close()
-        return dict(row) if row else None
+        from core.persistence.db import _connect
+        with _connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM paper_trading_task WHERE task_id = ?", (task_id,)
+            ).fetchone()
+            return dict(row) if row else None
 
     def _run_task(self, task_row: Dict[str, Any]) -> None:
         task_id = task_row["task_id"]
@@ -194,6 +192,7 @@ class TradingRunner(threading.Thread):
     ) -> None:
         from api.db_ext import (
             update_paper_trading_task, save_paper_trade, list_paper_trades,
+            delete_paper_trades_from,
         )
 
         # Mark running
@@ -243,6 +242,11 @@ class TradingRunner(threading.Thread):
             sig_set.entry_direction.shift(1).fillna(1.0)
             if sig_set.entry_direction is not None else None
         )
+
+        # Dedup paper trades: clear records in replay range before re-processing
+        if last_bar_time is not None:
+            delete_paper_trades_from(self.db_path, task_id, from_bar_time=last_bar_time)
+            logger.info("Cleared paper trades from %s for task %s", last_bar_time, task_id)
 
         for i in range(start_idx, len(df)):
             controller.check_stop()
@@ -364,9 +368,12 @@ class TradingRunner(threading.Thread):
         pm._prior_wins = task.get("win_count", 0)
         pm._prior_losses = task.get("loss_count", 0)
 
+        # Restore balance regardless of position state
+        if task.get("balance") is not None:
+            pm.balance = task["balance"]
+
         if task.get("position_side") is None:
             return
-        pm.balance = task.get("balance", pm._init_cash)
         pm.position = Position(
             side=task["position_side"],
             entry_price=task["position_entry"],
