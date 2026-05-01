@@ -297,13 +297,16 @@ MTF 策略从 DNA 到 SignalSet 的完整决策链：
 
 ### 工作流 4：模拟交易（策略实战验证）
 
-用户将进化产出的策略投入实时模拟交易：
+用户从策略库选择策略投入实时模拟交易：
 
 ```
-1. 前端 POST /api/trading/tasks
-   payload: {dna_json, symbol, timeframe, initial_cash, leverage, direction, ...}
+1. 策略库 Strategies.tsx 点击 "模拟交易" 按钮 (Zap icon)
+   -> navigate("/trading", {state: {dna, symbol, timeframe, strategyName}})
+   -> Trading.tsx useEffect 自动 createTask.mutate()
+   -> POST /api/trading/tasks {dna_json, symbol, timeframe, ...}
       |
-2. API 路由 (trading.py:62)
+2. API 路由 (trading.py:63)
+   ├─ StrategyDNA.from_json() 校验 dna_json 格式 (无效返回 422)
    ├─ 生成 task_id (12 位 hex)
    ├─ save_paper_trading_task() 写入 paper_trading_task 表
    └─ 返回 {task_id, status: "pending"}
@@ -315,33 +318,26 @@ MTF 策略从 DNA 到 SignalSet 的完整决策链：
 4. 任务执行 _execute_task() (runner.py:189)
    │
    ├─ 标记 status=running
-   ├─ 解析 DNA, 创建 PositionManager
+   ├─ 解析 DNA, 创建 PositionManager(fee, slippage=0.0005)
+   ├─ _restore_pm_state() 恢复累计统计 + 持仓
    ├─ 加载历史 Parquet + compute_all_indicators()
    ├─ dna_to_signal_set() 计算信号
    │
    ├─ 历史回放 (从 start_idx 到 len(df))
-   │   └─ 逐 Bar: pm.process_bar(entry/exit/add/reduce, direction)
-   │       ├─ 清算检查 (leverage > 1)
-   │       ├─ SL/TP (HIGH/LOW 价格)
-   │       ├─ Exit -> Entry -> Reduce -> Add
-   │       └─ Funding 扣除
-   │   └─ _save_pm_state() 持久化到 DB
+   │   ├─ 信号 shift(1) 防前瞻偏差 (与回测引擎对齐)
+   │   └─ 逐 Bar: pm.process_bar(shifted signals)
+   │       ├─ 清算/SL/TP/Exit/Entry/Reduce/Add + Funding
+   │       ├─ 滑点成本 (0.0005) 从 balance 额外扣除
+   │       └─ 每 500 Bar: checkpoint _save_pm_state()
+   │   └─ 最终 _save_pm_state() (使用实际 close price + 累计统计)
    │
    └─ 实时循环 (按 timeframe 轮询)
        ├─ update_market_data() 获取新 Bar
-       ├─ compute_all_indicators() + dna_to_signal_set()
-       ├─ 逐 Bar process_bar() (仅新 Bar)
+       ├─ 逐 Bar process_bar() (原始信号，不 shift)
        ├─ _save_pm_state() + _push_position_update()
        └─ controller._stop_event.wait(poll_wait)
       |
-5. 用户操作 (通过前端)
-   ├─ POST /stop  -> controller.request_stop() + DB status=stopped
-   ├─ POST /pause -> controller.request_stop() + DB status=paused
-   └─ POST /resume -> DB status=pending (runner 重新拾取)
-      |
-6. WebSocket 推送 (实时)
-   ├─ task_started: 任务开始
-   └─ position_update: 持仓/余额/盈亏/交易统计
+5. WebSocket 推送 (position_update 含 total_trades/total_pnl 累计值)
 ```
 
 ## 设计约束
@@ -355,9 +351,11 @@ MTF 策略从 DNA 到 SignalSet 的完整决策链：
 | 信号延迟 1 bar | 防止前瞻偏差 | entry/exit/add/reduce 信号全部 shift(1) 后才传给回测引擎 |
 | exit 不受 confluence 限制 | 止损是风控底线，不应被市场结构状态阻挡 | MTF 门控对 exit/reduce 信号是透明的 |
 | 爆仓模型是简化版 | 真实交易所保证金计算太复杂 | leverage=10 时 9% 亏损就"爆仓"，比真实交易所更严格 |
-| PM 不延迟信号 | 模拟交易在当前 Bar 立即执行（不 shift），与回测引擎不同 | 模拟交易结果不能直接与回测结果对比（1 bar 偏差） |
+| PM 回放 shift，实时不 shift | 历史回放阶段信号 shift(1) 防前瞻偏差（与回测引擎对齐），实时阶段不 shift（信号产生后立即执行） | 回放结果可与回测对比，实时交易更贴近实战 |
 | 单任务串行 | TradingRunner 同一时间只执行一个任务 | 第二个 pending 任务必须等第一个结束/停止后才被拾取 |
-| PM restore 仅恢复持仓状态 | _restore_pm_state 只在 position_side 非 None 时恢复 balance | flat 状态下 balance 保持 init_cash，不是 DB 中记录的值 |
+| PM restore 始终恢复统计 | _restore_pm_state 始终恢复累计统计，持仓/balance 仅在 position_side 非 None 时恢复 | flat 状态下 balance 保持 init_cash，但 total_trades/pnl 等统计不丢失 |
+| PM 滑点固定 0.0005 | slippage=0.0005 与回测引擎默认值一致，作为额外成本不修改 entry_price | SL/TP 计算不受滑点影响，但 balance 和 pnl 包含滑点成本 |
+| 回放 checkpoint 500 bar | 每 500 Bar 保存一次 PM 状态 | 崩溃恢复后从最后 checkpoint 继续，最多丢失 500 Bar 进度 |
 
 ## 能力边界
 

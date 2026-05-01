@@ -305,7 +305,7 @@ class PositionManager:
                 events.append({
                     "type": "position_reduced",
                     "quantity_reduced": reduce_qty,
-                    "pnl": reduce_pnl - reduce_fee,
+                    "pnl": reduce_pnl - reduce_fee - reduce_slippage,
                 })
 
                 if pos.quantity < 1e-8:

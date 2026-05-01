@@ -2,13 +2,13 @@
 
 ## 定位
 
-模拟交易系统前端 -- 在 `web/src/pages/Trading.tsx` 页面组件 + `hooks/useTrading.ts` 数据层 + `services/trading.ts` API 层 三文件组合中，提供模拟交易任务的实时监控、持仓展示和交易记录查看。
+模拟交易系统前端 -- 在 `web/src/pages/Trading.tsx` 页面组件 + `hooks/useTrading.ts` 数据层 + `services/trading.ts` API 层 三文件组合中，提供模拟交易任务的创建入口、实时监控、持仓展示和交易记录查看。
 
 ## 文件清单
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `pages/Trading.tsx` | 383 | 页面组件：任务卡片网格 + 任务详情面板 + 交易记录表格 |
+| `pages/Trading.tsx` | 408 | 页面组件：route state 自动创建任务 + 任务卡片网格 + 任务详情面板 + 交易记录表格 |
 | `hooks/useTrading.ts` | 183 | React Query hooks：查询/变更 + WebSocket 实时推送 |
 | `services/trading.ts` | 122 | API 服务函数 + 本地类型定义（30+ 字段 TradingTask 类型） |
 
@@ -17,7 +17,9 @@
 ### 数据流
 
 ```
+Strategies.tsx (策略库) -- navigate("/trading", {state: {dna, symbol, timeframe, strategyName}}) -->
 Trading.tsx (页面)
+  |-- useEffect: 检测 location.state.dna -> createTask.mutate() -> POST /api/trading/tasks
   |-- useTradingTasks() ───> services/trading.ts listTradingTasks() ───> GET /api/trading/tasks
   |-- useTradingWebSocket(activeTaskId) ───> WS /ws/trading/{taskId}
   |       |
@@ -40,12 +42,26 @@ Trading.tsx (页面)
 
 WebSocket 不是直接更新状态，而是作为"失效触发器"让 React Query 重新走 HTTP 请求刷新数据。
 
+### 策略库 -> 模拟交易创建链路
+
+```
+Strategies.tsx 策略行 "模拟交易" 按钮 (Zap icon)
+  -> handlePaperTrade(strategy)
+    -> navigate("/trading", {state: {dna, symbol, timeframe, strategyName}})
+      -> Trading.tsx useEffect
+        -> createTask.mutate({dna_json, symbol, timeframe, strategy_name})
+          -> POST /api/trading/tasks
+        -> window.history.replaceState({}, "")  // 清除 route state 防重复创建
+```
+
+`dna` 字段从 Strategy 对象获取（可能是 object），在 Trading.tsx 中通过 `typeof state.dna === "string" ? state.dna : JSON.stringify(state.dna)` 统一转为 string。
+
 ### 页面渲染分支
 
 | 条件 | 渲染内容 |
 |------|---------|
 | 任务列表加载中 | 居中 "加载中..." 文本 |
-| 任务列表为空 | EmptyState 组件 + "前往策略库" 按钮（当前 onClick 为空操作） |
+| 任务列表为空 | EmptyState 组件 + "前往策略库" 按钮（`navigate("/strategies")`） |
 | 有任务 | 响应式任务卡片网格（1/2/3 列）+ 选中任务的详情面板 |
 
 ### 任务卡片 (TaskCard)
@@ -61,15 +77,18 @@ WebSocket 不是直接更新状态，而是作为"失效触发器"让 React Quer
 
 ## 链路
 
-### 创建交易任务（当前未接入 UI）
+### 从策略库创建交易任务
 
 ```
-useCreateTradingTask() (定义于 useTrading.ts:79)
-  -> createTradingTask(params) (trading.ts)
-    -> POST /api/trading/tasks {dna_json, symbol, timeframe, ...}
+Strategies.tsx (策略行 "模拟交易" 按钮)
+  -> handlePaperTrade(strategy) [Strategies.tsx:455]
+    -> navigate("/trading", {state: {dna, symbol, timeframe, strategyName}})
+      -> Trading.tsx useEffect [Trading.tsx:73-91]
+        -> createTask.mutate({dna_json, symbol, timeframe, strategy_name})
+          -> services/trading.ts createTradingTask()
+            -> POST /api/trading/tasks
+        -> window.history.replaceState({}, "")
 ```
-
-注：`useCreateTradingTask` 已定义但无页面使用。Trading 页面空状态的"前往策略库"按钮 onClick 为 `() => {}`。
 
 ### 暂停/恢复/停止
 
@@ -97,7 +116,7 @@ useTradingWebSocket(taskId) (useTrading.ts:124-182)
 ### 交易记录查看
 
 ```
-TaskDetail 组件 (Trading.tsx:263-303)
+TaskDetail 组件 (Trading.tsx:288-328)
   -> useTradingTrades(taskId, 20)
     -> GET /api/trading/tasks/{taskId}/trades?limit=20
   -> 渲染表格: 时间/方向/动作/价格/数量/盈亏/原因
@@ -134,7 +153,7 @@ tradingKeys = {
 | `TradingTaskList` | 2 | `{ tasks, total }` |
 | `PaperTrade` | 9 | 单笔交易记录 |
 | `PaperTradeList` | 2 | `{ trades, total }` |
-| `CreateTradingTaskParams` | 10 | 仅 `dna_json` 必填，其余可选 |
+| `CreateTradingTaskParams` | 10 | 仅 `dna_json` 必填，其余可选（含 `strategy_name`） |
 
 ### Badge 映射
 
@@ -142,7 +161,7 @@ Trading.tsx 内部定义了两个静态映射：
 
 ```typescript
 POSITION_BADGE_MAP = { long: "多", short: "空", flat: "空仓" }
-STATUS_BADGE_MAP   = { pending: "等待中", running: "运行中", paused: "已暂停", stopped: "已停止" }
+STATUS_BADGE_MAP   = { pending: "等待中", running: "运行中", paused: "已暂停", stopped: "已停止", completed: "已完成" }
 ```
 
 ## 接口
@@ -167,7 +186,7 @@ STATUS_BADGE_MAP   = { pending: "等待中", running: "运行中", paused: "已�
 | `useTradingTasks()` | Query | 任务列表，条件轮询 5s |
 | `useTradingTask(taskId)` | Query | 单个任务，条件轮询 3s |
 | `useTradingTrades(taskId, limit?)` | Query | 交易记录，无轮询 |
-| `useCreateTradingTask()` | Mutation | 创建任务 |
+| `useCreateTradingTask()` | Mutation | 创建任务（Strategies -> Trading 自动创建使用） |
 | `useStopTradingTask()` | Mutation | 停止任务 |
 | `usePauseTradingTask()` | Mutation | 暂停任务 |
 | `useResumeTradingTask()` | Mutation | 恢复任务 |
@@ -187,5 +206,7 @@ STATUS_BADGE_MAP   = { pending: "等待中", running: "运行中", paused: "已�
 
 - **类型内联**：交易相关类型定义在 `services/trading.ts` 而非 `types/` 目录，与 discovery.ts 模式一致（领域服务自带类型）
 - **WS 作为失效触发器**：WebSocket 不直接更新 React 状态，而是触发 React Query 缓存失效，复用现有 HTTP 请求管道
-- **无创建入口**：`useCreateTradingTask` 和 `getTradingRunnerStatus` 已定义但当前无 UI 接入，预留给未来策略库 -> 模拟交易的流程
+- **Route state 单次消费**：`window.history.replaceState({}, "")` 在创建任务后立即清除 route state，防止刷新页面重复创建
 - **停止 propagation**：任务卡片操作按钮使用 `e.stopPropagation()` 防止按钮点击触发卡片选中
+- **策略库按钮**：Strategies.tsx 使用 Zap 图标，hover 时 accent-gold 颜色，与回测按钮（Play, profit 绿色）视觉区分
+- **空状态导航**：Trading 页面空状态的"前往策略库"按钮调用 `navigate("/strategies")` 跳转
