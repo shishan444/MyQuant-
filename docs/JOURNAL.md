@@ -28,3 +28,4 @@
 - [2026-04-25] [doc-rebuild] D6: 更新 backend/architecture.md 和 INDEX.md，全量文档更新完成
 - [2026-04-25] [doc-rebuild] D7: 全量深层文档重写 -- 19 个模块文档补充 6 维度（逻辑/链路/机制/接口/参数/约定），基于源码逐行分析
 - [2026-04-30] [doc-rebuild] 按需刷新: B7 评分系统（v1.0 修回撤 bug + v2.0 精简维度/新模板 + Alpha 维度）、B6 进化引擎（种群排序暴露修复 + 模板偏置）、B5 回测引擎（benchmark_close + BacktestResult 新字段）、architecture.md + INDEX.md 同步更新
+- [2026-04-30] [doc-rebuild] v0.15-0.17 文档更新: 新建 B13 模拟交易系统模块文档(trading-system.md)、更新 backend/architecture.md、更新 F5 服务层文档(services.md)、新建 F8 模拟交易页面文档(trading-page.md)、更新 INDEX.md

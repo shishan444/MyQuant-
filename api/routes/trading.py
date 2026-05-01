@@ -12,6 +12,7 @@ from api.db_ext import (
     get_paper_trading_task,
     update_paper_trading_task,
     list_paper_trading_tasks,
+    count_paper_trading_tasks,
     list_paper_trades,
 )
 from api.deps import get_db_path
@@ -64,6 +65,13 @@ def create_task(
     body: PaperTradingTaskCreate,
     db_path: Path = Depends(get_db_path),
 ) -> PaperTradingTaskResponse:
+    # Validate dna_json format
+    try:
+        from core.strategy.dna import StrategyDNA
+        StrategyDNA.from_json(body.dna_json)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid dna_json: {e}")
+
     task_id = uuid.uuid4().hex[:12]
     save_paper_trading_task(
         db_path,
@@ -90,9 +98,10 @@ def list_tasks(
     db_path: Path = Depends(get_db_path),
 ) -> PaperTradingTaskListResponse:
     tasks = list_paper_trading_tasks(db_path, status=status, limit=limit, offset=offset)
+    total = count_paper_trading_tasks(db_path, status=status)
     return PaperTradingTaskListResponse(
         tasks=[_task_to_response(t) for t in tasks],
-        total=len(tasks),
+        total=total,
     )
 
 

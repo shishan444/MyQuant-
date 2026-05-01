@@ -69,6 +69,24 @@
 │               │  自适应 1/5 规则     │     │   5 张表             │
 │               │  种群排序暴露        │     │   checkpoint 恢复    │
 │               └─────────────────────┘     └─────────────────────┘
+│
+│               ┌─────────────────────────────────────────────────┐
+│               │           模拟交易系统 (B13)                     │
+│               │                                                   │
+│               │  策略库 ──> POST /api/trading/tasks              │
+│               │              │                                    │
+│               │  TradingRunner (后台线程)                         │
+│               │   ├─ 加载 Parquet + 计算指标 + DNA->信号          │
+│               │   ├─ 逐 Bar 通过 PositionManager                 │
+│               │   ├─ 实时获取新 Bar (Binance Futures)             │
+│               │   ├─ 持久化 PM 状态到 DB                          │
+│               │   └─ WebSocket 推送 position_update              │
+│               │                                                   │
+│               │  PositionManager (纯 Python 状态机)               │
+│               │   └─ 镜像回测引擎 order_func_nb 逻辑              │
+│               │                                                   │
+│               │  SQLite: paper_trading_task + paper_trade         │
+│               └─────────────────────────────────────────────────┘
 ```
 
 ## 模块定义
@@ -88,6 +106,7 @@
 | B10 持久化 | SQLite 5 张表 CRUD + checkpoint | **记忆**：保存进化任务、策略、回测结果 |
 | B11 日志 | 统一 logger + 结构化格式 | **可观测性**：所有模块的日志走同一通道 |
 | B12 可视化 | Plotly 图表生成 | **展示**：后端生成图表数据，前端渲染 |
+| B13 模拟交易 | PositionManager + TradingRunner + REST API + WebSocket | **实战验证**：把进化产出的策略 DNA 投入实时 Bar-by-Bar 交易模拟，跟踪持仓/盈亏/资金变化 |
 
 ## 核心工作流
 
@@ -276,6 +295,55 @@ MTF 策略从 DNA 到 SignalSet 的完整决策链：
 └──────────────────────────────────────────────────────────────┘
 ```
 
+### 工作流 4：模拟交易（策略实战验证）
+
+用户将进化产出的策略投入实时模拟交易：
+
+```
+1. 前端 POST /api/trading/tasks
+   payload: {dna_json, symbol, timeframe, initial_cash, leverage, direction, ...}
+      |
+2. API 路由 (trading.py:62)
+   ├─ 生成 task_id (12 位 hex)
+   ├─ save_paper_trading_task() 写入 paper_trading_task 表
+   └─ 返回 {task_id, status: "pending"}
+      |
+3. TradingRunner 后台线程 (runner.py:113)
+   ├─ 每 2 秒轮询 pending 任务
+   └─ 找到后调用 _run_task()
+      |
+4. 任务执行 _execute_task() (runner.py:189)
+   │
+   ├─ 标记 status=running
+   ├─ 解析 DNA, 创建 PositionManager
+   ├─ 加载历史 Parquet + compute_all_indicators()
+   ├─ dna_to_signal_set() 计算信号
+   │
+   ├─ 历史回放 (从 start_idx 到 len(df))
+   │   └─ 逐 Bar: pm.process_bar(entry/exit/add/reduce, direction)
+   │       ├─ 清算检查 (leverage > 1)
+   │       ├─ SL/TP (HIGH/LOW 价格)
+   │       ├─ Exit -> Entry -> Reduce -> Add
+   │       └─ Funding 扣除
+   │   └─ _save_pm_state() 持久化到 DB
+   │
+   └─ 实时循环 (按 timeframe 轮询)
+       ├─ update_market_data() 获取新 Bar
+       ├─ compute_all_indicators() + dna_to_signal_set()
+       ├─ 逐 Bar process_bar() (仅新 Bar)
+       ├─ _save_pm_state() + _push_position_update()
+       └─ controller._stop_event.wait(poll_wait)
+      |
+5. 用户操作 (通过前端)
+   ├─ POST /stop  -> controller.request_stop() + DB status=stopped
+   ├─ POST /pause -> controller.request_stop() + DB status=paused
+   └─ POST /resume -> DB status=pending (runner 重新拾取)
+      |
+6. WebSocket 推送 (实时)
+   ├─ task_started: 任务开始
+   └─ position_update: 持仓/余额/盈亏/交易统计
+```
+
 ## 设计约束
 
 | 约束 | 原因 | 影响 |
@@ -287,6 +355,9 @@ MTF 策略从 DNA 到 SignalSet 的完整决策链：
 | 信号延迟 1 bar | 防止前瞻偏差 | entry/exit/add/reduce 信号全部 shift(1) 后才传给回测引擎 |
 | exit 不受 confluence 限制 | 止损是风控底线，不应被市场结构状态阻挡 | MTF 门控对 exit/reduce 信号是透明的 |
 | 爆仓模型是简化版 | 真实交易所保证金计算太复杂 | leverage=10 时 9% 亏损就"爆仓"，比真实交易所更严格 |
+| PM 不延迟信号 | 模拟交易在当前 Bar 立即执行（不 shift），与回测引擎不同 | 模拟交易结果不能直接与回测结果对比（1 bar 偏差） |
+| 单任务串行 | TradingRunner 同一时间只执行一个任务 | 第二个 pending 任务必须等第一个结束/停止后才被拾取 |
+| PM restore 仅恢复持仓状态 | _restore_pm_state 只在 position_side 非 None 时恢复 balance | flat 状态下 balance 保持 init_cash，不是 DB 中记录的值 |
 
 ## 能力边界
 
@@ -302,7 +373,7 @@ MTF 策略从 DNA 到 SignalSet 的完整决策链：
 
 ### 系统不能做的
 
-- **不做实盘交易**：Trading 页面是 Mock 数据，无交易对接
+- **不做实盘交易**：Trading 页面是模拟交易（模拟撮合，不连接交易所账户），仅用于策略验证
 - **不做跨标的策略**：每个策略只绑定一个交易对
 - **不做高频策略**：最小周期 1m，无订单簿数据
 - **不做因子研究**：不支持 Alpha 因子挖掘和因子组合
@@ -322,6 +393,8 @@ evolution_task (1) ──> (N) generation_snapshot  [task_id]
 strategy (1) ──> (N) backtest_result            [strategy_id, 物理外键 CASCADE]
 
 dataset_meta                                      [独立表, Parquet 文件元数据]
+
+paper_trading_task (1) ──> (N) paper_trade           [task_id]
 ```
 
 ## 技术选型动机

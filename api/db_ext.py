@@ -398,6 +398,23 @@ def list_paper_trading_tasks(
         return [dict(r) for r in rows]
 
 
+def count_paper_trading_tasks(
+    db_path: Path, status: Optional[str] = None,
+) -> int:
+    """Return total count of paper trading tasks, optionally filtered by status."""
+    with _connect(db_path) as conn:
+        if status:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM paper_trading_task WHERE status = ?",
+                (status,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM paper_trading_task"
+            ).fetchone()
+        return row[0]
+
+
 def save_paper_trade(
     db_path: Path,
     *,

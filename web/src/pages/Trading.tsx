@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { TrendingUp, Pause, Play, Square, Eye } from "lucide-react";
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
@@ -22,6 +23,7 @@ import {
   useStopTradingTask,
   usePauseTradingTask,
   useResumeTradingTask,
+  useCreateTradingTask,
   useTradingWebSocket,
 } from "@/hooks/useTrading";
 import type { TradingTask } from "@/services/trading";
@@ -58,12 +60,35 @@ function toPositionSide(side: string | null): PositionSide {
 export function Trading() {
   const { data: taskList, isLoading } = useTradingTasks();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const createTask = useCreateTradingTask();
 
   const tasks = taskList?.tasks ?? [];
   const activeTaskId =
     selectedTaskId ?? tasks.find((t) => t.status === "running")?.task_id ?? null;
 
   useTradingWebSocket(activeTaskId);
+
+  // Auto-create task from route state (e.g. navigated from Strategies)
+  useEffect(() => {
+    const state = location.state as {
+      dna?: unknown;
+      symbol?: string;
+      timeframe?: string;
+      strategyName?: string;
+    } | null;
+
+    if (state?.dna) {
+      createTask.mutate({
+        dna_json: typeof state.dna === "string" ? state.dna : JSON.stringify(state.dna),
+        symbol: state.symbol || "BTCUSDT",
+        timeframe: state.timeframe || "4h",
+        strategy_name: state.strategyName,
+      });
+      window.history.replaceState({}, "");
+    }
+  }, []);
 
   if (isLoading) {
     return (
@@ -85,7 +110,7 @@ export function Trading() {
           actions={[
             {
               label: "前往策略库",
-              onClick: () => {},
+              onClick: () => navigate("/strategies"),
               variant: "outline",
             },
           ]}

@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "framer-motion";
-import { BookOpen, Play, Pencil, Trash2, Search, Star, TrendingUp, Shield, Target, Dna, FlaskConical } from "lucide-react";
+import { BookOpen, Play, Pencil, Trash2, Search, Star, TrendingUp, Shield, Target, Dna, FlaskConical, Zap } from "lucide-react";
 import { PageTransition } from "@/components/PageTransition";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/Button";
@@ -159,9 +159,10 @@ interface StrategyRowProps {
   onDelete: () => void;
   onEdit: () => void;
   onRun: () => void;
+  onPaperTrade: () => void;
 }
 
-function StrategyCardRow({ strategy, index, starred, onToggleStar, onDelete, onEdit, onRun }: StrategyRowProps) {
+function StrategyCardRow({ strategy, index, starred, onToggleStar, onDelete, onEdit, onRun, onPaperTrade }: StrategyRowProps) {
   const m = strategy.metrics;
   const annualReturn = m?.annual_return;
   const returnTrend = annualReturn != null ? (annualReturn > 0 ? "up" : annualReturn < 0 ? "down" : "neutral") : "neutral";
@@ -279,6 +280,11 @@ function StrategyCardRow({ strategy, index, starred, onToggleStar, onDelete, onE
           <motion.div whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.9 }}>
             <Button variant="ghost" size="icon-xs" aria-label="运行回测" onClick={onRun} className="text-profit/70 hover:text-profit hover:bg-profit/10">
               <Play className="h-3.5 w-3.5" />
+            </Button>
+          </motion.div>
+          <motion.div whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.9 }}>
+            <Button variant="ghost" size="icon-xs" aria-label="模拟交易" onClick={onPaperTrade} className="text-accent-gold/70 hover:text-accent-gold hover:bg-accent-gold/10">
+              <Zap className="h-3.5 w-3.5" />
             </Button>
           </motion.div>
           <motion.div whileHover={{ scale: 1.15 }} whileTap={{ scale: 0.9 }}>
@@ -446,6 +452,18 @@ export function Strategies() {
     });
   };
 
+  const handlePaperTrade = (strategy: Strategy) => {
+    if (!strategy.dna) return;
+    navigate("/trading", {
+      state: {
+        dna: strategy.dna,
+        symbol: strategy.symbol,
+        timeframe: strategy.timeframe,
+        strategyName: strategy.name,
+      },
+    });
+  };
+
   // --- Loading ---
   if (isLoading) return <LoadingSkeleton />;
 
@@ -546,6 +564,7 @@ export function Strategies() {
                       onDelete={() => setDeleteTarget(strategy)}
                       onEdit={() => setEditTarget(strategy)}
                       onRun={() => handleRun(strategy)}
+                      onPaperTrade={() => handlePaperTrade(strategy)}
                     />
                   ))
                 )}

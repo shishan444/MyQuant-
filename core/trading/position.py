@@ -85,11 +85,37 @@ class PositionManager:
         self._take_profit: Optional[float] = dna.risk_genes.take_profit
         self._timeframe: str = dna.execution_genes.timeframe
 
+        # Cumulative stats from prior sessions (for resume)
+        self._prior_trades: int = 0
+        self._prior_pnl: float = 0.0
+        self._prior_wins: int = 0
+        self._prior_losses: int = 0
+
         # State
         self.balance: float = init_cash
         self.position: Optional[Position] = None
         self.closed_trades: List[ClosedTrade] = []
         self.equity_snapshots: List[EquitySnapshot] = []
+
+    # ------------------------------------------------------------------
+    # Cumulative stats (prior + current session)
+    # ------------------------------------------------------------------
+
+    @property
+    def total_trades(self) -> int:
+        return self._prior_trades + len(self.closed_trades)
+
+    @property
+    def total_pnl(self) -> float:
+        return self._prior_pnl + sum(t.pnl for t in self.closed_trades)
+
+    @property
+    def win_count(self) -> int:
+        return self._prior_wins + sum(1 for t in self.closed_trades if t.pnl > 0)
+
+    @property
+    def loss_count(self) -> int:
+        return self._prior_losses + sum(1 for t in self.closed_trades if t.pnl <= 0)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -113,15 +139,16 @@ class PositionManager:
         pos = self.position
         pnl = self._unrealized_pnl(price)
         close_fee = self._fee * pos.quantity * price
+        slippage_cost = self._slippage * pos.quantity * price
 
-        self.balance += pos.margin + pnl - close_fee
+        self.balance += pos.margin + pnl - close_fee - slippage_cost
 
         trade = ClosedTrade(
             side=pos.side,
             entry_price=pos.entry_price,
             exit_price=price,
             quantity=pos.quantity,
-            pnl=pnl - close_fee,
+            pnl=pnl - close_fee - slippage_cost,
             exit_reason=reason,
         )
         self.closed_trades.append(trade)
@@ -243,7 +270,8 @@ class PositionManager:
             if margin > 0:
                 quantity = margin * self._leverage / price
                 open_fee = self._fee * quantity * price
-                self.balance -= margin + open_fee
+                open_slippage = self._slippage * quantity * price
+                self.balance -= margin + open_fee + open_slippage
                 self.position = Position(
                     side=side,
                     entry_price=price,
@@ -267,11 +295,12 @@ class PositionManager:
                 else:
                     reduce_pnl = reduce_qty * (pos.entry_price - price)
                 reduce_fee = self._fee * reduce_qty * price
+                reduce_slippage = self._slippage * reduce_qty * price
                 reduce_margin = pos.margin * (reduce_qty / pos.quantity)
 
                 pos.quantity -= reduce_qty
                 pos.margin -= reduce_margin
-                self.balance += reduce_margin + reduce_pnl - reduce_fee
+                self.balance += reduce_margin + reduce_pnl - reduce_fee - reduce_slippage
 
                 events.append({
                     "type": "position_reduced",
@@ -289,6 +318,7 @@ class PositionManager:
             if add_value > 0:
                 add_qty = add_value * self._leverage / price
                 add_fee = self._fee * add_qty * price
+                add_slippage = self._slippage * add_qty * price
 
                 new_qty = pos.quantity + add_qty
                 if new_qty > 0:
@@ -297,7 +327,7 @@ class PositionManager:
                 else:
                     new_ep = pos.entry_price
 
-                self.balance -= add_value + add_fee
+                self.balance -= add_value + add_fee + add_slippage
                 pos.entry_price = new_ep
                 pos.quantity = new_qty
                 pos.margin += add_value

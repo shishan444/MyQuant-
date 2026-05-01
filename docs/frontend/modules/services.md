@@ -2,7 +2,7 @@
 
 ## 定位
 
-`web/src/services/` 封装所有后端 REST API 调用。1 个共享 axios 实例 + 6 个领域服务。
+`web/src/services/` 封装所有后端 REST API 调用。1 个共享 axios 实例 + 7 个领域服务。
 
 ## 文件清单
 
@@ -47,6 +47,7 @@
 | validation | POST validate, POST validate/rules |
 | scene | GET scene/types, POST validate/scene |
 | discovery | POST patterns, POST similar, POST predict |
+| trading | CRUD tasks, pause/stop/resume, GET trades, GET runner-status |
 
 ## 关键参数
 

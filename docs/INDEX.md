@@ -41,9 +41,10 @@ BTC/ETH 量化交易策略进化工具 -- 用手写遗传算法自动发现、�
 | F5 | 服务层 | `services/` (7 files) | Axios 单例（30s 全局超时，回测 60s 独立超时）、REST API 封装（strategies/evolution/datasets/validation/scene/discovery） | 高 | 已完成 2026-04-25 |
 | F6 | 状态管理 | `stores/` (3 files) + `hooks/` (7 files) | Zustand stores（app/chart-settings/lab）、react-query hooks（含 WebSocket 实时更新） | 高 | 已完成 2026-04-25 |
 | F7 | 类型与工具 | `types/` (4 files) + `lib/` (4 files) + `utils/` (1 file) | 35+ API 类型定义、全局常量（指标/时间周期/条件类型）、DNA 生成器、格式化工具 | 高 | 已完成 2026-04-25 |
+| F8 | 模拟交易页面 | `pages/Trading.tsx` + `hooks/useTrading.ts` + `services/trading.ts` | 任务卡片网格 + WebSocket 实时推送（双通道刷新）+ 暂停/恢复/停止控制 + 交易记录表格 | 高 | 已完成 2026-04-30 |
+| B13 | 模拟交易系统 | `core/trading/` (2 files) + `api/routes/trading.py` + `api/routes/ws.py` | PositionManager 纯 Python 状态机 + TradingRunner 后台守护线程 + REST CRUD + WebSocket 实时推送 | 高 | 已完成 2026-04-30 |
 
 ## 需要确认的结构性问题
 
 1. `core/visualization/` 有 6 个 Plotly 图表文件，但前端用的是 lightweight-charts 和 recharts。后端 visualization 模块是否还在使用？（推断：仍用于后端 API 返回图表数据）
 2. `core/discovery/` 的决策树和 KNN 发现引擎 -- 前端 discovery 服务使用原生 fetch 而非共享 axios 实例，是否有意为之？
-3. `web/src/pages/Trading.tsx` 模拟交易页面 -- 当前使用 Mock 数据，未对接真实交易

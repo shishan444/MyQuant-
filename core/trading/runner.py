@@ -213,7 +213,7 @@ class TradingRunner(threading.Thread):
         fee = task_row["fee"]
 
         # Create PositionManager
-        pm = PositionManager(dna, init_cash=init_cash, fee=fee)
+        pm = PositionManager(dna, init_cash=init_cash, fee=fee, slippage=0.0005)
 
         # Restore position state if resuming
         self._restore_pm_state(pm, task_row)
@@ -233,27 +233,47 @@ class TradingRunner(threading.Thread):
         last_bar_time = task_row.get("last_bar_time")
         start_idx = self._find_replay_start(df, last_bar_time)
 
+        # Apply shift(1) to replay signals to prevent look-ahead bias
+        # (mirrors backtest engine behavior)
+        replay_entries = sig_set.entries.shift(1).fillna(False)
+        replay_exits = sig_set.exits.shift(1).fillna(False)
+        replay_adds = sig_set.adds.shift(1).fillna(False)
+        replay_reduces = sig_set.reduces.shift(1).fillna(False)
+        replay_direction = (
+            sig_set.entry_direction.shift(1).fillna(1.0)
+            if sig_set.entry_direction is not None else None
+        )
+
         for i in range(start_idx, len(df)):
             controller.check_stop()
             row = df.iloc[i]
             ts = df.index[i]
             direction_val = 1.0
-            if sig_set.entry_direction is not None:
-                direction_val = float(sig_set.entry_direction.iloc[i])
+            if replay_direction is not None:
+                direction_val = float(replay_direction.iloc[i])
             events = pm.process_bar(
                 bar_time=ts.isoformat(),
                 bar_high=float(row["high"]),
                 bar_low=float(row["low"]),
                 bar_close=float(row["close"]),
-                entry_signal=bool(sig_set.entries.iloc[i]),
-                exit_signal=bool(sig_set.exits.iloc[i]),
-                add_signal=bool(sig_set.adds.iloc[i]),
-                reduce_signal=bool(sig_set.reduces.iloc[i]),
+                entry_signal=bool(replay_entries.iloc[i]),
+                exit_signal=bool(replay_exits.iloc[i]),
+                add_signal=bool(replay_adds.iloc[i]),
+                reduce_signal=bool(replay_reduces.iloc[i]),
                 direction=direction_val,
             )
             self._log_events(
                 save_paper_trade, task_id, ts.isoformat(), events,
             )
+
+            # Checkpoint every 500 bars
+            if (i - start_idx + 1) % 500 == 0:
+                self._save_pm_state(pm, task_id, df)
+                self._push_position_update(pm, task_id)
+                logger.info(
+                    "Replay checkpoint at bar %d/%d for task %s",
+                    i + 1, len(df), task_id,
+                )
 
         # Save state after replay
         self._save_pm_state(pm, task_id, df)
@@ -338,6 +358,12 @@ class TradingRunner(threading.Thread):
 
     def _restore_pm_state(self, pm: PositionManager, task: dict) -> None:
         """Restore PositionManager state from DB row."""
+        # Restore cumulative stats
+        pm._prior_trades = task.get("total_trades", 0)
+        pm._prior_pnl = task.get("total_pnl", 0.0)
+        pm._prior_wins = task.get("win_count", 0)
+        pm._prior_losses = task.get("loss_count", 0)
+
         if task.get("position_side") is None:
             return
         pm.balance = task.get("balance", pm._init_cash)
@@ -354,6 +380,11 @@ class TradingRunner(threading.Thread):
         from api.db_ext import update_paper_trading_task
         kwargs = {"balance": pm.balance}
 
+        # Get actual last close price from df
+        last_close = 0.0
+        if df is not None and len(df) > 0:
+            last_close = float(df.iloc[-1]["close"])
+
         if pm.position is not None:
             pos = pm.position
             kwargs.update({
@@ -362,10 +393,7 @@ class TradingRunner(threading.Thread):
                 "position_quantity": pos.quantity,
                 "position_margin": pos.margin,
                 "position_funding": pos.cumulative_funding,
-                "unrealized_pnl": pm._unrealized_pnl(
-                    pm.equity_snapshots[-1].equity - pm.balance - pos.margin
-                    if pm.equity_snapshots else 0.0
-                ),
+                "unrealized_pnl": pm._unrealized_pnl(last_close),
             })
         else:
             kwargs.update({
@@ -380,18 +408,14 @@ class TradingRunner(threading.Thread):
         if pm.equity_snapshots:
             snap = pm.equity_snapshots[-1]
             kwargs["last_bar_time"] = snap.timestamp
-            kwargs["last_bar_close"] = (
-                snap.equity - snap.balance
-                if pm.position else snap.equity
-            )
+            kwargs["last_bar_close"] = last_close
 
-        # Stats
-        closed = pm.closed_trades
+        # Stats (use PM cumulative properties)
         kwargs.update({
-            "total_trades": len(closed),
-            "total_pnl": sum(t.pnl for t in closed),
-            "win_count": sum(1 for t in closed if t.pnl > 0),
-            "loss_count": sum(1 for t in closed if t.pnl <= 0),
+            "total_trades": pm.total_trades,
+            "total_pnl": pm.total_pnl,
+            "win_count": pm.win_count,
+            "loss_count": pm.loss_count,
         })
 
         update_paper_trading_task(self.db_path, task_id, **kwargs)
@@ -464,6 +488,6 @@ class TradingRunner(threading.Thread):
             "balance": pm.balance,
             "equity": equity,
             "unrealized_pnl": unrealized,
-            "total_trades": len(pm.closed_trades),
-            "total_pnl": sum(t.pnl for t in pm.closed_trades),
+            "total_trades": pm.total_trades,
+            "total_pnl": pm.total_pnl,
         })
