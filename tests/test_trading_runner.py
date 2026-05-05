@@ -1,19 +1,21 @@
 """Tests for TradingRunner: task lifecycle, state persistence, and WS push.
 
+V2: Uses VirtualAccount instead of PositionManager.
 Covers:
-1. Runner picks up pending task and transitions to running
-2. Runner saves PositionManager state to DB after bar replay
-3. Runner restores PM state from DB row correctly
-4. TaskController cooperative stop via threading.Event
-5. Stale task recovery marks running tasks as stopped
-6. WS push delegates to configured push function
-7. Multiple tasks run sequentially (one at a time)
+1. TaskController cooperative stop
+2. Stale task recovery
+3. Runner state save/restore (VirtualAccount)
+4. Runner task execution (mocked data)
+5. Forming bar filtering
+6. Minimal replay for resume
+7. Pending decision lifecycle
 """
 import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 
 pytestmark = [pytest.mark.unit]
@@ -27,7 +29,6 @@ from tests.helpers.data_factory import make_dna, make_pm
 
 @pytest.fixture(autouse=True)
 def _clean_controllers():
-    """Ensure no stale controllers between tests."""
     from core.trading.runner import _active_controllers
     _active_controllers.clear()
     yield
@@ -36,8 +37,7 @@ def _clean_controllers():
 
 @pytest.fixture
 def trading_db(tmp_path: Path) -> Path:
-    """Create a DB with paper trading tables and a sample task."""
-    from api.db_ext import init_db_ext, save_paper_trading_task
+    from api.db_ext import init_db_ext
     db_path = tmp_path / "test_runner.db"
     init_db_ext(db_path)
     return db_path
@@ -45,7 +45,6 @@ def trading_db(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def trading_db_with_task(trading_db: Path) -> Path:
-    """DB with a pending paper trading task."""
     from api.db_ext import save_paper_trading_task
     dna = make_dna(direction="long", leverage=1)
     save_paper_trading_task(
@@ -58,6 +57,13 @@ def trading_db_with_task(trading_db: Path) -> Path:
         fee=0.001,
     )
     return trading_db
+
+
+def _make_account(**kwargs):
+    """Create a VirtualAccount for testing."""
+    from core.trading.account import VirtualAccount
+    dna = make_dna(**kwargs)
+    return VirtualAccount(dna, init_cash=100_000, fee=0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +93,7 @@ class TestTaskController:
     def test_check_stop_noop_when_not_requested(self):
         from core.trading.runner import TaskController
         ctrl = TaskController()
-        ctrl.check_stop()  # should not raise
+        ctrl.check_stop()
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +160,7 @@ class TestStaleTaskRecovery:
 
 
 # ---------------------------------------------------------------------------
-# Test: Runner state save/restore
+# Test: Runner state save/restore (VirtualAccount)
 # ---------------------------------------------------------------------------
 
 class TestRunnerStateSaveRestore:
@@ -168,9 +174,9 @@ class TestRunnerStateSaveRestore:
             trading_db, task_id="s1", dna_json=dna.to_json(), initial_cash=100_000,
         )
 
-        pm = make_pm(init_cash=100_000, fee=0.0)
+        acc = _make_account()
         runner = TradingRunner(db_path=trading_db, data_dir=trading_db.parent / "data")
-        runner._save_pm_state(pm, "s1")
+        runner._save_account_state(acc, "s1")
 
         row = get_paper_trading_task(trading_db, "s1")
         assert row["balance"] == 100_000
@@ -180,29 +186,29 @@ class TestRunnerStateSaveRestore:
     def test_save_position_state(self, trading_db: Path):
         from api.db_ext import save_paper_trading_task, get_paper_trading_task
         from core.trading.runner import TradingRunner
+        from core.trading.types import Decision
 
         dna = make_dna()
         save_paper_trading_task(
-            trading_db, task_id="s2", dna_json=dna.to_json(), initial_cash=100_000, fee=0.0,
+            trading_db, task_id="s2", dna_json=dna.to_json(),
+            initial_cash=100_000, fee=0.0,
         )
 
-        pm = make_pm(init_cash=100_000, fee=0.0)
-        pm.process_bar(
-            bar_time="2024-01-01T00:00:00",
-            bar_high=101.0, bar_low=99.0, bar_close=100.0,
-            entry_signal=True, direction=1.0,
+        acc = _make_account()
+        acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=0.3),
+            open_price=100.0,
         )
-        assert pm.position is not None
+        assert acc.position is not None
 
         runner = TradingRunner(db_path=trading_db, data_dir=trading_db.parent / "data")
-        runner._save_pm_state(pm, "s2")
+        runner._save_account_state(acc, "s2")
 
         row = get_paper_trading_task(trading_db, "s2")
         assert row["position_side"] == "long"
         assert row["position_entry"] == 100.0
 
     def test_restore_flat_state_restores_balance(self, trading_db: Path):
-        """When position_side is None, balance is still restored from DB."""
         from api.db_ext import save_paper_trading_task, update_paper_trading_task, get_paper_trading_task
         from core.trading.runner import TradingRunner
 
@@ -213,13 +219,12 @@ class TestRunnerStateSaveRestore:
         update_paper_trading_task(trading_db, "r1", balance=95000)
 
         row = get_paper_trading_task(trading_db, "r1")
-        pm = make_pm(init_cash=100_000)
+        acc = _make_account()
         runner = TradingRunner(db_path=trading_db, data_dir=trading_db.parent / "data")
-        runner._restore_pm_state(pm, row)
+        runner._restore_account_state(acc, row)
 
-        # balance is restored from DB even when flat
-        assert pm.balance == 95000
-        assert pm.position is None
+        assert acc.balance == 95000
+        assert acc.position is None
 
     def test_restore_position_state(self, trading_db: Path):
         from api.db_ext import save_paper_trading_task, update_paper_trading_task, get_paper_trading_task
@@ -227,7 +232,8 @@ class TestRunnerStateSaveRestore:
 
         dna = make_dna()
         save_paper_trading_task(
-            trading_db, task_id="r2", dna_json=dna.to_json(), initial_cash=100_000, fee=0.0,
+            trading_db, task_id="r2", dna_json=dna.to_json(),
+            initial_cash=100_000, fee=0.0,
         )
         update_paper_trading_task(
             trading_db, "r2",
@@ -238,17 +244,17 @@ class TestRunnerStateSaveRestore:
         )
 
         row = get_paper_trading_task(trading_db, "r2")
-        pm = make_pm(init_cash=100_000, fee=0.0)
+        acc = _make_account()
         runner = TradingRunner(db_path=trading_db, data_dir=trading_db.parent / "data")
-        runner._restore_pm_state(pm, row)
+        runner._restore_account_state(acc, row)
 
-        assert pm.position is not None
-        assert pm.position.side == "long"
-        assert pm.position.entry_price == 100.0
-        assert pm.position.quantity == 300.0
-        assert pm.position.margin == 30000.0
-        assert pm.position.cumulative_funding == 50.0
-        assert pm.balance == 70000
+        assert acc.position is not None
+        assert acc.position.side == "long"
+        assert acc.position.entry_price == 100.0
+        assert acc.position.quantity == 300.0
+        assert acc.position.margin == 30000.0
+        assert acc.position.cumulative_funding == 50.0
+        assert acc.balance == 70000
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +318,6 @@ class TestRunnerTaskExecution:
         task = runner._find_pending_task()
         assert task is not None
 
-        # _execute_task will fail because no parquet data, but should set status
         with patch.object(runner, "_load_data", return_value=None):
             runner._run_task(task)
 
@@ -328,21 +333,18 @@ class TestRunnerTaskExecution:
             data_dir=trading_db_with_task.parent / "data",
         )
 
-        # Simulate a task being active
         runner._active_task_id = "task-001"
         ctrl = TaskController()
         _active_controllers["task-001"] = ctrl
 
-        # Stop via controller
         ctrl.request_stop()
 
         assert ctrl.stop_requested
         assert "task-001" in _active_controllers
 
     def test_run_task_with_controller_stop(self, trading_db_with_task: Path):
-        """Runner should transition to stopped when controller requests stop."""
         from api.db_ext import get_paper_trading_task
-        from core.trading.runner import TradingRunner
+        from core.trading.runner import TradingRunner, TaskStopRequested
 
         runner = TradingRunner(
             db_path=trading_db_with_task,
@@ -352,8 +354,6 @@ class TestRunnerTaskExecution:
         task = runner._find_pending_task()
         assert task is not None
 
-        # Mock _execute_task to raise TaskStopRequested
-        from core.trading.runner import TaskStopRequested
         with patch.object(
             runner, "_execute_task",
             side_effect=TaskStopRequested(),
@@ -363,3 +363,111 @@ class TestRunnerTaskExecution:
         row = get_paper_trading_task(trading_db_with_task, "task-001")
         assert row["status"] == "stopped"
         assert row["stop_reason"] == "user_stop"
+
+
+# ---------------------------------------------------------------------------
+# Test: Forming bar filter
+# ---------------------------------------------------------------------------
+
+class TestFormingBarFilter:
+
+    def test_forming_bar_excluded(self):
+        """Bar still forming (end time > now) should be excluded."""
+        from core.trading.runner import TradingRunner
+        runner = TradingRunner(db_path=Path("/tmp"), data_dir=Path("/tmp"))
+
+        # Create df where last bar ends in the future
+        now = pd.Timestamp.now(tz="UTC")
+        dates = pd.date_range(
+            end=now - pd.Timedelta(hours=2), periods=3, freq="4h", tz="UTC",
+        )
+        df = pd.DataFrame(
+            {"open": [100, 101, 102], "high": [101, 102, 103],
+             "low": [99, 100, 101], "close": [100, 101, 102], "volume": [1000]*3},
+            index=dates,
+        )
+        # Add a forming bar (ends in future)
+        forming_time = now + pd.Timedelta(hours=2)
+        forming_row = pd.DataFrame(
+            {"open": 103, "high": 104, "low": 102, "close": 103, "volume": 1000},
+            index=[forming_time],
+        )
+        df = pd.concat([df, forming_row])
+
+        filtered = runner._filter_forming_bar(df, "4h")
+        assert len(filtered) == 3
+
+    def test_completed_bar_not_filtered(self):
+        """All bars completed -> no filtering."""
+        from core.trading.runner import TradingRunner
+        runner = TradingRunner(db_path=Path("/tmp"), data_dir=Path("/tmp"))
+
+        # All bars in the past
+        dates = pd.date_range(
+            end=pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=8),
+            periods=3, freq="4h", tz="UTC",
+        )
+        df = pd.DataFrame(
+            {"open": [100, 101, 102], "high": [101, 102, 103],
+             "low": [99, 100, 101], "close": [100, 101, 102], "volume": [1000]*3},
+            index=dates,
+        )
+
+        filtered = runner._filter_forming_bar(df, "4h")
+        assert len(filtered) == 3
+
+
+# ---------------------------------------------------------------------------
+# Test: Pending decision lifecycle
+# ---------------------------------------------------------------------------
+
+class TestPendingDecision:
+
+    def test_pending_decision_stored_and_executed(self):
+        """Decision at Bar N -> executed at Bar N+1 open."""
+        from core.trading.types import Decision
+        acc = _make_account(direction="long", position_size=0.5)
+
+        # Bar 0: no pending decision, no events
+        events_0 = acc.process_bar_v2(
+            bar_high=102, bar_low=99, bar_open=100, bar_close=101,
+            bar_time="2024-01-01T00:00:00",
+            pending_decision=None,
+        )
+        assert events_0 == []
+
+        # Bar 1: execute pending open decision
+        decision = Decision(action="open", direction="long", target_position_pct=0.5)
+        events_1 = acc.process_bar_v2(
+            bar_high=105, bar_low=100, bar_open=102, bar_close=104,
+            bar_time="2024-01-01T04:00:00",
+            pending_decision=decision,
+        )
+        opens = [e for e in events_1 if e["type"] == "position_opened"]
+        assert len(opens) == 1
+        assert opens[0]["entry_price"] == 102.0  # open price
+
+    def test_sl_triggers_skips_pending_decision(self):
+        """SL closes position -> pending close decision is skipped."""
+        from core.trading.types import Decision
+        acc = _make_account(stop_loss=0.05)
+
+        # Open position
+        acc.execute_decision(
+            Decision(action="open", direction="long"),
+            open_price=100.0,
+        )
+
+        # Bar where SL triggers AND pending close exists
+        close_decision = Decision(action="close", reason="signal")
+        events = acc.process_bar_v2(
+            bar_high=98, bar_low=90,  # low=90 < 95 = SL level
+            bar_open=95, bar_close=97,
+            bar_time="2024-01-01T04:00:00",
+            pending_decision=close_decision,
+        )
+
+        closes = [e for e in events if e["type"] == "position_closed"]
+        assert len(closes) == 1
+        assert closes[0]["exit_reason"] == "sl"
+        assert acc.position is None

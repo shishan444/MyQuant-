@@ -15,6 +15,8 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from core.trading.position import PositionManager, Position
+from core.trading.account import VirtualAccount
+from core.trading.types import Decision
 from core.strategy.dna import StrategyDNA
 from tests.helpers.data_factory import make_dna, make_pm
 
@@ -218,10 +220,10 @@ class TestRunnerStatePersistence:
         )
 
         dna = StrategyDNA.from_json(dna_json)
-        pm = PositionManager(dna, init_cash=100000)
+        acc = VirtualAccount(dna, init_cash=100000)
 
         runner = TradingRunner(db_path=db_path, data_dir=tmp_path / "data")
-        runner._save_pm_state(pm, "t1")
+        runner._save_account_state(acc, "t1")
 
         row = get_paper_trading_task(db_path, "t1")
         assert row["balance"] == 100000
@@ -229,10 +231,10 @@ class TestRunnerStatePersistence:
         assert row["total_trades"] == 0
 
         # Restore
-        pm2 = PositionManager(dna, init_cash=100000)
-        runner._restore_pm_state(pm2, row)
-        assert pm2.balance == 100000
-        assert pm2.position is None
+        acc2 = VirtualAccount(dna, init_cash=100000)
+        runner._restore_account_state(acc2, row)
+        assert acc2.balance == 100000
+        assert acc2.position is None
 
     def test_save_and_restore_position_state(self, tmp_path):
         """PM with open position saves and restores correctly."""
@@ -249,17 +251,16 @@ class TestRunnerStatePersistence:
         )
 
         dna = StrategyDNA.from_json(dna_json)
-        pm = PositionManager(dna, init_cash=100000, fee=0.0)
+        acc = VirtualAccount(dna, init_cash=100000, fee=0.0)
         # Open a position
-        pm.process_bar(
-            bar_time="2024-01-01T00:00:00",
-            bar_high=101.0, bar_low=99.0, bar_close=100.0,
-            entry_signal=True, direction=1.0,
+        acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=0.3),
+            open_price=100.0,
         )
-        assert pm.position is not None
+        assert acc.position is not None
 
         runner = TradingRunner(db_path=db_path, data_dir=tmp_path / "data")
-        runner._save_pm_state(pm, "t1")
+        runner._save_account_state(acc, "t1")
 
         row = get_paper_trading_task(db_path, "t1")
         assert row["position_side"] == "long"
@@ -267,12 +268,12 @@ class TestRunnerStatePersistence:
         assert row["balance"] < 100000  # margin deducted
 
         # Restore
-        pm2 = PositionManager(dna, init_cash=100000, fee=0.0)
-        runner._restore_pm_state(pm2, row)
-        assert pm2.position is not None
-        assert pm2.position.side == "long"
-        assert pm2.position.entry_price == 100.0
-        assert pm2.balance < 100000
+        acc2 = VirtualAccount(dna, init_cash=100000, fee=0.0)
+        runner._restore_account_state(acc2, row)
+        assert acc2.position is not None
+        assert acc2.position.side == "long"
+        assert acc2.position.entry_price == 100.0
+        assert acc2.balance < 100000
 
 
 # ---------------------------------------------------------------------------
