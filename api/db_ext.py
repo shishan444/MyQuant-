@@ -114,6 +114,11 @@ _PROGRESS_COLUMNS = [
     ("heartbeat_at", "TEXT"),
 ]
 
+_SCORING_CONSTRAINT_COLUMNS = [
+    ("min_annual_return", "REAL DEFAULT 0.10"),
+    ("max_drawdown_limit", "REAL DEFAULT 0.10"),
+]
+
 
 def _apply_constraint_columns(conn: sqlite3.Connection) -> None:
     """Add leverage/direction and data range columns to evolution_task (idempotent)."""
@@ -151,6 +156,20 @@ def _apply_progress_columns(conn: sqlite3.Connection) -> None:
     conn.row_factory = None
 
     for col_name, col_def in _PROGRESS_COLUMNS:
+        if col_name not in existing:
+            conn.execute(
+                f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
+            )
+
+
+def _apply_scoring_constraint_columns(conn: sqlite3.Connection) -> None:
+    """Add min_annual_return and max_drawdown_limit to evolution_task (idempotent)."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(evolution_task)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+
+    for col_name, col_def in _SCORING_CONSTRAINT_COLUMNS:
         if col_name not in existing:
             conn.execute(
                 f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
@@ -255,6 +274,21 @@ def init_db_ext(db_path: Path) -> None:
         if 10 not in applied:
             _record_version(conn, 10)
 
+        # 10. Paper equity snapshot table (migration 011)
+        _create_equity_snapshot_table(conn)
+        if 11 not in applied:
+            _record_version(conn, 11)
+
+        # 11. Scoring constraint columns (migration 012)
+        _apply_scoring_constraint_columns(conn)
+        if 12 not in applied:
+            _record_version(conn, 12)
+
+        # 12. Execution model column (migration 013)
+        _apply_execution_model_column(conn)
+        if 13 not in applied:
+            _record_version(conn, 13)
+
         conn.commit()
     finally:
         conn.close()
@@ -326,6 +360,37 @@ def _create_paper_trading_tables(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _apply_execution_model_column(conn: sqlite3.Connection) -> None:
+    """Add execution_model column to paper_trading_task (idempotent)."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+    if "execution_model" not in existing:
+        conn.execute(
+            "ALTER TABLE paper_trading_task ADD COLUMN execution_model TEXT DEFAULT 'v1'"
+        )
+
+
+def _create_equity_snapshot_table(conn: sqlite3.Connection) -> None:
+    """Create paper_equity_snapshot table (idempotent)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS paper_equity_snapshot (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id         TEXT NOT NULL,
+            timestamp       TEXT NOT NULL,
+            equity          REAL NOT NULL,
+            balance         REAL NOT NULL,
+            unrealized_pnl  REAL DEFAULT 0,
+            position_side   TEXT DEFAULT 'flat'
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_equity_task_time
+        ON paper_equity_snapshot(task_id, timestamp)
+    """)
+
+
 # -- Paper Trading Task CRUD --
 
 def save_paper_trading_task(
@@ -348,8 +413,9 @@ def save_paper_trading_task(
             """INSERT INTO paper_trading_task
                (task_id, status, strategy_name, symbol, timeframe,
                 initial_cash, fee, leverage, direction, dna_json,
-                score_template, created_at, updated_at, balance)
-               VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                score_template, created_at, updated_at, balance,
+                execution_model)
+               VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2')""",
             (task_id, strategy_name, symbol, timeframe,
              initial_cash, fee, leverage, direction, dna_json,
              score_template, now, now, initial_cash),
@@ -451,6 +517,15 @@ def list_paper_trades(
         return [dict(r) for r in rows]
 
 
+def count_paper_trades(db_path: Path, task_id: str) -> int:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM paper_trade WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()
+        return row[0]
+
+
 def delete_paper_trades_from(
     db_path: Path, task_id: str, from_bar_time: Optional[str] = None,
 ) -> int:
@@ -473,6 +548,138 @@ def delete_paper_trades_from(
             )
         conn.commit()
         return result.rowcount
+
+
+# -- Paper Equity Snapshot CRUD --
+
+def save_equity_snapshots(
+    db_path: Path, task_id: str, snapshots: list[dict],
+) -> None:
+    """Batch insert equity snapshots for a task."""
+    if not snapshots:
+        return
+    with _connect(db_path) as conn:
+        conn.executemany(
+            """INSERT INTO paper_equity_snapshot
+               (task_id, timestamp, equity, balance, unrealized_pnl, position_side)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (task_id, s["timestamp"], s["equity"], s["balance"],
+                 s.get("unrealized_pnl", 0.0), s.get("position_side", "flat"))
+                for s in snapshots
+            ],
+        )
+        conn.commit()
+
+
+def list_equity_snapshots(
+    db_path: Path, task_id: str,
+) -> List[Dict[str, Any]]:
+    """Return all equity snapshots for a task in chronological order."""
+    with _connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM paper_equity_snapshot WHERE task_id = ? "
+            "ORDER BY timestamp ASC",
+            (task_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_paper_trading_task(db_path: Path, task_id: str) -> bool:
+    """Delete a paper trading task and all associated data."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT task_id FROM paper_trading_task WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        conn.execute("DELETE FROM paper_equity_snapshot WHERE task_id = ?", (task_id,))
+        conn.execute("DELETE FROM paper_trade WHERE task_id = ?", (task_id,))
+        conn.execute("DELETE FROM paper_trading_task WHERE task_id = ?", (task_id,))
+        conn.commit()
+        return True
+
+
+def compute_trading_metrics(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
+    """Compute performance metrics for a paper trading task."""
+    task = get_paper_trading_task(db_path, task_id)
+    if task is None:
+        return None
+
+    initial_cash = task["initial_cash"]
+    balance = task.get("balance") or initial_cash
+    total_trades = task.get("total_trades", 0)
+    win_count = task.get("win_count", 0)
+    loss_count = task.get("loss_count", 0)
+
+    # Use equity for total_pnl to include all costs (open/close fees + slippage)
+    position_margin = task.get("position_margin") or 0
+    unrealized_pnl = task.get("unrealized_pnl") or 0
+    equity = balance + position_margin + unrealized_pnl
+    total_pnl = equity - initial_cash
+
+    # Win rate
+    win_rate = win_count / max(total_trades, 1)
+
+    # Compute gross profit / gross loss from trades
+    gross_profit = 0.0
+    gross_loss = 0.0
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT pnl FROM paper_trade WHERE task_id = ? AND pnl IS NOT NULL AND action = 'close'",
+            (task_id,),
+        ).fetchall()
+        for r in rows:
+            if r[0] > 0:
+                gross_profit += r[0]
+            else:
+                gross_loss += r[0]
+
+    profit_factor = gross_profit / max(abs(gross_loss), 1e-8) if gross_loss != 0 else float("inf")
+
+    # Max drawdown from equity snapshots
+    max_drawdown = 0.0
+    max_drawdown_pct = 0.0
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT equity FROM paper_equity_snapshot WHERE task_id = ? ORDER BY timestamp ASC",
+            (task_id,),
+        ).fetchall()
+        if rows:
+            peak = rows[0][0]
+            for r in rows:
+                eq = r[0]
+                if eq > peak:
+                    peak = eq
+                dd = peak - eq
+                if dd > max_drawdown:
+                    max_drawdown = dd
+                    max_drawdown_pct = dd / peak if peak > 0 else 0.0
+
+    # Use equity (balance + margin + unrealized_pnl) for return calculation
+    # balance alone excludes locked margin, giving misleading -100% when in position
+    position_margin = task.get("position_margin") or 0
+    unrealized_pnl = task.get("unrealized_pnl") or 0
+    equity = balance + position_margin + unrealized_pnl
+    total_return = equity / initial_cash - 1 if initial_cash > 0 else 0.0
+    avg_trade_pnl = total_pnl / max(total_trades, 1)
+
+    return {
+        "task_id": task_id,
+        "total_return": round(total_return, 6),
+        "total_return_pct": round(total_return * 100, 2),
+        "win_rate": round(win_rate, 4),
+        "profit_factor": round(profit_factor, 4) if profit_factor != float("inf") else None,
+        "max_drawdown": round(max_drawdown, 2),
+        "max_drawdown_pct": round(max_drawdown_pct * 100, 2),
+        "avg_trade_pnl": round(avg_trade_pnl, 2),
+        "total_trades": total_trades,
+        "total_pnl": round(total_pnl, 2),
+        "win_count": win_count,
+        "loss_count": loss_count,
+    }
 
 
 # ===================================================================

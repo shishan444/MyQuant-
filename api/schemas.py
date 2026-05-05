@@ -294,6 +294,8 @@ class EvolutionTaskCreate(BaseModel):
     data_end: Optional[str] = None
     continuous: bool = True
     strategy_threshold: float = Field(default=80.0, description="Score threshold for auto-extracting strategies")
+    min_annual_return: float = Field(default=0.10, ge=0.0, le=10.0, description="Minimum annual return soft constraint (0.10 = 10%, 6.0 = 600%)")
+    max_drawdown_limit: Optional[float] = Field(default=0.10, ge=0.05, le=0.80, description="Max drawdown soft constraint (0.10 = 10%). None=disabled")
 
 
 class EvolutionTaskResponse(BaseModel):
@@ -330,6 +332,8 @@ class EvolutionTaskResponse(BaseModel):
     champion_dimension_scores: Optional[Dict[str, Any]] = None
     continuous: bool = True
     strategy_threshold: float = 80.0
+    min_annual_return: float = 0.10
+    max_drawdown_limit: Optional[float] = None
     strategy_count: int = 0
     exploration_efficiency: float = 0.0
     current_phase: Optional[str] = None
@@ -483,6 +487,8 @@ class PaperTradingTaskResponse(BaseModel):
     # Last bar
     last_bar_time: Optional[str] = None
     last_bar_close: Optional[float] = None
+    # Execution model
+    execution_model: str = "v1"
 
 
 class PaperTradingTaskListResponse(BaseModel):
@@ -506,3 +512,33 @@ class PaperTradeResponse(BaseModel):
 class PaperTradeListResponse(BaseModel):
     trades: List[PaperTradeResponse]
     total: int
+
+
+class EquitySnapshotResponse(BaseModel):
+    id: int
+    task_id: str
+    timestamp: str
+    equity: float
+    balance: float
+    unrealized_pnl: float = 0.0
+    position_side: str = "flat"
+
+
+class EquitySnapshotListResponse(BaseModel):
+    snapshots: List[EquitySnapshotResponse]
+    total: int
+
+
+class TradingMetricsResponse(BaseModel):
+    task_id: str
+    total_return: float = 0.0
+    total_return_pct: float = 0.0
+    win_rate: float = 0.0
+    profit_factor: Optional[float] = None
+    max_drawdown: float = 0.0
+    max_drawdown_pct: float = 0.0
+    avg_trade_pnl: float = 0.0
+    total_trades: int = 0
+    total_pnl: float = 0.0
+    win_count: int = 0
+    loss_count: int = 0
