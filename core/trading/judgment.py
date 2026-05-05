@@ -60,7 +60,7 @@ def evaluate(
         # Estimate fee cost for min profit check
         notional = state.position_quantity * state.position_entry
         est_fee = notional * config.fee_rate * 2  # round-trip estimate
-        if abs(state.unrealized_pnl) < est_fee * config.min_profit_ratio and signals.exit:
+        if 0 < state.unrealized_pnl < est_fee * config.min_profit_ratio and signals.exit:
             return Decision(
                 action="hold",
                 reason=f"pnl={state.unrealized_pnl:.2f} < fee_threshold={est_fee * config.min_profit_ratio:.2f}",
@@ -80,11 +80,18 @@ def evaluate(
     # Rule 2: entry signal + no position -> open
     if signals.entry and not state.has_position:
         direction = "long" if signals.direction > 0 else "short"
+        # Enforce DNA direction constraint
+        if state.allowed_direction != "mixed" and direction != state.allowed_direction:
+            return Decision(
+                action="hold",
+                reason=f"direction_filter: signal={direction}, allowed={state.allowed_direction}",
+            )
         entry_pct = target_pct * config.initial_entry_pct
         return Decision(
             action="open",
             direction=direction,
             target_position_pct=target_pct,
+            entry_size_pct=entry_pct,
             reason=f"initial_entry={entry_pct:.1%} of target={target_pct:.1%}",
         )
 
@@ -123,9 +130,7 @@ def evaluate(
 
 
 def _compute_target(state: AccountState, config: JudgmentConfig) -> float:
-    """Compute target position percentage from existing target or default."""
+    """Compute target position percentage from state or default."""
     if state.target_position_pct > 0:
         return state.target_position_pct
-    # Default target: use position_size from DNA via account's actual_position_pct
-    # For now, default to 30% of equity
     return 0.30

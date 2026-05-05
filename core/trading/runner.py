@@ -226,6 +226,9 @@ class TradingRunner(threading.Thread):
         from core.features.indicators import compute_all_indicators
         df = compute_all_indicators(df)
 
+        # Trim warmup rows where indicators produced NaN
+        df = self._trim_nan_rows(df)
+
         # Filter forming bar
         df = self._filter_forming_bar(df, timeframe)
 
@@ -312,6 +315,24 @@ class TradingRunner(threading.Thread):
             return df.iloc[:-1]
         return df
 
+    def _trim_nan_rows(self, df):
+        """Drop leading rows where indicator columns are all NaN (warmup period)."""
+        if df.empty:
+            return df
+        ohlcv_cols = {"open", "high", "low", "close", "volume"}
+        ind_cols = [c for c in df.columns if c not in ohlcv_cols]
+        if not ind_cols:
+            return df
+        valid_mask = df[ind_cols].notna().any(axis=1)
+        first_valid = valid_mask.idxmax()
+        if not valid_mask.loc[first_valid]:
+            return df.iloc[0:0]  # all NaN
+        first_idx = df.index.get_loc(first_valid)
+        if first_idx == 0:
+            return df
+        logger.info("Trimmed %d warmup rows with NaN indicators", first_idx)
+        return df.iloc[first_idx:]
+
     def _min_replay(
         self, account, sig_set, df, start_idx, task_id,
         controller, save_trade_fn, timeframe,
@@ -381,12 +402,14 @@ class TradingRunner(threading.Thread):
 
         if task.get("position_side") is None:
             return
+        account._bars_held_count = task.get("bars_held", 0)
         account.position = Position(
             side=task["position_side"],
             entry_price=task["position_entry"],
             quantity=task["position_quantity"],
             margin=task["position_margin"],
             cumulative_funding=task.get("position_funding", 0.0),
+            open_cost=task.get("position_open_cost", 0.0),
         )
 
     def _save_account_state(self, account: VirtualAccount, task_id: str,
@@ -407,6 +430,7 @@ class TradingRunner(threading.Thread):
                 "position_quantity": pos.quantity,
                 "position_margin": pos.margin,
                 "position_funding": pos.cumulative_funding,
+                "position_open_cost": pos.open_cost,
                 "unrealized_pnl": account._unrealized_pnl(last_close),
             })
         else:
@@ -429,6 +453,7 @@ class TradingRunner(threading.Thread):
             "total_pnl": account.total_pnl,
             "win_count": account.win_count,
             "loss_count": account.loss_count,
+            "bars_held": account._bars_held() if account.position else 0,
         })
 
         update_paper_trading_task(self.db_path, task_id, **kwargs)

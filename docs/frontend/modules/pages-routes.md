@@ -15,7 +15,7 @@
 | `pages/Lab.tsx` | 策略实验室 |
 | `pages/Evolution.tsx` | 进化中心 |
 | `pages/Strategies.tsx` | 策略库 |
-| `pages/Trading.tsx` | 模拟交易 (Mock 数据) |
+| `pages/Trading.tsx` | 模拟交易 (Master-Detail + WebSocket 实时) |
 | `pages/Data.tsx` | 数据管理 |
 | `pages/Settings.tsx` | 系统设置 |
 
@@ -26,13 +26,13 @@
 ```
 createBrowserRouter:
   / -> Navigate to /lab
-  /lab -> Lab.tsx
-  /evolution -> Evolution.tsx
-  /strategies -> Strategies.tsx
-  /trading -> Trading.tsx (Mock)
-  /data -> Data.tsx
-  /settings -> Settings.tsx
-所有路由为 AppLayout 子路由
+  /lab -> ErrorBoundary > Lab.tsx
+  /evolution -> ErrorBoundary > Evolution.tsx
+  /strategies -> ErrorBoundary > Strategies.tsx
+  /trading -> ErrorBoundary > Trading.tsx
+  /data -> ErrorBoundary > Data.tsx
+  /settings -> ErrorBoundary > Settings.tsx
+所有路由为 AppLayout 子路由，每个路由独立包裹 ErrorBoundary
 ```
 
 ### 布局 (AppLayout.tsx:7-26)
@@ -70,4 +70,4 @@ createBrowserRouter:
 - 路由 path 全小写单段
 - 统一使用 `<PageTransition>` 包裹 + `flex flex-col gap-4` 布局
 - 空数据: `<EmptyState>`，加载: `<Skeleton>`，删除: `<ConfirmDialog variant="destructive">`
-- Trading 页面使用硬编码 Mock 数据，未接入 API
+- Trading 页面接入真实 API，使用 React Query + WebSocket 实时刷新（详见 F8 模块文档）

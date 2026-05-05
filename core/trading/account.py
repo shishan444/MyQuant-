@@ -61,7 +61,7 @@ class VirtualAccount:
         self.position: Optional[Position] = None
         self.closed_trades: List[ClosedTrade] = []
         self.equity_snapshots: List[EquitySnapshot] = []
-        self._position_open_bar_time: Optional[str] = None
+        self._bars_held_count: int = 0
 
     # ------------------------------------------------------------------
     # Cumulative stats
@@ -109,10 +109,7 @@ class VirtualAccount:
         return self.position.margin / eq
 
     def _bars_held(self) -> int:
-        if self._position_open_bar_time is None:
-            return 0
-        return len([s for s in self.equity_snapshots
-                    if s.position_side != "flat"])
+        return self._bars_held_count
 
     # ------------------------------------------------------------------
     # Core operations
@@ -131,12 +128,12 @@ class VirtualAccount:
             entry_price=pos.entry_price,
             exit_price=price,
             quantity=pos.quantity,
-            pnl=pnl - close_fee - slippage_cost,
+            pnl=pnl - pos.open_cost - close_fee - slippage_cost,
             exit_reason=reason,
         )
         self.closed_trades.append(trade)
         self.position = None
-        self._position_open_bar_time = None
+        self._bars_held_count = 0
 
         return {
             "type": "position_closed",
@@ -148,8 +145,8 @@ class VirtualAccount:
             "exit_reason": reason,
         }
 
-    def _open_position(self, side: str, price: float) -> dict:
-        margin = self.balance * self._position_size
+    def _open_position(self, side: str, price: float, size_pct: float = 0.0) -> dict:
+        margin = self.balance * (size_pct or self._position_size)
         if margin <= 0:
             return {"type": "open_skipped", "reason": "insufficient_balance"}
         quantity = margin * self._leverage / price
@@ -161,6 +158,7 @@ class VirtualAccount:
             entry_price=price,
             quantity=quantity,
             margin=margin,
+            open_cost=open_fee + open_slippage,
         )
         return {
             "type": "position_opened",
@@ -169,9 +167,16 @@ class VirtualAccount:
             "quantity": quantity,
         }
 
-    def _add_position(self, price: float) -> dict:
+    def _add_position(self, price: float, target_pct: float = 0.0) -> dict:
         pos = self.position
-        add_value = self.balance * self._position_size
+        # Calculate exact gap to target
+        current_pct = self._actual_position_pct(price)
+        target = target_pct or self._position_size
+        gap = target - current_pct
+        if gap <= 0:
+            return {"type": "add_skipped", "reason": "already_at_target"}
+        equity = self._equity(price)
+        add_value = min(equity * gap, self.balance)  # don't exceed available balance
         if add_value <= 0:
             return {"type": "add_skipped", "reason": "insufficient_balance"}
         add_qty = add_value * self._leverage / price
@@ -183,6 +188,7 @@ class VirtualAccount:
         pos.entry_price = new_ep
         pos.quantity = new_qty
         pos.margin += add_value
+        pos.open_cost += add_fee + add_slippage
         return {
             "type": "position_added",
             "side": pos.side,
@@ -193,7 +199,8 @@ class VirtualAccount:
 
     def _reduce_position(self, price: float) -> dict:
         pos = self.position
-        reduce_qty = pos.quantity * self._position_size
+        reduce_frac = min(self._position_size, 0.5)  # max 50% per reduce
+        reduce_qty = pos.quantity * reduce_frac
         if reduce_qty <= 0:
             return {"type": "reduce_skipped", "reason": "zero_quantity"}
         if pos.side == "long":
@@ -214,8 +221,23 @@ class VirtualAccount:
             "pnl": reduce_pnl - reduce_fee - reduce_slippage,
         }
         if pos.quantity < 1e-8:
+            # Fully closed via reduce: deduct remaining open_cost
+            self.balance -= pos.open_cost
+            final_pnl = reduce_pnl - pos.open_cost - reduce_fee - reduce_slippage
+            event["pnl"] = final_pnl
+            self.closed_trades.append(ClosedTrade(
+                side=pos.side,
+                entry_price=pos.entry_price,
+                exit_price=price,
+                quantity=reduce_qty,
+                pnl=final_pnl,
+                exit_reason="reduce_full",
+            ))
             self.position = None
-            self._position_open_bar_time = None
+            self._bars_held_count = 0
+        else:
+            # Proportionally reduce open_cost
+            pos.open_cost *= (1 - reduce_frac)
         return event
 
     # ------------------------------------------------------------------
@@ -276,16 +298,16 @@ class VirtualAccount:
 
         if decision.action == "open" and self.position is None:
             side = decision.direction
-            event = self._open_position(side, open_price)
+            event = self._open_position(side, open_price, decision.entry_size_pct)
             events.append(event)
             if event["type"] == "position_opened":
-                self._position_open_bar_time = None  # set on first snapshot
+                self._bars_held_count = 0
 
         elif decision.action == "close" and self.position is not None:
             events.append(self._close_position(open_price, decision.reason or "signal"))
 
         elif decision.action == "add" and self.position is not None:
-            event = self._add_position(open_price)
+            event = self._add_position(open_price, decision.target_position_pct)
             events.append(event)
 
         elif decision.action == "reduce" and self.position is not None:
@@ -301,8 +323,7 @@ class VirtualAccount:
     def take_snapshot(self, bar_time: str, current_price: float) -> None:
         """Record equity snapshot."""
         if self.position is not None:
-            if self._position_open_bar_time is None:
-                self._position_open_bar_time = bar_time
+            self._bars_held_count += 1
             side = self.position.side
             upnl = self._unrealized_pnl(current_price)
             eq = self.balance + self.position.margin + upnl
@@ -330,9 +351,10 @@ class VirtualAccount:
             position_margin=self.position.margin if has_pos else 0.0,
             unrealized_pnl=self._unrealized_pnl(current_price),
             position_bars_held=self._bars_held(),
-            target_position_pct=0.0,  # set by runner
+            target_position_pct=self._position_size,
             actual_position_pct=self._actual_position_pct(current_price),
             equity=self._equity(current_price),
+            allowed_direction=self._direction,
         )
 
     # ------------------------------------------------------------------

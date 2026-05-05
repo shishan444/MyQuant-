@@ -182,3 +182,41 @@ export const mockBacktestResult = {
     { timestamp: "2025-02-01T00:00:00Z", value: 125500 },
   ],
 };
+
+// ---------------------------------------------------------------------------
+// Mock: Trading types
+// ---------------------------------------------------------------------------
+
+export const mockTradingMetrics = {
+  task_id: "t1",
+  total_return: 2000,
+  total_return_pct: 2.0,
+  win_rate: 0.6,
+  profit_factor: 1.8,
+  max_drawdown: 800,
+  max_drawdown_pct: 0.8,
+  avg_trade_pnl: 400,
+  total_trades: 5,
+  total_pnl: 2000,
+  win_count: 3,
+  loss_count: 2,
+};
+
+export const mockPaperTrade = {
+  id: 1,
+  task_id: "t1",
+  bar_time: "2025-01-05T08:00:00Z",
+  side: "long",
+  action: "open",
+  price: 100000,
+  quantity: 0.1,
+  pnl: null,
+  fee_paid: 10,
+  reason: null,
+};
+
+export const mockEquitySnapshots = [
+  { timestamp: "2025-01-01T00:00:00Z", equity: 100000, balance: 100000, unrealized_pnl: 0, position_side: "flat" },
+  { timestamp: "2025-01-05T08:00:00Z", equity: 102000, balance: 100000, unrealized_pnl: 2000, position_side: "long" },
+  { timestamp: "2025-01-10T12:00:00Z", equity: 105000, balance: 105000, unrealized_pnl: 0, position_side: "flat" },
+];

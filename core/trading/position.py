@@ -31,6 +31,7 @@ class Position:
     quantity: float
     margin: float
     cumulative_funding: float = 0.0
+    open_cost: float = 0.0  # opening fee + slippage, deducted from pnl at close
 
 
 @dataclass
@@ -159,6 +160,7 @@ class PositionManager:
             "side": trade.side,
             "entry_price": trade.entry_price,
             "exit_price": trade.exit_price,
+            "quantity": trade.quantity,
             "pnl": trade.pnl,
             "exit_reason": reason,
         }
@@ -304,6 +306,8 @@ class PositionManager:
 
                 events.append({
                     "type": "position_reduced",
+                    "side": pos.side,
+                    "price": price,
                     "quantity_reduced": reduce_qty,
                     "pnl": reduce_pnl - reduce_fee - reduce_slippage,
                 })
@@ -334,6 +338,8 @@ class PositionManager:
 
                 events.append({
                     "type": "position_added",
+                    "side": pos.side,
+                    "price": price,
                     "quantity_added": add_qty,
                     "new_entry_price": new_ep,
                 })

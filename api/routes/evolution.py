@@ -120,6 +120,8 @@ def _task_row_to_response(
         champion_dimension_scores=_parse_json_dict(row.get("champion_dimension_scores")),
         continuous=bool(row.get("continuous", 1)),
         strategy_threshold=row.get("strategy_threshold", 80.0),
+        min_annual_return=row.get("min_annual_return", 0.10),
+        max_drawdown_limit=row.get("max_drawdown_limit"),
         strategy_count=strategy_count,
         exploration_efficiency=round(
             strategy_count / max(row.get("current_generation", 0), 1), 4
@@ -292,7 +294,8 @@ def create_task(
                data_time_start = ?, data_time_end = ?, data_row_count = ?,
                indicator_pool = ?, timeframe_pool = ?, mode = ?,
                continuous = ?,
-               strategy_threshold = ?
+               strategy_threshold = ?,
+               min_annual_return = ?, max_drawdown_limit = ?
            WHERE task_id = ?""",
         (payload.population_size, payload.max_generations,
          payload.elite_ratio, payload.n_workers,
@@ -304,6 +307,7 @@ def create_task(
          payload.mode,
          1 if payload.continuous else 0,
          payload.strategy_threshold,
+         payload.min_annual_return, payload.max_drawdown_limit,
          task_id),
     )
     conn.commit()

@@ -54,6 +54,16 @@ useLabStore (无持久化)
 | queries/chartQueries (101行) | ohlcvOptions(staleTime 60s), chartIndicatorOptions |
 | useChartIndicators (184行) | 组合 hook, 串联 OHLCV + 指标查询 |
 
+### useTrading.ts (270 行) -- 模拟交易
+
+导出 12 个 hook + 6 个 query options:
+
+- **查询**: useTradingTasks (条件轮询 5s), useTradingTask (条件轮询 3s), useTradingTrades, useTradingEquity, useTradingMetrics, useRunnerStatus (10s 轮询)
+- **变更**: useCreateTradingTask, useStopTradingTask, usePauseTradingTask, useResumeTradingTask, useDeleteTradingTask
+- **WebSocket**: useTradingWebSocket(taskId) -- 连接 /ws/trading/{taskId}, 处理 position_update/task_started 消息, 2s debounce, 断线 3s 重连, 返回 isConnected (boolean)
+- **Key 工厂**: tradingKeys.all / .tasks() / .task(id) / .trades(id) / .equity(id) / .metrics(id) / .runnerStatus()
+- **WS 失效范围**: 5 个 query key (tasks/task/trades/equity/metrics)
+
 ## 关键机制
 
 ### Query Key 工厂模式

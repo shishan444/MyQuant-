@@ -29,6 +29,8 @@ def score_strategy(
     template_name: str = "explorer",
     template: ScoringTemplate | None = None,
     liquidated: bool = False,
+    max_drawdown_limit: float | None = None,
+    min_annual_return_limit: float | None = None,
 ) -> Dict:
     """Compute composite score from raw metrics using a scoring template.
 
@@ -37,6 +39,12 @@ def score_strategy(
         template_name: Name of scoring template to use.
         template: Override template (takes precedence over name).
         liquidated: Whether the strategy was force-liquidated.
+        max_drawdown_limit: Soft constraint on max drawdown (e.g. 0.20 = 20%).
+            If actual drawdown exceeds this, score is penalized proportionally.
+            None = no soft constraint.
+        min_annual_return_limit: Soft constraint on min annual return (e.g. 6.0 = 600%).
+            If actual return is below this, score is penalized proportionally.
+            None = no soft constraint.
 
     Returns:
         Dict with total_score (0-100), dimension_scores, template_name, threshold.
@@ -119,6 +127,20 @@ def score_strategy(
         dimension_scores.get(dim, 0.0) * weight
         for dim, weight in template.weights.items()
     )
+
+    # Soft constraint: drawdown penalty
+    if max_drawdown_limit is not None:
+        actual_dd = abs(metrics.get("max_drawdown", 0))
+        if actual_dd > max_drawdown_limit:
+            penalty = max(0.2, max_drawdown_limit / actual_dd)
+            total = total * penalty
+
+    # Soft constraint: annual return penalty
+    if min_annual_return_limit is not None:
+        actual_return = metrics.get("annual_return", 0)
+        if actual_return < min_annual_return_limit:
+            penalty = max(0.2, actual_return / min_annual_return_limit)
+            total = total * penalty
 
     return {
         "total_score": round(total, 2),

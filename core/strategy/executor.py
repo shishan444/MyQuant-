@@ -805,7 +805,8 @@ def dna_to_signal_set(
 
     # Generate entry_direction for mixed mode
     entry_direction = None
-    if getattr(dna.risk_genes, "direction", None) == "mixed":
+    dna_direction = getattr(dna.risk_genes, "direction", "long")
+    if dna_direction == "mixed":
         if direction_genes:
             # Use DIRECTION gene signals (priority over momentum)
             entry_direction = direction_genes[0]
@@ -816,6 +817,12 @@ def dna_to_signal_set(
                 np.where(momentum >= 0, 1.0, -1.0),
                 index=enhanced_df.index,
             )
+    else:
+        # For single-direction DNA, set explicit direction
+        entry_direction = pd.Series(
+            1.0 if dna_direction == "long" else -1.0,
+            index=enhanced_df.index,
+        )
 
     return SignalSet(
         entries=entries,

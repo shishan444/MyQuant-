@@ -71,9 +71,9 @@ start_api() {
     local pid=$!
     echo "$pid" > "$API_PID_FILE"
 
-    local retries=15
+    local retries=40
     while ((retries-- > 0)); do
-        if curl -s -o /dev/null "http://localhost:$API_PORT/docs" 2>/dev/null; then
+        if curl -sf "http://localhost:$API_PORT/api/health" >/dev/null 2>&1; then
             info "API 服务启动成功 (PID: $pid)"
             info "API 地址: http://localhost:$API_PORT"
             info "API 文档: http://localhost:$API_PORT/docs"

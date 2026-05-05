@@ -19,6 +19,10 @@ export interface UseChartIndicatorsParams {
   subChartType?: SubChartType;
   /** Whether to run the queries. Defaults to true. */
   enabled?: boolean;
+  /** Refetch interval in ms for OHLCV query. Defaults to false (no refetch). */
+  refetchInterval?: number | false;
+  /** Row limit for OHLCV and indicator queries. Defaults to 50000. */
+  limit?: number;
 }
 
 export interface UseChartIndicatorsResult {
@@ -71,13 +75,16 @@ export function useChartIndicators(
     dateRange,
     subChartType = "volume",
     enabled = true,
+    refetchInterval = false,
+    limit = 50000,
   } = params;
   const chartSettings = useChartSettings();
 
   // Query 1: OHLCV candle data
   const { data: ohlcvResponse, isLoading: isLoadingOhlcv } = useQuery({
-    ...ohlcvOptions(symbol, timeframe, dateRange),
+    ...ohlcvOptions(symbol, timeframe, dateRange, limit),
     enabled,
+    refetchInterval,
   });
   const candleData = ohlcvResponse?.data;
 

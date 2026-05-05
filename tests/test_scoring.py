@@ -338,3 +338,217 @@ class TestTradeCountPenalty:
         result = score_strategy(metrics, "explorer")
         assert "trade_count_penalty" in result["dimension_scores"]
         assert result["dimension_scores"]["trade_count_penalty"] > 0
+
+
+class TestDrawdownSoftConstraint:
+    """Tests for max_drawdown_limit soft constraint in scorer."""
+
+    def _good_metrics(self):
+        return {
+            "annual_return": 0.30, "sharpe_ratio": 1.0,
+            "max_drawdown": -0.10, "profit_factor": 1.5,
+            "monthly_consistency": 0.6,
+            "total_trades": 50, "total_bars": 200,
+        }
+
+    def test_no_penalty_when_disabled(self):
+        """max_drawdown_limit=None (default) should apply no penalty."""
+        metrics = self._good_metrics()
+        result_no_limit = score_strategy(metrics, "explorer", max_drawdown_limit=None)
+        result_default = score_strategy(metrics, "explorer")
+        assert result_no_limit["total_score"] == result_default["total_score"]
+
+    def test_no_penalty_when_within_limit(self):
+        """Drawdown within limit should not be penalized."""
+        metrics = self._good_metrics()
+        metrics["max_drawdown"] = -0.10  # 10% drawdown
+        result = score_strategy(metrics, "explorer", max_drawdown_limit=0.20)
+        baseline = score_strategy(metrics, "explorer", max_drawdown_limit=None)
+        assert result["total_score"] == baseline["total_score"]
+
+    def test_penalty_applied_when_exceeded(self):
+        """Drawdown exceeding limit should reduce score."""
+        metrics = self._good_metrics()
+        metrics["max_drawdown"] = -0.40  # 40% drawdown
+        result = score_strategy(metrics, "explorer", max_drawdown_limit=0.20)
+        baseline = score_strategy(metrics, "explorer", max_drawdown_limit=None)
+        assert result["total_score"] < baseline["total_score"]
+
+    def test_penalty_formula_ratio(self):
+        """Penalty = max(0.2, limit/actual). 20% limit / 40% actual = 0.5."""
+        metrics = self._good_metrics()
+        metrics["max_drawdown"] = -0.40
+        result = score_strategy(metrics, "explorer", max_drawdown_limit=0.20)
+        baseline = score_strategy(metrics, "explorer", max_drawdown_limit=None)
+        expected = round(baseline["total_score"] * 0.5, 2)
+        assert result["total_score"] == expected
+
+    def test_penalty_minimum_floor(self):
+        """Very large drawdown should have penalty close to 0.2 floor multiplier."""
+        metrics = self._good_metrics()
+        metrics["max_drawdown"] = -0.99  # 99% drawdown
+        result = score_strategy(metrics, "explorer", max_drawdown_limit=0.20)
+        baseline = score_strategy(metrics, "explorer", max_drawdown_limit=None)
+        # penalty = max(0.2, 0.20/0.99) = 0.20202... > 0.2 but close
+        penalty = max(0.2, 0.20 / 0.99)
+        expected = round(baseline["total_score"] * penalty, 2)
+        assert result["total_score"] == expected
+        assert result["total_score"] < baseline["total_score"] * 0.25
+
+    def test_soft_constraint_works_with_runtime_template(self):
+        """Soft constraint should work when passing a runtime template override."""
+        from dataclasses import replace
+        from core.scoring.templates import get_template
+        tpl = get_template("explorer")
+        runtime_tpl = replace(tpl, hard_constraints={"annual_return": 0.05})
+
+        metrics = self._good_metrics()
+        metrics["max_drawdown"] = -0.30
+        result = score_strategy(
+            metrics, template=runtime_tpl, max_drawdown_limit=0.20,
+        )
+        baseline = score_strategy(metrics, template=runtime_tpl, max_drawdown_limit=None)
+        assert result["total_score"] < baseline["total_score"]
+
+    def test_soft_constraint_does_not_zero_score(self):
+        """Soft constraint should reduce but never zero out the score."""
+        metrics = self._good_metrics()
+        metrics["max_drawdown"] = -0.80
+        result = score_strategy(metrics, "explorer", max_drawdown_limit=0.05)
+        assert result["total_score"] > 0  # floor of 0.2 ensures > 0
+
+
+class TestRuntimeHardConstraintOverride:
+    """Tests for runtime template override with user-specified min_annual_return."""
+
+    def test_optimizer_drawdown_constraint_preserved(self):
+        """optimizer's original max_drawdown hard constraint should remain intact."""
+        from core.scoring.templates import get_template
+
+        tpl = get_template("optimizer")
+        # No longer override hard_constraints - pass soft constraint via parameter
+        # Strategy with good return but terrible drawdown should still fail hard constraint
+        metrics = {
+            "annual_return": 0.50, "sharpe_ratio": 1.0,
+            "max_drawdown": -0.70,  # Exceeds optimizer's -0.60 limit
+            "profit_factor": 1.5, "monthly_consistency": 0.6,
+            "total_trades": 50, "total_bars": 200,
+        }
+        result = score_strategy(metrics, template=tpl, min_annual_return_limit=0.10)
+        assert result["total_score"] == 0.0
+        assert result.get("hard_constraint_failed") == "max_drawdown"
+
+    def test_optimizer_low_return_hard_constraint(self):
+        """optimizer's annual_return < 10% hard constraint still fires."""
+        from core.scoring.templates import get_template
+
+        tpl = get_template("optimizer")
+        metrics = {
+            "annual_return": 0.05, "sharpe_ratio": 1.0,
+            "max_drawdown": -0.10, "profit_factor": 1.5,
+            "monthly_consistency": 0.6,
+            "total_trades": 50, "total_bars": 200,
+        }
+        result = score_strategy(metrics, template=tpl)
+        assert result["total_score"] == 0.0
+        assert result.get("hard_constraint_failed") == "annual_return"
+
+
+class TestAnnualReturnSoftConstraint:
+    """Tests for min_annual_return_limit soft constraint in scorer."""
+
+    def _good_metrics(self):
+        return {
+            "annual_return": 0.30, "sharpe_ratio": 1.0,
+            "max_drawdown": -0.10, "profit_factor": 1.5,
+            "monthly_consistency": 0.6,
+            "total_trades": 50, "total_bars": 200,
+        }
+
+    def test_no_penalty_when_disabled(self):
+        """min_annual_return_limit=None should apply no penalty."""
+        metrics = self._good_metrics()
+        result_none = score_strategy(metrics, "explorer", min_annual_return_limit=None)
+        result_default = score_strategy(metrics, "explorer")
+        assert result_none["total_score"] == result_default["total_score"]
+
+    def test_no_penalty_when_above_limit(self):
+        """Return above limit should not be penalized."""
+        metrics = self._good_metrics()
+        metrics["annual_return"] = 0.50  # 50%
+        result = score_strategy(metrics, "explorer", min_annual_return_limit=0.10)
+        baseline = score_strategy(metrics, "explorer", min_annual_return_limit=None)
+        assert result["total_score"] == baseline["total_score"]
+
+    def test_penalty_applied_when_below_limit(self):
+        """Return below limit should reduce score."""
+        metrics = self._good_metrics()
+        metrics["annual_return"] = 0.10  # 10%
+        result = score_strategy(metrics, "explorer", min_annual_return_limit=0.30)
+        baseline = score_strategy(metrics, "explorer", min_annual_return_limit=None)
+        assert result["total_score"] < baseline["total_score"]
+
+    def test_penalty_formula_ratio(self):
+        """Penalty = max(0.2, actual/limit). 10% actual / 30% limit = 0.333."""
+        metrics = self._good_metrics()
+        metrics["annual_return"] = 0.10
+        result = score_strategy(metrics, "explorer", min_annual_return_limit=0.30)
+        baseline = score_strategy(metrics, "explorer", min_annual_return_limit=None)
+        expected = round(baseline["total_score"] * (0.10 / 0.30), 2)
+        assert result["total_score"] == expected
+
+    def test_penalty_minimum_floor(self):
+        """Very low return should still have 0.2 floor multiplier."""
+        metrics = self._good_metrics()
+        metrics["annual_return"] = 0.001  # 0.1%
+        result = score_strategy(metrics, "explorer", min_annual_return_limit=6.0)
+        baseline = score_strategy(metrics, "explorer", min_annual_return_limit=None)
+        expected = round(baseline["total_score"] * 0.2, 2)
+        assert result["total_score"] == expected
+
+    def test_soft_never_zeros_score(self):
+        """Soft constraint should reduce but never zero out."""
+        metrics = self._good_metrics()
+        metrics["annual_return"] = 0.001
+        result = score_strategy(metrics, "explorer", min_annual_return_limit=10.0)
+        assert result["total_score"] > 0
+
+    def test_high_target_600_percent(self):
+        """600% target: strategies below 600% get penalty but not zero."""
+        metrics = self._good_metrics()
+        metrics["annual_return"] = 3.0  # 300% - well below 600%
+        result = score_strategy(metrics, "explorer", min_annual_return_limit=6.0)
+        baseline = score_strategy(metrics, "explorer", min_annual_return_limit=None)
+        assert result["total_score"] < baseline["total_score"]
+        assert result["total_score"] > 0  # Non-zero gradient preserved
+
+    def test_combined_with_drawdown_soft(self):
+        """Both soft constraints should stack."""
+        metrics = self._good_metrics()
+        metrics["annual_return"] = 0.10  # Below 30% limit
+        metrics["max_drawdown"] = -0.40  # Above 20% limit
+        result = score_strategy(
+            metrics, "explorer",
+            min_annual_return_limit=0.30,
+            max_drawdown_limit=0.20,
+        )
+        baseline = score_strategy(
+            metrics, "explorer",
+            min_annual_return_limit=None,
+            max_drawdown_limit=None,
+        )
+        # Both penalties should apply: (0.10/0.30) * (0.20/0.40) = 0.333 * 0.5 = 0.167
+        assert result["total_score"] < baseline["total_score"]
+        assert result["total_score"] > 0
+
+    def test_gradient_preserved_across_range(self):
+        """Scores should be monotonically increasing with higher returns."""
+        scores = []
+        for ar in [0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]:
+            metrics = self._good_metrics()
+            metrics["annual_return"] = ar
+            result = score_strategy(metrics, "explorer", min_annual_return_limit=6.0)
+            scores.append(result["total_score"])
+        # Should be monotonically non-decreasing
+        for i in range(len(scores) - 1):
+            assert scores[i] <= scores[i + 1], f"Score decreased: {scores[i]} > {scores[i+1]} at index {i}"

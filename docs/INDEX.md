@@ -41,8 +41,8 @@ BTC/ETH 量化交易策略进化工具 -- 用手写遗传算法自动发现、�
 | F5 | 服务层 | `services/` (7 files) | Axios 单例（30s 全局超时，回测 60s 独立超时）、REST API 封装（strategies/evolution/datasets/validation/scene/discovery） | 高 | 已完成 2026-04-25 |
 | F6 | 状态管理 | `stores/` (3 files) + `hooks/` (7 files) | Zustand stores（app/chart-settings/lab）、react-query hooks（含 WebSocket 实时更新） | 高 | 已完成 2026-04-25 |
 | F7 | 类型与工具 | `types/` (4 files) + `lib/` (4 files) + `utils/` (1 file) | 35+ API 类型定义、全局常量（指标/时间周期/条件类型）、DNA 生成器、格式化工具 | 高 | 已完成 2026-04-25 |
-| F8 | 模拟交易页面 | `pages/Trading.tsx` + `hooks/useTrading.ts` + `services/trading.ts` | 策略库 -> 模拟交易导航创建 + route state 自动创建任务 + 任务卡片网格 + WS 双通道刷新 + 暂停/恢复/停止 + 交易记录表格 | 高 | 已完成 2026-05-01 |
-| B13 | 模拟交易系统 | `core/trading/` (2 files) + `api/routes/trading.py` + `api/routes/ws.py` + `api/db_ext.py` | PositionManager (含滑点0.0005+累计统计) + TradingRunner (回放shift1+500bar checkpoint) + REST CRUD (dna校验422+分页total) + WS 推送 | 高 | 已完成 2026-05-01 |
+| F8 | 模拟交易页面 | `pages/Trading.tsx` + `hooks/useTrading.ts` + `services/trading.ts` + `components/trading/`(5 files) | Master-Detail 布局（w-72 sidebar + detail panel）+ CreateTaskDialog 确认流程 + EquityCurve/MetricsDashboard/TradingChart/RunnerStatusBadge + 删除确认 + 12 个 React Query hooks + WS 双通道刷新 + ErrorBoundary 包裹 | 高 | 已完成 2026-05-01 |
+| B13 | 模拟交易系统 | `core/trading/` (2 files) + `api/routes/trading.py` + `api/routes/ws.py` + `api/db_ext.py` | PositionManager (含滑点0.0005+累计统计) + TradingRunner (回放shift1+500bar checkpoint) + REST CRUD (11端点: dna校验422+分页total+equity+metrics+delete) + WS 推送 | 高 | 已完成 2026-05-01 |
 
 ## 需要确认的结构性问题
 

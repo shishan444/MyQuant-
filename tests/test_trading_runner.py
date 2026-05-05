@@ -471,3 +471,60 @@ class TestPendingDecision:
         assert len(closes) == 1
         assert closes[0]["exit_reason"] == "sl"
         assert acc.position is None
+
+
+# ---------------------------------------------------------------------------
+# Test: NaN warmup protection
+# ---------------------------------------------------------------------------
+
+class TestNaNProtection:
+
+    def test_nan_direction_suppresses_entry(self):
+        """NaN direction should suppress entry signal."""
+        from core.trading.types import BarSignals
+
+        class SigNaNDir:
+            entries = pd.Series([True])
+            exits = pd.Series([False])
+            adds = pd.Series([False])
+            reduces = pd.Series([False])
+            entry_direction = pd.Series([float("nan")])
+
+        bs = BarSignals.from_signal_set(SigNaNDir(), 0)
+        assert bs.entry is False
+        assert bs.direction == 0.0
+
+    def test_valid_direction_allows_entry(self):
+        """Valid direction should allow entry signal through."""
+        from core.trading.types import BarSignals
+
+        class SigValid:
+            entries = pd.Series([True])
+            exits = pd.Series([False])
+            adds = pd.Series([False])
+            reduces = pd.Series([False])
+            entry_direction = pd.Series([1.0])
+
+        bs = BarSignals.from_signal_set(SigValid(), 0)
+        assert bs.entry is True
+        assert bs.direction == 1.0
+
+    def test_trim_nan_rows_removes_warmup(self):
+        """_trim_nan_rows should remove leading rows with NaN indicators."""
+        from core.trading.runner import TradingRunner
+
+        runner = TradingRunner(db_path=Path("/tmp"), data_dir=Path("/tmp"))
+        df = pd.DataFrame(
+            {
+                "open": [1, 2, 3, 4, 5],
+                "high": [2, 3, 4, 5, 6],
+                "low": [0.5, 1, 2, 3, 4],
+                "close": [1.5, 2.5, 3.5, 4.5, 5.5],
+                "volume": [100] * 5,
+                "ema_10": [float("nan")] * 3 + [1.0, 1.1],
+            },
+            index=pd.date_range("2024-01-01", periods=5, freq="4h"),
+        )
+        result = runner._trim_nan_rows(df)
+        assert len(result) == 2  # rows 3,4 have valid indicators
+        assert result["ema_10"].notna().all()

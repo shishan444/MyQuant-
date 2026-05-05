@@ -1,6 +1,7 @@
 """Data types for the paper trading judgment and execution pipeline."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -17,6 +18,7 @@ class Decision:
     action: str
     direction: str = ""
     target_position_pct: float = 0.0
+    entry_size_pct: float = 0.0
     reason: str = ""
 
 
@@ -35,6 +37,7 @@ class AccountState:
     target_position_pct: float  # current target set by judgment engine
     actual_position_pct: float  # current position as fraction of equity
     equity: float
+    allowed_direction: str = "mixed"  # DNA direction constraint: "long" | "short" | "mixed"
 
 
 @dataclass
@@ -62,14 +65,20 @@ class BarSignals:
     @staticmethod
     def from_signal_set(sig_set, idx: int) -> BarSignals:
         """Extract signals for a specific bar index from a SignalSet."""
+        raw_direction = (
+            float(sig_set.entry_direction.iloc[idx])
+            if sig_set.entry_direction is not None
+            else 1.0
+        )
+        # NaN protection: suppress entry when direction is invalid
+        entry = bool(sig_set.entries.iloc[idx])
+        if entry and math.isnan(raw_direction):
+            entry = False
+            raw_direction = 0.0
         return BarSignals(
-            entry=bool(sig_set.entries.iloc[idx]),
+            entry=entry,
             exit=bool(sig_set.exits.iloc[idx]),
             add=bool(sig_set.adds.iloc[idx]),
             reduce=bool(sig_set.reduces.iloc[idx]),
-            direction=(
-                float(sig_set.entry_direction.iloc[idx])
-                if sig_set.entry_direction is not None
-                else 1.0
-            ),
+            direction=raw_direction,
         )

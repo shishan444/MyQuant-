@@ -102,6 +102,11 @@ export async function resumeTradingTask(taskId: string): Promise<TradingTask> {
   return data;
 }
 
+export async function restartTradingTask(taskId: string): Promise<TradingTask> {
+  const { data } = await api.post(`/api/trading/tasks/${taskId}/restart`);
+  return data;
+}
+
 export async function getTradingTrades(
   taskId: string,
   limit?: number
@@ -117,5 +122,50 @@ export async function getTradingRunnerStatus(): Promise<{
   active_task_id: string | null;
 }> {
   const { data } = await api.get("/api/trading/runner-status");
+  return data;
+}
+
+export interface EquitySnapshot {
+  id: number;
+  task_id: string;
+  timestamp: string;
+  equity: number;
+  balance: number;
+  unrealized_pnl: number;
+  position_side: string;
+}
+
+export interface EquitySnapshotList {
+  snapshots: EquitySnapshot[];
+  total: number;
+}
+
+export interface TradingMetrics {
+  task_id: string;
+  total_return: number;
+  total_return_pct: number;
+  win_rate: number;
+  profit_factor: number | null;
+  max_drawdown: number;
+  max_drawdown_pct: number;
+  avg_trade_pnl: number;
+  total_trades: number;
+  total_pnl: number;
+  win_count: number;
+  loss_count: number;
+}
+
+export async function getTradingEquity(taskId: string): Promise<EquitySnapshotList> {
+  const { data } = await api.get(`/api/trading/tasks/${taskId}/equity`);
+  return data;
+}
+
+export async function getTradingMetrics(taskId: string): Promise<TradingMetrics> {
+  const { data } = await api.get(`/api/trading/tasks/${taskId}/metrics`);
+  return data;
+}
+
+export async function deleteTradingTask(taskId: string): Promise<{ deleted: boolean }> {
+  const { data } = await api.delete(`/api/trading/tasks/${taskId}`);
   return data;
 }

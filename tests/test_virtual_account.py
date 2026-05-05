@@ -519,6 +519,51 @@ class TestBarsHeldTracking:
         state = acc.get_state(current_price=100.0)
         assert state.position_bars_held == 2
 
+    def test_bars_held_resets_after_close_and_reopen(self):
+        """bars_held should not accumulate across different trades."""
+        acc = _make_account(fee=0.0, direction="long", stop_loss=0.0,
+                            take_profit=0.0)
+
+        # Trade 1: open -> 3 process_bar_v2 -> close
+        acc.process_bar_v2(
+            101, 99, 100, 100, _ts(0),
+            pending_decision=Decision(action="open", direction="long"),
+        )
+        acc.process_bar_v2(101, 99, 100, 100, _ts(1), None)
+        acc.process_bar_v2(101, 99, 100, 100, _ts(2), None)
+        acc.process_bar_v2(101, 99, 100, 100, _ts(3), None)
+        state = acc.get_state(100.0)
+        assert state.position_bars_held == 4  # bar 0-3
+
+        acc.process_bar_v2(
+            101, 99, 100, 100, _ts(4),
+            pending_decision=Decision(action="close", reason="signal"),
+        )
+        assert acc.position is None
+
+        # Trade 2: open -> 1 process_bar_v2
+        acc.process_bar_v2(
+            101, 99, 100, 100, _ts(5),
+            pending_decision=Decision(action="open", direction="long"),
+        )
+        state = acc.get_state(100.0)
+        assert state.position_bars_held == 1  # only current trade
+
+    def test_bars_held_via_process_bar_v2(self):
+        """process_bar_v2 increments bars_held each call when position open."""
+        acc = _make_account(fee=0.0, direction="long", stop_loss=0.0)
+        acc.process_bar_v2(
+            101, 99, 100, 100, _ts(0),
+            pending_decision=Decision(action="open", direction="long"),
+        )
+        assert acc.get_state(100.0).position_bars_held == 1
+
+        acc.process_bar_v2(101, 99, 100, 100, _ts(1), None)
+        assert acc.get_state(100.0).position_bars_held == 2
+
+        acc.process_bar_v2(101, 99, 100, 100, _ts(2), None)
+        assert acc.get_state(100.0).position_bars_held == 3
+
 
 # ---------------------------------------------------------------------------
 # Test: get_state
@@ -636,3 +681,35 @@ class TestBacktestConsistency:
             pm_pnl = sum(t.pnl for t in acc.closed_trades)
             bt_pnl = bt_result.total_return * 100000
             assert abs(pm_pnl - bt_pnl) < 1.0
+
+
+# ---------------------------------------------------------------------------
+# Test: entry_size_pct (gradual position building)
+# ---------------------------------------------------------------------------
+
+class TestEntrySizePct:
+
+    def test_open_uses_entry_size_pct_from_decision(self):
+        """Decision.entry_size_pct should control actual position size."""
+        dna = _make_dna(position_size=0.3)
+        acc = VirtualAccount(dna, init_cash=100_000, fee=0.001)
+
+        # Decision with entry_size_pct=0.1 (33% of 0.3)
+        decision = Decision(
+            action="open", direction="long",
+            target_position_pct=0.3, entry_size_pct=0.099,
+        )
+        events = acc.execute_decision(decision, open_price=50000)
+        assert events[0]["type"] == "position_opened"
+        # Margin should be ~9900 (9.9% of 100k), not 30000 (30%)
+        assert acc.position.margin == pytest.approx(9900, rel=0.01)
+
+    def test_open_falls_back_to_position_size_when_zero(self):
+        """When entry_size_pct=0, should use DNA position_size."""
+        dna = _make_dna(position_size=0.3)
+        acc = VirtualAccount(dna, init_cash=100_000, fee=0.001)
+
+        decision = Decision(action="open", direction="long")
+        events = acc.execute_decision(decision, open_price=50000)
+        assert events[0]["type"] == "position_opened"
+        assert acc.position.margin == pytest.approx(30000, rel=0.01)

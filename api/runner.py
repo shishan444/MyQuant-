@@ -758,7 +758,19 @@ class EvolutionRunner(threading.Thread):
             # Use pre-computed metrics from BacktestEngine (avoids double computation)
             metrics = bt_result.metrics_dict
             template_name = task_row.get("score_template", "explorer")
-            score_result = score_strategy(metrics, template_name, liquidated=bt_result.liquidated)
+
+            # Build runtime template with user scoring constraints
+            from core.scoring.templates import get_template as _get_tpl
+            _base = _get_tpl(template_name)
+            _max_dd_limit = task_row.get("max_drawdown_limit")
+            _min_ar_limit = task_row.get("min_annual_return", 0.10)
+
+            score_result = score_strategy(
+                metrics, template=_base,
+                liquidated=bt_result.liquidated,
+                max_drawdown_limit=_max_dd_limit,
+                min_annual_return_limit=_min_ar_limit,
+            )
 
             diagnostics["score"] = score_result["total_score"]
             diagnostics["total_trades"] = bt_result.total_trades
@@ -836,11 +848,21 @@ class EvolutionRunner(threading.Thread):
                 ]
 
             template_name = task_row.get("score_template", "explorer")
+
+            # Build runtime template with user scoring constraints
+            from core.scoring.templates import get_template as _get_tpl
+            _base = _get_tpl(template_name)
+            _max_dd_limit = task_row.get("max_drawdown_limit")
+            _min_ar_limit = task_row.get("min_annual_return", 0.10)
+
             scores = []
             for i, (ind, bt_result) in enumerate(zip(population, bt_results)):
                 metrics = bt_result.metrics_dict
                 score_result = score_strategy(
-                    metrics, template_name, liquidated=bt_result.liquidated,
+                    metrics, template=_base,
+                    liquidated=bt_result.liquidated,
+                    max_drawdown_limit=_max_dd_limit,
+                    min_annual_return_limit=_min_ar_limit,
                 )
                 # Store diagnostics on individual (same as evaluate_fn)
                 ind._eval_diagnostics = {

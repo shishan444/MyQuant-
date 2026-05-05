@@ -15,6 +15,7 @@
 | `validation.ts` | 假设验证 + 规则验证 |
 | `scene.ts` | 场景类型 + 场景验证 |
 | `discovery.ts` | 模式发现 + 相似案例 + 预测 (原生 fetch，非 axios) |
+| `trading.ts` | 模拟交易 CRUD + 暂停/停止/恢复 + 交易记录 + 权益 + 指标 + Runner 状态 |
 
 ## 关键链路
 
@@ -47,7 +48,7 @@
 | validation | POST validate, POST validate/rules |
 | scene | GET scene/types, POST validate/scene |
 | discovery | POST patterns, POST similar, POST predict |
-| trading | CRUD tasks, pause/stop/resume, GET trades, GET runner-status |
+| trading | CRUD tasks, pause/stop/resume, GET trades, GET equity, GET metrics, GET runner-status, DELETE task |
 
 ## 关键参数
 

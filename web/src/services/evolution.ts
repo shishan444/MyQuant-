@@ -37,6 +37,8 @@ export async function createEvolutionTask(payload: {
   data_start?: string;
   data_end?: string;
   strategy_threshold?: number;
+  min_annual_return?: number;
+  max_drawdown_limit?: number;
 }): Promise<EvolutionTask> {
   const { data } = await api.post("/api/evolution/tasks", payload);
   return data;

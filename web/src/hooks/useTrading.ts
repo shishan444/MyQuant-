@@ -4,7 +4,8 @@ import {
   useQueryClient,
   queryOptions,
 } from "@tanstack/react-query";
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
+import { toast } from "sonner";
 import {
   listTradingTasks,
   getTradingTask,
@@ -12,7 +13,12 @@ import {
   stopTradingTask,
   pauseTradingTask,
   resumeTradingTask,
+  restartTradingTask,
   getTradingTrades,
+  getTradingRunnerStatus,
+  getTradingEquity,
+  getTradingMetrics,
+  deleteTradingTask,
   type CreateTradingTaskParams,
   type TradingTask,
 } from "@/services/trading";
@@ -24,6 +30,9 @@ const tradingKeys = {
   tasks: () => [...tradingKeys.all, "tasks"] as const,
   task: (id: string) => [...tradingKeys.all, "task", id] as const,
   trades: (id: string) => [...tradingKeys.all, "trades", id] as const,
+  equity: (id: string) => [...tradingKeys.all, "equity", id] as const,
+  metrics: (id: string) => [...tradingKeys.all, "metrics", id] as const,
+  runnerStatus: () => [...tradingKeys.all, "runnerStatus"] as const,
 };
 
 // -- Query options --
@@ -62,6 +71,30 @@ export function tradingTradesOptions(taskId: string, limit = 50) {
   });
 }
 
+export function tradingEquityOptions(taskId: string) {
+  return queryOptions({
+    queryKey: tradingKeys.equity(taskId),
+    queryFn: () => getTradingEquity(taskId),
+    enabled: !!taskId,
+  });
+}
+
+export function tradingMetricsOptions(taskId: string) {
+  return queryOptions({
+    queryKey: tradingKeys.metrics(taskId),
+    queryFn: () => getTradingMetrics(taskId),
+    enabled: !!taskId,
+  });
+}
+
+export function runnerStatusOptions() {
+  return queryOptions({
+    queryKey: tradingKeys.runnerStatus(),
+    queryFn: () => getTradingRunnerStatus(),
+    refetchInterval: 10_000,
+  });
+}
+
 // -- Hooks --
 
 export function useTradingTasks() {
@@ -76,12 +109,28 @@ export function useTradingTrades(taskId: string, limit?: number) {
   return useQuery(tradingTradesOptions(taskId, limit));
 }
 
+export function useTradingEquity(taskId: string) {
+  return useQuery(tradingEquityOptions(taskId));
+}
+
+export function useTradingMetrics(taskId: string) {
+  return useQuery(tradingMetricsOptions(taskId));
+}
+
+export function useRunnerStatus() {
+  return useQuery(runnerStatusOptions());
+}
+
 export function useCreateTradingTask() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (params: CreateTradingTaskParams) => createTradingTask(params),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: tradingKeys.tasks() });
+      toast.success("Task created");
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to create task: ${err.message}`);
     },
   });
 }
@@ -93,6 +142,10 @@ export function useStopTradingTask() {
     onSuccess: (_data, taskId) => {
       qc.invalidateQueries({ queryKey: tradingKeys.task(taskId) });
       qc.invalidateQueries({ queryKey: tradingKeys.tasks() });
+      toast.success("Task stopped");
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to stop: ${err.message}`);
     },
   });
 }
@@ -104,6 +157,10 @@ export function usePauseTradingTask() {
     onSuccess: (_data, taskId) => {
       qc.invalidateQueries({ queryKey: tradingKeys.task(taskId) });
       qc.invalidateQueries({ queryKey: tradingKeys.tasks() });
+      toast.success("Task paused");
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to pause: ${err.message}`);
     },
   });
 }
@@ -115,6 +172,38 @@ export function useResumeTradingTask() {
     onSuccess: (_data, taskId) => {
       qc.invalidateQueries({ queryKey: tradingKeys.task(taskId) });
       qc.invalidateQueries({ queryKey: tradingKeys.tasks() });
+      toast.success("Task resumed");
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to resume: ${err.message}`);
+    },
+  });
+}
+
+export function useRestartTradingTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => restartTradingTask(taskId),
+    onSuccess: (newTask) => {
+      qc.invalidateQueries({ queryKey: tradingKeys.tasks() });
+      toast.success(`New task created: ${newTask.strategy_name || newTask.symbol}`);
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to restart: ${err.message}`);
+    },
+  });
+}
+
+export function useDeleteTradingTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => deleteTradingTask(taskId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: tradingKeys.tasks() });
+      toast.success("Task deleted");
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to delete: ${err.message}`);
     },
   });
 }
@@ -125,6 +214,7 @@ export function useTradingWebSocket(taskId: string | null) {
   const qc = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
+  const [isConnected, setIsConnected] = useState(false);
 
   const scheduleInvalidation = useCallback(() => {
     clearTimeout(reconnectTimer.current);
@@ -133,12 +223,17 @@ export function useTradingWebSocket(taskId: string | null) {
       if (taskId) {
         qc.invalidateQueries({ queryKey: tradingKeys.task(taskId) });
         qc.invalidateQueries({ queryKey: tradingKeys.trades(taskId) });
+        qc.invalidateQueries({ queryKey: tradingKeys.equity(taskId) });
+        qc.invalidateQueries({ queryKey: tradingKeys.metrics(taskId) });
       }
     }, 2000);
   }, [qc, taskId]);
 
   useEffect(() => {
-    if (!taskId) return;
+    if (!taskId) {
+      setIsConnected(false);
+      return;
+    }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = import.meta.env.VITE_WS_URL
@@ -149,6 +244,10 @@ export function useTradingWebSocket(taskId: string | null) {
     const connect = () => {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
+
+      ws.onopen = () => {
+        setIsConnected(true);
+      };
 
       ws.onmessage = (event) => {
         try {
@@ -163,6 +262,7 @@ export function useTradingWebSocket(taskId: string | null) {
 
       ws.onclose = () => {
         wsRef.current = null;
+        setIsConnected(false);
         reconnectTimer.current = setTimeout(connect, 3000);
       };
 
@@ -177,6 +277,9 @@ export function useTradingWebSocket(taskId: string | null) {
       wsRef.current?.close();
       wsRef.current = null;
       clearTimeout(reconnectTimer.current);
+      setIsConnected(false);
     };
   }, [taskId, scheduleInvalidation]);
+
+  return isConnected;
 }

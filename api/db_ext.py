@@ -289,6 +289,16 @@ def init_db_ext(db_path: Path) -> None:
         if 13 not in applied:
             _record_version(conn, 13)
 
+        # 13. Bars held column (migration 014)
+        _apply_bars_held_column(conn)
+        if 14 not in applied:
+            _record_version(conn, 14)
+
+        # 14. Position open cost column (migration 015)
+        _apply_position_open_cost_column(conn)
+        if 15 not in applied:
+            _record_version(conn, 15)
+
         conn.commit()
     finally:
         conn.close()
@@ -369,6 +379,30 @@ def _apply_execution_model_column(conn: sqlite3.Connection) -> None:
     if "execution_model" not in existing:
         conn.execute(
             "ALTER TABLE paper_trading_task ADD COLUMN execution_model TEXT DEFAULT 'v1'"
+        )
+
+
+def _apply_bars_held_column(conn: sqlite3.Connection) -> None:
+    """Add bars_held column to paper_trading_task (idempotent)."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+    if "bars_held" not in existing:
+        conn.execute(
+            "ALTER TABLE paper_trading_task ADD COLUMN bars_held INTEGER DEFAULT 0"
+        )
+
+
+def _apply_position_open_cost_column(conn: sqlite3.Connection) -> None:
+    """Add position_open_cost column to paper_trading_task (idempotent)."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+    if "position_open_cost" not in existing:
+        conn.execute(
+            "ALTER TABLE paper_trading_task ADD COLUMN position_open_cost REAL DEFAULT 0"
         )
 
 
@@ -524,30 +558,6 @@ def count_paper_trades(db_path: Path, task_id: str) -> int:
             (task_id,),
         ).fetchone()
         return row[0]
-
-
-def delete_paper_trades_from(
-    db_path: Path, task_id: str, from_bar_time: Optional[str] = None,
-) -> int:
-    """Delete paper_trade records for replay dedup.
-
-    If from_bar_time is provided, deletes records where bar_time >= from_bar_time.
-    Otherwise deletes all records for the task.
-    Returns number of deleted rows.
-    """
-    with _connect(db_path) as conn:
-        if from_bar_time is not None:
-            result = conn.execute(
-                "DELETE FROM paper_trade WHERE task_id = ? AND bar_time >= ?",
-                (task_id, from_bar_time),
-            )
-        else:
-            result = conn.execute(
-                "DELETE FROM paper_trade WHERE task_id = ?",
-                (task_id,),
-            )
-        conn.commit()
-        return result.rowcount
 
 
 # -- Paper Equity Snapshot CRUD --

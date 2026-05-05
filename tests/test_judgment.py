@@ -127,6 +127,20 @@ class TestMinProfitRatio:
         d = evaluate(_signals(exit=True), state, config)
         assert d.action == "close"
 
+    def test_exit_allowed_when_losing_regardless_of_fee(self):
+        """Losing positions should always be allowed to exit."""
+        state = _long_state(bars_held=10, unrealized_pnl=-50.0)
+        config = JudgmentConfig(min_profit_ratio=2.0, fee_rate=0.001)
+        d = evaluate(_signals(exit=True), state, config)
+        assert d.action == "close"
+
+    def test_exit_blocked_when_tiny_profit_below_fee(self):
+        """Tiny positive profit below fee threshold should be blocked."""
+        state = _long_state(bars_held=10, unrealized_pnl=0.5)
+        config = JudgmentConfig(min_profit_ratio=2.0, fee_rate=0.001)
+        d = evaluate(_signals(exit=True), state, config)
+        assert d.action == "hold"
+
 
 # ---------------------------------------------------------------------------
 # Test: initial entry

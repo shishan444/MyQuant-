@@ -39,6 +39,7 @@ export function ohlcvOptions(
   symbol: string,
   timeframe: string,
   dateRange?: { start?: string; end?: string },
+  limit: number = 50000,
 ) {
   return queryOptions({
     queryKey: chartKeys.ohlcv(symbol, timeframe, dateRange),
@@ -46,7 +47,7 @@ export function ohlcvOptions(
       getOhlcvBySymbol(symbol, timeframe, {
         start: dateRange?.start || undefined,
         end: dateRange?.end || undefined,
-        limit: 50000,
+        limit,
       }),
     enabled: !!symbol && !!timeframe,
     staleTime: 60_000,

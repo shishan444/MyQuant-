@@ -218,6 +218,8 @@ export function Evolution() {
           data_start: config.dataStart,
           data_end: config.dataEnd,
           strategy_threshold: config.strategyThreshold ?? 80,
+          min_annual_return: (config.minAnnualReturn ?? 10) / 100,
+          max_drawdown_limit: config.maxDrawdownLimit ? config.maxDrawdownLimit / 100 : null,
         });
         setConfigCollapsed(true);
         setMutationLog([]);

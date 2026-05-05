@@ -131,11 +131,12 @@ class TestSingleTFDirectionGene:
         )
 
         sig = dna_to_signal_set(dna, df)
-        # direction="long" should NOT generate entry_direction
-        assert sig.entry_direction is None
+        # direction="long" generates constant entry_direction=1.0
+        assert sig.entry_direction is not None
+        assert (sig.entry_direction == 1.0).all()
 
     def test_direction_gene_not_used_for_short(self):
-        """direction='short' should not generate entry_direction even with DIRECTION gene."""
+        """direction='short' generates constant entry_direction=-1.0."""
         df = _make_trending_data()
         dna = StrategyDNA(
             signal_genes=[
@@ -149,7 +150,8 @@ class TestSingleTFDirectionGene:
         )
 
         sig = dna_to_signal_set(dna, df)
-        assert sig.entry_direction is None
+        assert sig.entry_direction is not None
+        assert (sig.entry_direction == -1.0).all()
 
     def test_direction_gene_price_above_uptrend(self):
         """EMA price_above: direction=+1 when price > EMA."""

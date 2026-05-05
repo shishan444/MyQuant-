@@ -44,6 +44,8 @@ interface AutoConfigFormProps {
     dataStart?: string;
     dataEnd?: string;
     strategyThreshold?: number;
+    minAnnualReturn?: number;
+    maxDrawdownLimit?: number;
   }) => void;
 }
 
@@ -69,6 +71,8 @@ export function AutoConfigForm({
   const [dataStart, setDataStart] = useState("");
   const [dataEnd, setDataEnd] = useState("");
   const [strategyThreshold, setStrategyThreshold] = useState(80);
+  const [minAnnualReturn, setMinAnnualReturn] = useState(10);
+  const [maxDrawdownLimit, setMaxDrawdownLimit] = useState<string>("10");
 
   // Pre-fill date range from the most recent task that has dates
   useEffect(() => {
@@ -142,6 +146,8 @@ export function AutoConfigForm({
       dataStart: dataStart || undefined,
       dataEnd: dataEnd || undefined,
       strategyThreshold,
+      minAnnualReturn,
+      maxDrawdownLimit: maxDrawdownLimit ? Number(maxDrawdownLimit) : undefined,
     });
   }, [
     canSubmit,
@@ -158,6 +164,8 @@ export function AutoConfigForm({
     dataStart,
     dataEnd,
     strategyThreshold,
+    minAnnualReturn,
+    maxDrawdownLimit,
   ]);
 
   return (
@@ -451,6 +459,32 @@ export function AutoConfigForm({
                 value={strategyThreshold}
                 onChange={(e) =>
                   setStrategyThreshold(Number(e.target.value) || 80)
+                }
+                className="h-7 w-24 text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] text-slate-500">最低年化收益 % (0-1000)</label>
+              <Input
+                type="number"
+                min={0}
+                max={1000}
+                value={minAnnualReturn}
+                onChange={(e) =>
+                  setMinAnnualReturn(Number(e.target.value) || 10)
+                }
+                className="h-7 w-24 text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] text-slate-500">最大回撤限制 % (5-80)</label>
+              <Input
+                type="number"
+                min={5}
+                max={80}
+                value={maxDrawdownLimit}
+                onChange={(e) =>
+                  setMaxDrawdownLimit(e.target.value)
                 }
                 className="h-7 w-24 text-xs"
               />
