@@ -242,6 +242,19 @@ class _SimpleGene:
         self.field_name = field_name
 
 
+# ---------------------------------------------------------------------------
+# Declarative context mapping: category -> context types
+# ---------------------------------------------------------------------------
+
+_CONTEXT_SCHEMA: dict[str, set[str]] = {
+    "trend": {"direction", "price_levels"},
+    "volatility": {"price_levels"},
+    "momentum": {"momentum"},
+    "volume": {"momentum"},
+    "trend_strength": {"momentum"},
+}
+
+
 def extract_context(
     df: pd.DataFrame,
     gene: SignalGene,
@@ -249,12 +262,19 @@ def extract_context(
 ) -> dict:
     """Extract context information from a signal gene evaluation.
 
+    Uses _CONTEXT_SCHEMA for declarative category-to-context mapping.
+    Momentum is normalized per-series to [-1, +1] via rolling min-max.
+
     Returns dict with:
       - direction: pd.Series (+1/-1) for trend indicators with price conditions
       - price_levels: list of pd.Series for indicators with price-like outputs
-      - momentum: pd.Series for momentum indicators
+      - momentum: pd.Series (normalized) for momentum-category indicators
     """
     ctx: dict = {}
+    schema = _CONTEXT_SCHEMA.get(indicator_category, set())
+    if not schema:
+        return ctx
+
     close = df["close"]
 
     # Get indicator column
@@ -266,7 +286,7 @@ def extract_context(
     cond_type = gene.condition.get("type", "")
 
     # Direction extraction for trend indicators with price conditions
-    if indicator_category == "trend" and cond_type in ("price_above", "price_below"):
+    if "direction" in schema and cond_type in ("price_above", "price_below"):
         if cond_type == "price_above":
             ctx["direction"] = pd.Series(
                 np.where(close > indicator_col, 1.0, -1.0),
@@ -279,29 +299,24 @@ def extract_context(
             )
 
     # Price level extraction for indicators with price-like outputs
-    price_categories = {"trend", "volatility"}
-    price_conditions = {"price_above", "price_below", "touch_bounce",
-                        "role_reversal", "wick_touch", "lookback_any", "lookback_all"}
-
-    if indicator_category in price_categories:
-        # Get all output columns as price levels
+    if "price_levels" in schema:
         all_cols = _get_all_columns(df, gene.indicator, gene.params)
         price_cols = []
         for name, series in all_cols:
-            # Only include price-like outputs (not bandwidth/percent)
             if name in ("bandwidth", "percent"):
                 continue
             price_cols.append(series)
         if price_cols:
             ctx["price_levels"] = price_cols
 
-    # Momentum extraction
-    _bounded_momentum_indicators = {"CMF", "MFI", "RVOL", "VROC", "ADX"}
-    if indicator_category == "momentum" or (
-        indicator_category in ("volume", "trend_strength")
-        and gene.indicator in _bounded_momentum_indicators
-    ):
-        ctx["momentum"] = indicator_col
+    # Momentum extraction with per-series normalization to [-1, +1]
+    if "momentum" in schema:
+        lookback = 100
+        rolling_min = indicator_col.rolling(lookback, min_periods=1).min()
+        rolling_max = indicator_col.rolling(lookback, min_periods=1).max()
+        range_val = (rolling_max - rolling_min).replace(0, 1)
+        normalized = (2 * (indicator_col - rolling_min) / range_val - 1).clip(-1, 1)
+        ctx["momentum"] = normalized
 
     return ctx
 

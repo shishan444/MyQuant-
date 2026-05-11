@@ -114,6 +114,10 @@ class TestC1MomentumOnlyStructureLayer:
         Note: MACD needs ~33 bars warmup, RSI needs ~14 bars. We use
         sufficient data (5000 15m bars = ~52 days, 400 1d bars) to ensure
         all indicators produce valid values.
+
+        Uses RSI in both structure and zone layers so that per-series
+        normalization preserves direction agreement (both layers share
+        the same directional pattern).
         """
         df_1d = _make_ohlcv(400, "1D")
         df_4h = _make_ohlcv(2000, "4h")
@@ -132,14 +136,14 @@ class TestC1MomentumOnlyStructureLayer:
                 position_size=0.3, leverage=1, direction="long",
             ),
             layers=[
-                # Structure: ROC (momentum) - short warmup period
+                # Structure: RSI (momentum) - no price_levels
                 TimeframeLayer(
                     timeframe="1d",
                     signal_genes=[
-                        SignalGene("ROC", {"period": 12}, SignalRole.ENTRY_TRIGGER,
-                                   condition={"type": "gt", "threshold": 0}),
-                        SignalGene("ROC", {"period": 12}, SignalRole.EXIT_TRIGGER,
-                                   condition={"type": "lt", "threshold": 0}),
+                        SignalGene("RSI", {"period": 14}, SignalRole.ENTRY_TRIGGER,
+                                   condition={"type": "gt", "threshold": 50}),
+                        SignalGene("RSI", {"period": 14}, SignalRole.EXIT_TRIGGER,
+                                   condition={"type": "lt", "threshold": 50}),
                     ],
                     role="structure",
                 ),

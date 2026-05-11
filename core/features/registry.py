@@ -39,6 +39,8 @@ class IndicatorDef:
     output_fields: List[str]
     supported_conditions: List[str]
     guard_only: bool = False
+    naming: str = "default"       # column naming mode
+    compute_mode: str = "eager"   # "eager" | "lazy"
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +108,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         },
         output_fields=["macd", "signal", "histogram"],
         supported_conditions=["cross_above", "cross_below", "gt", "lt"],
+        naming="macd",
     ),
     "Stochastic": IndicatorDef(
         category="momentum",
@@ -115,6 +118,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         },
         output_fields=["k", "d"],
         supported_conditions=["lt", "gt", "cross_above", "cross_below"],
+        naming="stoch",
     ),
     "CCI": IndicatorDef(
         category="momentum",
@@ -140,6 +144,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["aroon_up", "aroon_down", "aroon_osc"],
         supported_conditions=["cross_above", "cross_below", "gt", "lt",
                               "cross_above_series", "cross_below_series"],
+        naming="aroon",
     ),
     "CMO": IndicatorDef(
         category="momentum",
@@ -164,6 +169,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["upper", "middle", "lower"],
         supported_conditions=["price_above", "price_below", "lookback_any", "lookback_all",
                               "touch_bounce", "role_reversal", "wick_touch"],
+        naming="bb",
     ),
     "ATR": IndicatorDef(
         category="volatility",
@@ -182,6 +188,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["upper", "middle", "lower"],
         supported_conditions=["price_above", "price_below",
                               "touch_bounce", "role_reversal", "wick_touch"],
+        naming="kc",
     ),
     "Donchian": IndicatorDef(
         category="volatility",
@@ -189,6 +196,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["upper", "middle", "lower"],
         supported_conditions=["price_above", "price_below",
                               "touch_bounce", "role_reversal", "wick_touch"],
+        naming="dc",
     ),
 
     # == volume (8) ==
@@ -259,6 +267,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["psar"],
         supported_conditions=["price_above", "price_below"],
         guard_only=True,
+        naming="psar",
     ),
 
     # == pattern (10) ==
@@ -268,6 +277,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["pattern_bearish_engulfing"],
         supported_conditions=["eq"],
         guard_only=False,
+        naming="pattern",
     ),
     "EveningStar": IndicatorDef(
         category="pattern",
@@ -275,6 +285,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["pattern_evening_star"],
         supported_conditions=["eq"],
         guard_only=False,
+        naming="pattern",
     ),
     "ThreeBlackCrows": IndicatorDef(
         category="pattern",
@@ -282,6 +293,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["pattern_3blackcrows"],
         supported_conditions=["eq"],
         guard_only=False,
+        naming="pattern",
     ),
     "ShootingStar": IndicatorDef(
         category="pattern",
@@ -289,6 +301,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["pattern_shooting_star"],
         supported_conditions=["eq"],
         guard_only=False,
+        naming="pattern",
     ),
     "ThreeWhiteSoldiers": IndicatorDef(
         category="pattern",
@@ -296,6 +309,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["pattern_3whitesoldiers"],
         supported_conditions=["eq"],
         guard_only=False,
+        naming="pattern",
     ),
     "MorningStar": IndicatorDef(
         category="pattern",
@@ -303,6 +317,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["pattern_morning_star"],
         supported_conditions=["eq"],
         guard_only=False,
+        naming="pattern",
     ),
     "BullishReversal": IndicatorDef(
         category="pattern",
@@ -310,6 +325,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["pattern_bullish_reversal"],
         supported_conditions=["eq"],
         guard_only=False,
+        naming="pattern",
     ),
     "BearishReversal": IndicatorDef(
         category="pattern",
@@ -317,6 +333,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["pattern_bearish_reversal"],
         supported_conditions=["eq"],
         guard_only=False,
+        naming="pattern",
     ),
     "BullishDivergence": IndicatorDef(
         category="pattern",
@@ -324,6 +341,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["pattern_bullish_divergence"],
         supported_conditions=["eq"],
         guard_only=False,
+        naming="pattern",
     ),
     "BearishDivergence": IndicatorDef(
         category="pattern",
@@ -331,6 +349,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["pattern_bearish_divergence"],
         supported_conditions=["eq"],
         guard_only=False,
+        naming="pattern",
     ),
 
     # == structure (1) ==
@@ -343,6 +362,8 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["vp_poc", "vp_vah", "vp_val"],
         supported_conditions=["touch_bounce", "role_reversal"],
         guard_only=True,
+        naming="vp",
+        compute_mode="lazy",
     ),
 }
 
@@ -356,3 +377,107 @@ def get_interchangeable(indicator_name: str) -> List[str]:
         name for name, defn in INDICATOR_REGISTRY.items()
         if defn.category == category and name != indicator_name
     ]
+
+
+# ---------------------------------------------------------------------------
+# Column name resolution — single source of truth
+# ---------------------------------------------------------------------------
+
+# Pattern indicator name -> fixed column name mapping
+_PATTERN_COLUMNS: Dict[str, str] = {
+    "BearishEngulfing": "pattern_bearish_engulfing",
+    "EveningStar": "pattern_evening_star",
+    "ThreeBlackCrows": "pattern_3blackcrows",
+    "ShootingStar": "pattern_shooting_star",
+    "ThreeWhiteSoldiers": "pattern_3whitesoldiers",
+    "MorningStar": "pattern_morning_star",
+    "BullishReversal": "pattern_bullish_reversal",
+    "BearishReversal": "pattern_bearish_reversal",
+    "BullishDivergence": "pattern_bullish_divergence",
+    "BearishDivergence": "pattern_bearish_divergence",
+}
+
+
+def resolve_indicator_column(
+    name: str,
+    params: dict,
+    field_name: str = "",
+    naming: str = "default",
+) -> str:
+    """Resolve indicator name + params to the expected DataFrame column name.
+
+    Single source of truth for column naming conventions.  All consumers
+    (executor.py, signal_builder.py, indicators.py) should call this
+    instead of duplicating if/elif chains.
+
+    Args:
+        name: Indicator name from registry (e.g. "EMA", "BB").
+        params: Parameter dict (e.g. {"period": 20}).
+        field_name: Optional field for multi-output indicators (e.g. "upper").
+        naming: Naming mode from IndicatorDef.naming.
+
+    Returns:
+        Expected column name string.
+    """
+    if naming == "default":
+        reg = INDICATOR_REGISTRY.get(name)
+        prefix = reg.output_fields[0] if reg else name.lower()
+        period = params.get("period")
+        if period is not None:
+            return f"{prefix}_{int(period)}"
+        return prefix
+
+    if naming == "bb":
+        period = int(params["period"])
+        std = float(params["std"])
+        std_str = str(std).replace(".0", "")
+        field = field_name or "upper"
+        return f"bb_{field}_{period}_{std_str}"
+
+    if naming == "macd":
+        fast, slow, sig = int(params["fast"]), int(params["slow"]), int(params["signal"])
+        field = field_name or "histogram"
+        if field == "macd":
+            return f"macd_{fast}_{slow}_{sig}"
+        if field == "signal":
+            return f"macd_signal_{fast}_{slow}_{sig}"
+        return f"macd_histogram_{fast}_{slow}_{sig}"
+
+    if naming == "stoch":
+        k_period = int(params["k_period"])
+        d_period = int(params["d_period"])
+        field = field_name or "k"
+        prefix = "stoch_k" if field == "k" else "stoch_d"
+        return f"{prefix}_{k_period}_{d_period}"
+
+    if naming == "kc":
+        ema_p = int(params["ema_period"])
+        atr_p = int(params["atr_period"])
+        mult = float(params["multiplier"])
+        field = field_name or "upper"
+        return f"kc_{ema_p}_{atr_p}_{mult}_{field}"
+
+    if naming == "dc":
+        period = int(params["period"])
+        field = field_name or "upper"
+        return f"dc_{field}_{period}"
+
+    if naming == "vp":
+        bins = int(params.get("bins", 50))
+        lookback = int(params.get("lookback", 60))
+        field = field_name or "vp_poc"
+        return f"{field}_{bins}_{lookback}"
+
+    if naming == "pattern":
+        return _PATTERN_COLUMNS.get(name, f"pattern_{name.lower()}")
+
+    if naming == "psar":
+        return "psar"
+
+    if naming == "aroon":
+        period = int(params["period"])
+        field = field_name or "aroon_up"
+        return f"{field}_{period}"
+
+    # Unknown naming mode fallback
+    return name.lower()

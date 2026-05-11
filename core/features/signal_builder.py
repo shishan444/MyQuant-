@@ -12,6 +12,7 @@ import pandas as pd
 
 from core.strategy.dna import StrategyDNA, SignalRole
 from core.strategy.executor import evaluate_condition, combine_signals, SignalSet
+from core.features.registry import INDICATOR_REGISTRY, resolve_indicator_column
 
 
 def extract_indicator_requirements(dna: StrategyDNA) -> List[Tuple[str, Dict[str, Any]]]:
@@ -36,52 +37,13 @@ def _resolve_column(df: pd.DataFrame, indicator: str, params: Dict[str, Any],
 
     Returns None if column not found.
     """
-    if indicator == "RSI":
-        col = f"rsi_{params['period']}"
-    elif indicator == "EMA":
-        col = f"ema_{params['period']}"
-    elif indicator == "SMA":
-        col = f"sma_{params['period']}"
-    elif indicator == "MACD":
-        fast, slow, sig = params["fast"], params["slow"], params["signal"]
-        field = field_name or "histogram"
-        if field == "macd":
-            col = f"macd_{fast}_{slow}_{sig}"
-        elif field == "signal":
-            col = f"macd_signal_{fast}_{slow}_{sig}"
-        else:
-            col = f"macd_histogram_{fast}_{slow}_{sig}"
-    elif indicator == "BB":
-        period, std = params["period"], params["std"]
-        std_str = str(std).replace(".0", "")
-        field = field_name or "upper"
-        col = f"bb_{field}_{period}_{std_str}"
-    elif indicator == "ATR":
-        col = f"atr_{params['period']}"
-    elif indicator == "ADX":
-        col = f"adx_{params['period']}"
-    elif indicator == "BearishEngulfing":
-        col = "pattern_bearish_engulfing"
-    elif indicator == "EveningStar":
-        col = "pattern_evening_star"
-    elif indicator == "ThreeBlackCrows":
-        col = "pattern_3blackcrows"
-    elif indicator == "ShootingStar":
-        col = "pattern_shooting_star"
-    elif indicator == "ThreeWhiteSoldiers":
-        col = "pattern_3whitesoldiers"
-    elif indicator == "MorningStar":
-        col = "pattern_morning_star"
-    elif indicator == "BullishReversal":
-        col = "pattern_bullish_reversal"
-    elif indicator == "BearishReversal":
-        col = "pattern_bearish_reversal"
-    elif indicator == "BullishDivergence":
-        col = "pattern_bullish_divergence"
-    elif indicator == "BearishDivergence":
-        col = "pattern_bearish_divergence"
+    reg = INDICATOR_REGISTRY.get(indicator)
+    if reg is not None:
+        col = resolve_indicator_column(
+            indicator, params, field_name or "", reg.naming
+        )
     else:
-        # Generic fallback
+        # Generic fallback for unknown indicators
         matches = [c for c in df.columns if c.lower().startswith(indicator.lower())]
         if matches:
             col = matches[0]

@@ -21,6 +21,7 @@ from core.features.registry import (
     IndicatorDef,
     INDICATOR_REGISTRY,
     get_interchangeable,
+    resolve_indicator_column,
 )
 
 

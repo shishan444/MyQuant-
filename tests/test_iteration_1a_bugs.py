@@ -173,8 +173,8 @@ class TestBugCExtractContextBounded:
         ctx = extract_context(df, gene, "trend_strength")
         assert "momentum" in ctx, "ADX (trend_strength, bounded) should provide momentum context"
 
-    def test_obv_not_provide_momentum_yet(self):
-        """OBV (unbounded) should NOT provide momentum context in 1a (no per-series normalization)."""
+    def test_obv_provides_momentum_normalized(self):
+        """OBV (unbounded) now provides momentum via per-series normalization (1b)."""
         df = self._make_df_with_indicator("obv", [1e6, 1.1e6, 0.9e6, 1.2e6, 1.0e6] * 4)
         gene = SignalGene(
             indicator="OBV",
@@ -183,8 +183,12 @@ class TestBugCExtractContextBounded:
             condition={"type": "gt"},
         )
         ctx = extract_context(df, gene, "volume")
-        assert "momentum" not in ctx, \
-            "OBV (unbounded) should NOT provide momentum in 1a (pre-normalization)"
+        assert "momentum" in ctx, \
+            "OBV should provide momentum after 1b per-series normalization"
+        # Verify normalization range
+        mom = ctx["momentum"]
+        assert mom.min() >= -1.01
+        assert mom.max() <= 1.01
 
     def test_rvol_provides_momentum(self):
         """RVOL (volume category, bounded) should provide momentum context."""

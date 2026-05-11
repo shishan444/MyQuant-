@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from core.strategy.dna import StrategyDNA, SignalRole
+from core.features.registry import INDICATOR_REGISTRY, resolve_indicator_column
 
 logger = logging.getLogger(__name__)
 
@@ -305,110 +306,14 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
     indicator = gene.indicator
     params = gene.params
 
-    # Build expected column name patterns
-    if indicator == "RSI":
-        col = f"rsi_{params['period']}"
-    elif indicator == "EMA":
-        col = f"ema_{params['period']}"
-    elif indicator == "SMA":
-        col = f"sma_{params['period']}"
-    elif indicator == "MACD":
-        field = gene.field_name or "histogram"
-        fast, slow, sig = params["fast"], params["slow"], params["signal"]
-        col = f"macd_{field}_{fast}_{slow}_{sig}" if field != "histogram" else f"macd_histogram_{fast}_{slow}_{sig}"
-        if field == "macd":
-            col = f"macd_{fast}_{slow}_{sig}"
-        elif field == "signal":
-            col = f"macd_signal_{fast}_{slow}_{sig}"
-    elif indicator == "BB":
-        field = gene.field_name or "upper"
-        period, std = params["period"], params["std"]
-        std_str = str(std).replace(".0", "")
-        col = f"bb_{field}_{period}_{std_str}"
-    elif indicator == "ATR":
-        col = f"atr_{params['period']}"
-    elif indicator == "ADX":
-        col = f"adx_{params['period']}"
-    elif indicator == "WMA":
-        col = f"wma_{params['period']}"
-    elif indicator == "DEMA":
-        col = f"dema_{params['period']}"
-    elif indicator == "TEMA":
-        col = f"tema_{params['period']}"
-    elif indicator == "RVOL":
-        col = f"rvol_{params['period']}"
-    elif indicator == "VROC":
-        col = f"vroc_{params['period']}"
-    elif indicator == "AD":
-        col = "ad"
-    elif indicator == "CVD":
-        col = "cvd"
-    elif indicator == "VWMA":
-        col = f"vwma_{params['period']}"
-    elif indicator == "Aroon":
-        field = gene.field_name or "aroon_up"
-        period = params["period"]
-        col = f"{field}_{period}"
-    elif indicator == "CMO":
-        col = f"cmo_{params['period']}"
-    elif indicator == "TRIX":
-        col = f"trix_{params['period']}"
-    elif indicator == "VolumeProfile":
-        field = gene.field_name or "vp_poc"
-        bins = params.get("bins", 50)
-        lookback = params.get("lookback", 60)
-        col = f"{field}_{bins}_{lookback}"
-    elif indicator == "Keltner":
-        field = gene.field_name or "upper"
-        ema_p, atr_p, mult = params["ema_period"], params["atr_period"], params["multiplier"]
-        kc_name = f"kc_{ema_p}_{atr_p}_{mult}"
-        col = f"{kc_name}_{field}"
-    elif indicator == "Donchian":
-        field = gene.field_name or "upper"
-        period = params["period"]
-        col = f"dc_{field}_{period}"
-    elif indicator == "CCI":
-        col = f"cci_{params['period']}"
-    elif indicator == "ROC":
-        col = f"roc_{params['period']}"
-    elif indicator == "Stochastic":
-        field = gene.field_name or "k"
-        k_period = params["k_period"]
-        d_period = params["d_period"]
-        prefix = "stoch_k" if field == "k" else "stoch_d"
-        col = f"{prefix}_{k_period}_{d_period}"
-    elif indicator == "OBV":
-        col = "obv"
-    elif indicator == "CMF":
-        col = f"cmf_{params['period']}"
-    elif indicator == "MFI":
-        col = f"mfi_{params['period']}"
-    elif indicator == "PSAR":
-        col = "psar"
-    elif indicator == "Williams %R":
-        col = f"willr_{params['period']}"
-    elif indicator == "BearishEngulfing":
-        col = "pattern_bearish_engulfing"
-    elif indicator == "EveningStar":
-        col = "pattern_evening_star"
-    elif indicator == "ThreeBlackCrows":
-        col = "pattern_3blackcrows"
-    elif indicator == "ShootingStar":
-        col = "pattern_shooting_star"
-    elif indicator == "ThreeWhiteSoldiers":
-        col = "pattern_3whitesoldiers"
-    elif indicator == "MorningStar":
-        col = "pattern_morning_star"
-    elif indicator == "BullishReversal":
-        col = "pattern_bullish_reversal"
-    elif indicator == "BearishReversal":
-        col = "pattern_bearish_reversal"
-    elif indicator == "BullishDivergence":
-        col = "pattern_bullish_divergence"
-    elif indicator == "BearishDivergence":
-        col = "pattern_bearish_divergence"
+    # Resolve column name via registry
+    reg = INDICATOR_REGISTRY.get(indicator)
+    if reg is not None:
+        col = resolve_indicator_column(
+            indicator, params, gene.field_name or "", reg.naming
+        )
     else:
-        # Fallback: try to find by prefix
+        # Fallback for unknown indicators
         matches = [c for c in df.columns if c.lower().startswith(indicator.lower())]
         if matches:
             col = matches[0]
@@ -745,6 +650,12 @@ def dna_to_signal_set(
         )
 
     # Single-timeframe mode
+    if dna.is_mtf and dfs_by_timeframe is None:
+        raise ValueError(
+            f"MTF DNA requires dfs_by_timeframe but got None. "
+            f"Needed timeframes: {dna.timeframes}"
+        )
+
     close = enhanced_df["close"]
 
     entry_triggers, entry_guards = [], []
