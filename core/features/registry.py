@@ -365,6 +365,38 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         naming="vp",
         compute_mode="lazy",
     ),
+
+    # == derivatives (5) ==
+    "OI_ChangeRate": IndicatorDef(
+        category="derivatives",
+        params={"period": ParamDef("int", 5, 50, 14, 2)},
+        output_fields=["oi_change_rate"],
+        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
+    ),
+    "OI_ZScore": IndicatorDef(
+        category="derivatives",
+        params={"period": ParamDef("int", 5, 50, 20, 2)},
+        output_fields=["oi_zscore"],
+        supported_conditions=["gt", "lt"],
+    ),
+    "FundingZScore": IndicatorDef(
+        category="derivatives",
+        params={"period": ParamDef("int", 10, 60, 30, 5)},
+        output_fields=["funding_zscore"],
+        supported_conditions=["gt", "lt"],
+    ),
+    "OIPriceDivergence": IndicatorDef(
+        category="derivatives",
+        params={"period": ParamDef("int", 5, 50, 14, 2)},
+        output_fields=["oi_price_divergence"],
+        supported_conditions=["gt", "lt"],
+    ),
+    "FundingPressure": IndicatorDef(
+        category="derivatives",
+        params={"period": ParamDef("int", 4, 30, 8, 2)},
+        output_fields=["funding_pressure"],
+        supported_conditions=["gt", "lt"],
+    ),
 }
 
 

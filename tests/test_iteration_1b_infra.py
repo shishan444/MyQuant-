@@ -272,12 +272,12 @@ class TestRegistryNamingField:
                 f"{name}.naming should be '{mode}'"
 
     def test_default_indicators_count(self):
-        """Exactly 22 indicators should use default naming."""
+        """Exactly 27 indicators should use default naming (22 + 5 derivatives)."""
         default_count = sum(
             1 for d in INDICATOR_REGISTRY.values() if d.naming == "default"
         )
-        assert default_count == 22, \
-            f"Expected 22 default-naming indicators, got {default_count}"
+        assert default_count == 27, \
+            f"Expected 27 default-naming indicators (22 + 5 derivatives), got {default_count}"
 
 
 # ---------------------------------------------------------------------------

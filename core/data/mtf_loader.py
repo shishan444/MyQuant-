@@ -70,6 +70,7 @@ def load_and_prepare_df(
     if len(df) < min_bars:
         return None
 
+    df = _try_merge_derivatives(data_dir, safe_symbol, timeframe, df)
     return compute_all_indicators(df, stop_check=stop_check)
 
 
@@ -110,6 +111,7 @@ def load_mtf_data(
                 tf_df = tf_df[tf_df.index <= data_end]
             if len(tf_df) < 50:
                 continue
+            tf_df = _try_merge_derivatives(data_dir, safe_symbol, tf, tf_df)
             dfs_by_timeframe[tf] = compute_all_indicators(tf_df, stop_check=stop_check)
         except Exception as e:
             logger = logging.getLogger(__name__)
@@ -117,3 +119,33 @@ def load_mtf_data(
             continue
 
     return dfs_by_timeframe
+
+
+def _try_merge_derivatives(
+    data_dir: Path,
+    safe_symbol: str,
+    timeframe: str,
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Try to load and merge OI/Funding Rate parquet into OHLCV DataFrame.
+
+    Graceful no-op if derivative data files are absent.
+    """
+    from core.data.storage import load_parquet
+    from core.data.derivatives_merger import merge_derivatives_into_ohlcv
+
+    oi_df = None
+    funding_df = None
+
+    oi_path = data_dir / f"{safe_symbol}_oi_{timeframe}.parquet"
+    if oi_path.exists():
+        oi_df = load_parquet(oi_path)
+
+    funding_path = data_dir / f"{safe_symbol}_funding.parquet"
+    if funding_path.exists():
+        funding_df = load_parquet(funding_path)
+
+    if oi_df is not None or funding_df is not None:
+        return merge_derivatives_into_ohlcv(df, oi_df, funding_df)
+
+    return df

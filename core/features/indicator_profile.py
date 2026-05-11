@@ -315,6 +315,44 @@ PROFILES: Dict[str, IndicatorProfile] = {
         follow_probability=0.50,
     ),
 
+    # == derivatives (5) ==
+    "OI_ChangeRate": IndicatorProfile(
+        recommended_roles=["entry_guard"],
+        recommended_params={"period": [14]},
+        recommended_conditions=[_CROSS_ABOVE, _CROSS_BELOW, _GT, _LT],
+        follow_probability=0.50,
+    ),
+    "OI_ZScore": IndicatorProfile(
+        recommended_roles=["entry_guard"],
+        recommended_params={"period": [20]},
+        recommended_conditions=[
+            ConditionPreset("gt", [2.0]),
+            ConditionPreset("lt", [-2.0]),
+        ],
+        follow_probability=0.50,
+    ),
+    "FundingZScore": IndicatorProfile(
+        recommended_roles=["entry_guard"],
+        recommended_params={"period": [30]},
+        recommended_conditions=[
+            ConditionPreset("gt", [2.0]),
+            ConditionPreset("lt", [-2.0]),
+        ],
+        follow_probability=0.50,
+    ),
+    "OIPriceDivergence": IndicatorProfile(
+        recommended_roles=["entry_guard"],
+        recommended_params={"period": [14]},
+        recommended_conditions=[_GT, _LT],
+        follow_probability=0.50,
+    ),
+    "FundingPressure": IndicatorProfile(
+        recommended_roles=["entry_guard"],
+        recommended_params={"period": [8]},
+        recommended_conditions=[_GT, _LT],
+        follow_probability=0.50,
+    ),
+
     # == structure (1) ==
     "VolumeProfile": IndicatorProfile(
         recommended_roles=["entry_guard", "exit_guard"],

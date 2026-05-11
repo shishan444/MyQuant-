@@ -18,6 +18,7 @@ from core.logging import get_logger
 from core.strategy.dna import StrategyDNA
 from core.strategy.executor import dna_to_signal_set
 from core.data.updater import update_market_data
+from core.data.mtf_loader import load_mtf_data
 from core.trading.account import VirtualAccount
 from core.trading.position import Position
 from core.trading.types import BarSignals, Decision, JudgmentConfig
@@ -45,8 +46,10 @@ class TaskStopRequested(Exception):
 class TaskController:
     def __init__(self) -> None:
         self._stop_event = threading.Event()
+        self.stop_reason: str = "stop"  # "stop" | "pause"
 
-    def request_stop(self) -> None:
+    def request_stop(self, reason: str = "stop") -> None:
+        self.stop_reason = reason
         self._stop_event.set()
 
     @property
@@ -56,6 +59,9 @@ class TaskController:
     def check_stop(self) -> None:
         if self._stop_event.is_set():
             raise TaskStopRequested()
+
+    def wait(self, timeout: float) -> None:
+        self._stop_event.wait(timeout)
 
 
 def _now_iso() -> str:
@@ -87,7 +93,7 @@ def recover_stale_trading_tasks(db_path: Path) -> None:
 
 _BAR_SECONDS = {
     "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
-    "1h": 3600, "4h": 14400, "1d": 86400,
+    "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400, "3d": 259200,
 }
 
 
@@ -162,11 +168,17 @@ class TradingRunner(threading.Thread):
         controller = TaskController()
         _active_controllers[task_id] = controller
 
+        account: Optional[VirtualAccount] = None
+        final_pending: Optional[Decision] = None
         try:
-            self._execute_task(task_row, task_id, controller)
+            result = self._execute_task(task_row, task_id, controller)
+            if result is not None:
+                if isinstance(result, tuple):
+                    account, final_pending = result
+                else:
+                    account = result
         except TaskStopRequested:
-            row = self._get_task(task_id)
-            if row and row["status"] == "paused":
+            if controller.stop_reason == "pause":
                 logger.info("Trading task %s paused via controller", task_id)
             else:
                 logger.info("Trading task %s stopped via controller", task_id)
@@ -175,6 +187,12 @@ class TradingRunner(threading.Thread):
             logger.error("Trading task %s failed", task_id, exc_info=True)
             self._update_status(task_id, "stopped", "error")
         finally:
+            # Save final state (preserves remaining equity snapshots)
+            if account is not None:
+                try:
+                    self._save_account_state(account, task_id, pending_decision=final_pending)
+                except Exception:
+                    logger.warning("Failed to save final state for %s", task_id, exc_info=True)
             self._active_task_id = None
             _active_controllers.pop(task_id, None)
 
@@ -192,7 +210,7 @@ class TradingRunner(threading.Thread):
         task_row: Dict[str, Any],
         task_id: str,
         controller: TaskController,
-    ) -> None:
+    ) -> VirtualAccount:
         from api.db_ext import (
             update_paper_trading_task, save_paper_trade,
         )
@@ -209,12 +227,19 @@ class TradingRunner(threading.Thread):
         timeframe = task_row["timeframe"]
         init_cash = task_row["initial_cash"]
         fee = task_row["fee"]
+        created_at = task_row.get("created_at")
 
-        # Create VirtualAccount
-        account = VirtualAccount(dna, init_cash=init_cash, fee=fee, slippage=0.0005)
+        # Create VirtualAccount (user config overrides DNA defaults)
+        account = VirtualAccount(
+            dna, init_cash=init_cash, fee=fee, slippage=0.0005,
+            leverage=task_row.get("leverage"),
+            direction=task_row.get("direction"),
+            timeframe=timeframe,
+        )
 
         # Restore state if resuming
         self._restore_account_state(account, task_row)
+        self._restore_balance_and_position(account, task_row)
 
         # Load data
         controller.check_stop()
@@ -224,6 +249,10 @@ class TradingRunner(threading.Thread):
             return
 
         from core.features.indicators import compute_all_indicators
+        from core.data.mtf_loader import _try_merge_derivatives
+        import re as _re
+        _safe_sym = _re.sub(r"[^A-Za-z0-9]", "", symbol)
+        df = _try_merge_derivatives(self.data_dir, _safe_sym, timeframe, df)
         df = compute_all_indicators(df)
 
         # Trim warmup rows where indicators produced NaN
@@ -232,42 +261,115 @@ class TradingRunner(threading.Thread):
         # Filter forming bar
         df = self._filter_forming_bar(df, timeframe)
 
+        # MTF: load all timeframe data if DNA is multi-timeframe
+        dfs_by_timeframe: Optional[Dict[str, pd.DataFrame]] = None
+        mtf_timeframes: List[str] = []
+        if dna.is_mtf:
+            mtf_timeframes = dna.timeframes
+            needed_tfs = set(mtf_timeframes)
+            dfs_by_timeframe = load_mtf_data(
+                self.data_dir, symbol, timeframe, df, needed_tfs,
+            )
+            # Integrity check: all required timeframes must be present
+            if dfs_by_timeframe is None:
+                self._update_status(
+                    task_id, "stopped",
+                    f"mtf_data_missing: {','.join(sorted(needed_tfs))}",
+                )
+                return
+            loaded_tfs = set(dfs_by_timeframe.keys())
+            missing = needed_tfs - loaded_tfs
+            if missing:
+                self._update_status(
+                    task_id, "stopped",
+                    f"mtf_data_missing: {','.join(sorted(missing))}",
+                )
+                return
+            # Trim warmup rows + filter forming bars for each timeframe independently
+            for tf in list(dfs_by_timeframe.keys()):
+                dfs_by_timeframe[tf] = self._trim_nan_rows(dfs_by_timeframe[tf])
+                dfs_by_timeframe[tf] = self._filter_forming_bar(
+                    dfs_by_timeframe[tf], tf,
+                )
+            logger.info(
+                "MTF data loaded for task %s: %s",
+                task_id, sorted(dfs_by_timeframe.keys()),
+            )
+
         # Resume: minimal replay from last_bar_time
         pending_decision: Optional[Decision] = None
         last_bar_time = task_row.get("last_bar_time")
         if last_bar_time:
-            sig_set = dna_to_signal_set(dna, df)
+            sig_set = dna_to_signal_set(dna, df, dfs_by_timeframe)
             start_idx = self._find_replay_start(df, last_bar_time)
+            # Restore pending_decision from DB before replay
+            pending_decision = self._restore_pending_decision(task_row)
             pending_decision = self._min_replay(
                 account, sig_set, df, start_idx, task_id, controller,
-                save_paper_trade, timeframe,
+                save_paper_trade, timeframe, pending_decision,
             )
 
         # Save state after replay
-        self._save_account_state(account, task_id, df)
+        self._save_account_state(account, task_id, df, pending_decision)
         self._push_position_update(account, task_id)
 
         # Main loop
-        bar_interval = _BAR_SECONDS.get(timeframe, 14400)
+        bar_interval = _BAR_SECONDS.get(timeframe, 86400)
         poll_wait = min(bar_interval, 60)
         config = JudgmentConfig()
+
+        # MTF: track last refresh time per timeframe for throttled refresh
+        now_utc = pd.Timestamp.now(tz="UTC")
+        tf_last_refresh: Dict[str, pd.Timestamp] = {}
+        if dfs_by_timeframe:
+            for tf in mtf_timeframes:
+                tf_last_refresh[tf] = now_utc
 
         while not controller.stop_requested:
             controller.check_stop()
             try:
+                # MTF: refresh each timeframe only when its bar interval has elapsed
+                if dfs_by_timeframe is not None:
+                    now_utc = pd.Timestamp.now(tz="UTC")
+                    for tf in mtf_timeframes:
+                        tf_interval = _BAR_SECONDS.get(tf, 86400)
+                        elapsed = (now_utc - tf_last_refresh[tf]).total_seconds()
+                        if elapsed >= tf_interval:
+                            new_tf_df = self._fetch_and_update(symbol, tf)
+                            if new_tf_df is not None:
+                                prev_len = len(dfs_by_timeframe[tf])
+                                new_tf_df = compute_all_indicators(new_tf_df)
+                                new_tf_df = self._filter_forming_bar(new_tf_df, tf)
+                                if len(new_tf_df) >= prev_len:
+                                    dfs_by_timeframe[tf] = new_tf_df
+                                    tf_last_refresh[tf] = now_utc
+                                    logger.debug(
+                                        "Refreshed MTF data for %s (task %s)",
+                                        tf, task_id,
+                                    )
+
                 new_df = self._fetch_and_update(symbol, timeframe)
                 if new_df is not None and len(new_df) > len(df):
                     new_df = compute_all_indicators(new_df)
                     new_df = self._filter_forming_bar(new_df, timeframe)
-                    sig_set = dna_to_signal_set(dna, new_df)
+
+                    # Update execution TF in dfs_by_timeframe
+                    if dfs_by_timeframe is not None:
+                        dfs_by_timeframe[timeframe] = new_df
+
+                    sig_set = dna_to_signal_set(dna, new_df, dfs_by_timeframe)
 
                     for i in range(len(df), len(new_df)):
                         controller.check_stop()
                         row = new_df.iloc[i]
                         ts = new_df.index[i]
 
+                        # Skip pre-creation bars for new tasks
+                        if last_bar_time is None and created_at and ts.isoformat() < created_at:
+                            continue
+
                         # Execute pending decision at bar open
-                        events = account.process_bar_v2(
+                        events, deferred = account.process_bar_v2(
                             bar_high=float(row["high"]),
                             bar_low=float(row["low"]),
                             bar_open=float(row["open"]),
@@ -280,6 +382,11 @@ class TradingRunner(threading.Thread):
                         )
                         pending_decision = None
 
+                        # If SL/TP deferred an open decision, preserve it
+                        if deferred is not None:
+                            pending_decision = deferred
+                            continue
+
                         # Evaluate signals for next bar
                         signals = BarSignals.from_signal_set(sig_set, i)
                         state = account.get_state(float(row["close"]))
@@ -289,14 +396,16 @@ class TradingRunner(threading.Thread):
 
                     df = new_df
             except Exception:
-                logger.warning("Data fetch failed for %s", task_id, exc_info=True)
+                logger.warning("Error in data processing for %s", task_id, exc_info=True)
 
-            self._save_account_state(account, task_id, df)
+            self._save_account_state(account, task_id, df, pending_decision)
             self._push_position_update(account, task_id)
             update_paper_trading_task(
                 self.db_path, task_id, heartbeat_at=_now_iso(),
             )
-            controller._stop_event.wait(poll_wait)
+            controller.wait(poll_wait)
+
+        return account, pending_decision
 
     # ------------------------------------------------------------------
     # Helpers
@@ -336,17 +445,18 @@ class TradingRunner(threading.Thread):
     def _min_replay(
         self, account, sig_set, df, start_idx, task_id,
         controller, save_trade_fn, timeframe,
+        initial_pending: Optional[Decision] = None,
     ) -> Optional[Decision]:
         """Replay bars from start_idx, return last pending decision."""
         config = JudgmentConfig()
-        pending: Optional[Decision] = None
+        pending: Optional[Decision] = initial_pending
 
         for i in range(start_idx, len(df)):
             controller.check_stop()
             row = df.iloc[i]
             ts = df.index[i]
 
-            events = account.process_bar_v2(
+            events, deferred = account.process_bar_v2(
                 bar_high=float(row["high"]),
                 bar_low=float(row["low"]),
                 bar_open=float(row["open"]),
@@ -355,7 +465,9 @@ class TradingRunner(threading.Thread):
                 pending_decision=pending,
             )
             self._log_events(save_trade_fn, task_id, ts.isoformat(), events)
-            pending = None
+            pending = deferred  # preserve deferred open decision
+            if pending is not None:
+                continue  # skip evaluate to preserve deferred decision
 
             # Evaluate for next bar
             signals = BarSignals.from_signal_set(sig_set, i)
@@ -363,6 +475,15 @@ class TradingRunner(threading.Thread):
             decision = evaluate(signals, state, config)
             if decision.action != "hold":
                 pending = decision
+
+            # Checkpoint every 500 bars
+            if (i - start_idx + 1) % 500 == 0:
+                self._save_account_state(account, task_id, df, pending)
+                self._push_position_update(account, task_id)
+                logger.info(
+                    "Replay checkpoint at bar %d/%d for task %s",
+                    i + 1, len(df), task_id,
+                )
 
         return pending
 
@@ -397,6 +518,27 @@ class TradingRunner(threading.Thread):
         account._prior_wins = task.get("win_count", 0)
         account._prior_losses = task.get("loss_count", 0)
 
+    def _restore_pending_decision(self, task: dict) -> Optional[Decision]:
+        """Restore pending Decision from DB row."""
+        import json
+        raw = task.get("pending_decision_json")
+        if not raw:
+            return None
+        try:
+            d = json.loads(raw)
+            return Decision(
+                action=d["action"],
+                direction=d.get("direction", ""),
+                target_position_pct=d.get("target_position_pct", 0.0),
+                entry_size_pct=d.get("entry_size_pct", 0.0),
+                reason=d.get("reason", ""),
+            )
+        except (json.JSONDecodeError, KeyError):
+            logger.warning("Failed to restore pending_decision: %s", raw)
+            return None
+
+    def _restore_balance_and_position(self, account: VirtualAccount, task: dict) -> None:
+        """Restore balance and position from DB row."""
         if task.get("balance") is not None:
             account.balance = task["balance"]
 
@@ -413,10 +555,23 @@ class TradingRunner(threading.Thread):
         )
 
     def _save_account_state(self, account: VirtualAccount, task_id: str,
-                            df=None) -> None:
+                            df=None, pending_decision: Optional[Decision] = None) -> None:
         """Persist VirtualAccount state to DB."""
+        import json
         from api.db_ext import update_paper_trading_task
         kwargs = {"balance": account.balance}
+
+        # Serialize pending_decision if present
+        if pending_decision is not None:
+            kwargs["pending_decision_json"] = json.dumps({
+                "action": pending_decision.action,
+                "direction": pending_decision.direction,
+                "target_position_pct": pending_decision.target_position_pct,
+                "entry_size_pct": pending_decision.entry_size_pct,
+                "reason": pending_decision.reason,
+            })
+        else:
+            kwargs["pending_decision_json"] = None
 
         last_close = 0.0
         if df is not None and len(df) > 0:
@@ -477,12 +632,14 @@ class TradingRunner(threading.Thread):
                     events: List[dict]) -> None:
         for ev in events:
             action = ev["type"]
+            fee_paid = ev.get("fee_paid", 0.0)
             if action == "position_opened":
                 save_trade_fn(
                     self.db_path,
                     task_id=task_id, bar_time=bar_time,
                     side=ev["side"], action="open",
                     price=ev["entry_price"], quantity=ev.get("quantity", 0),
+                    fee_paid=fee_paid,
                 )
             elif action == "position_closed":
                 save_trade_fn(
@@ -491,6 +648,7 @@ class TradingRunner(threading.Thread):
                     side=ev["side"], action="close",
                     price=ev["exit_price"], quantity=ev.get("quantity", 0),
                     pnl=ev["pnl"], reason=ev["exit_reason"],
+                    fee_paid=fee_paid,
                 )
             elif action == "position_added":
                 save_trade_fn(
@@ -499,6 +657,7 @@ class TradingRunner(threading.Thread):
                     side=ev.get("side", ""), action="add",
                     price=ev.get("price", 0),
                     quantity=ev.get("quantity_added", 0),
+                    fee_paid=fee_paid,
                 )
             elif action == "position_reduced":
                 save_trade_fn(
@@ -508,6 +667,7 @@ class TradingRunner(threading.Thread):
                     price=ev.get("price", 0),
                     quantity=ev.get("quantity_reduced", 0),
                     pnl=ev.get("pnl"),
+                    fee_paid=fee_paid,
                 )
 
     def _push_position_update(self, account: VirtualAccount, task_id: str) -> None:

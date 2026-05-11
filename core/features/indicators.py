@@ -71,6 +71,12 @@ _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
     "BearishReversal": [{}],
     "BullishDivergence": [{}],
     "BearishDivergence": [{}],
+    # Derivatives indicators
+    "OI_ChangeRate": [{"period": 14}],
+    "OI_ZScore": [{"period": 20}],
+    "FundingZScore": [{"period": 30}],
+    "OIPriceDivergence": [{"period": 14}],
+    "FundingPressure": [{"period": 8}],
 }
 
 
@@ -265,6 +271,42 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
         from core.features.patterns.divergence import detect_bearish_divergence
         pat = detect_bearish_divergence(df)
         new_cols["pattern_bearish_divergence"] = pat["pattern_bearish_divergence"]
+
+    # ── Derivatives indicators ──
+    elif name == "OI_ChangeRate":
+        if "open_interest" in df.columns:
+            period = int(params["period"])
+            new_cols[f"oi_change_rate_{period}"] = df["open_interest"].pct_change(period)
+    elif name == "OI_ZScore":
+        if "open_interest" in df.columns:
+            period = int(params["period"])
+            oi = df["open_interest"]
+            rolling_mean = oi.rolling(period, min_periods=1).mean()
+            rolling_std = oi.rolling(period, min_periods=1).std()
+            rolling_std = rolling_std.replace(0, np.nan)
+            new_cols[f"oi_zscore_{period}"] = ((oi - rolling_mean) / rolling_std).fillna(0)
+    elif name == "FundingZScore":
+        if "funding_rate" in df.columns:
+            period = int(params["period"])
+            fr = df["funding_rate"]
+            rolling_mean = fr.rolling(period, min_periods=1).mean()
+            rolling_std = fr.rolling(period, min_periods=1).std()
+            rolling_std = rolling_std.replace(0, np.nan)
+            new_cols[f"funding_zscore_{period}"] = ((fr - rolling_mean) / rolling_std).fillna(0)
+    elif name == "OIPriceDivergence":
+        if "open_interest" in df.columns:
+            period = int(params["period"])
+            oi_rank = df["open_interest"].rolling(period, min_periods=2).apply(
+                lambda x: pd.Series(x).rank().iloc[-1] / len(x), raw=False,
+            )
+            price_rank = df["close"].rolling(period, min_periods=2).apply(
+                lambda x: pd.Series(x).rank().iloc[-1] / len(x), raw=False,
+            )
+            new_cols[f"oi_price_divergence_{period}"] = (oi_rank - price_rank).fillna(0)
+    elif name == "FundingPressure":
+        if "funding_rate" in df.columns:
+            period = int(params["period"])
+            new_cols[f"funding_pressure_{period}"] = df["funding_rate"].rolling(period, min_periods=1).sum()
 
     return new_cols
 

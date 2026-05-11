@@ -252,6 +252,7 @@ _CONTEXT_SCHEMA: dict[str, set[str]] = {
     "momentum": {"momentum"},
     "volume": {"momentum"},
     "trend_strength": {"momentum"},
+    "derivatives": {"momentum"},
 }
 
 
