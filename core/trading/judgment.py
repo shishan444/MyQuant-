@@ -70,7 +70,9 @@ def evaluate(
 
     # Rule 4: entry signal + opposite direction -> close first
     if signals.entry and state.has_position:
-        direction = "long" if signals.direction > 0 else "short"
+        direction = "long" if signals.direction > 0 else "short" if signals.direction < 0 else None
+        if direction is None:
+            return Decision(action="hold", reason="neutral_direction")
         if direction != state.position_side:
             return Decision(
                 action="close",
@@ -79,7 +81,9 @@ def evaluate(
 
     # Rule 2: entry signal + no position -> open
     if signals.entry and not state.has_position:
-        direction = "long" if signals.direction > 0 else "short"
+        direction = "long" if signals.direction > 0 else "short" if signals.direction < 0 else None
+        if direction is None:
+            return Decision(action="hold", reason="neutral_direction")
         # Enforce DNA direction constraint
         if state.allowed_direction != "mixed" and direction != state.allowed_direction:
             return Decision(
@@ -87,6 +91,8 @@ def evaluate(
                 reason=f"direction_filter: signal={direction}, allowed={state.allowed_direction}",
             )
         entry_pct = target_pct * config.initial_entry_pct
+        if config.confidence_sizing_enabled:
+            entry_pct *= max(signals.confidence, 0.1)
         return Decision(
             action="open",
             direction=direction,
@@ -111,12 +117,13 @@ def evaluate(
             )
         return Decision(action="hold", reason="already at target position")
 
-    # Rule 5: no signal -> continue filling if profitable
+    # Rule 5: no signal -> continue filling if profitable (limited by max_fill_bars)
     if not signals.entry and not signals.exit and not signals.add and not signals.reduce:
         if (
             state.has_position
             and state.actual_position_pct < target_pct
             and state.unrealized_pnl > 0
+            and state.position_bars_held < config.max_fill_bars
         ):
             return Decision(
                 action="add",

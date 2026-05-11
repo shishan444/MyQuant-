@@ -49,7 +49,9 @@ class JudgmentConfig:
     initial_entry_pct: float = 0.33  # first entry as fraction of target
     profit_add_only: bool = True  # only add when unrealized pnl > 0
     max_hold_bars: int | None = None  # force close if losing and held too long
+    max_fill_bars: int = 3  # max consecutive no-signal auto-fill bars
     fee_rate: float = 0.001  # trading fee rate for min_profit calculation
+    confidence_sizing_enabled: bool = False  # scale entry by MTF confidence
 
 
 @dataclass
@@ -61,6 +63,7 @@ class BarSignals:
     add: bool = False
     reduce: bool = False
     direction: float = 1.0  # +1 long, -1 short
+    confidence: float = 1.0  # MTF confidence [0.1, 1.0], default 1.0 (no effect)
 
     @staticmethod
     def from_signal_set(sig_set, idx: int) -> BarSignals:
@@ -75,10 +78,19 @@ class BarSignals:
         if entry and math.isnan(raw_direction):
             entry = False
             raw_direction = 0.0
+
+        # Extract confidence if available
+        raw_confidence = 1.0
+        sig_confidence = getattr(sig_set, "confidence", None)
+        if sig_confidence is not None:
+            val = float(sig_confidence.iloc[idx])
+            raw_confidence = val if not math.isnan(val) else 1.0
+
         return BarSignals(
             entry=entry,
             exit=bool(sig_set.exits.iloc[idx]),
             add=bool(sig_set.adds.iloc[idx]),
             reduce=bool(sig_set.reduces.iloc[idx]),
             direction=raw_direction,
+            confidence=raw_confidence,
         )

@@ -596,6 +596,29 @@ def synthesize_cross_layer(
     )
 
 
+def _compute_confidence(synthesis: MTFSynthesis) -> pd.Series:
+    """Compute blended confidence from MTF synthesis scores.
+
+    Formula:
+        confidence = confluence * 0.5 + momentum * 0.3 + |direction| * 0.2
+        Clipped to [0.1, 1.0].
+
+    Args:
+        synthesis: MTFSynthesis with per-bar scores.
+
+    Returns:
+        pd.Series of confidence values clipped to [0.1, 1.0].
+    """
+    import numpy as np
+
+    confidence = (
+        synthesis.confluence_score * 0.5
+        + synthesis.momentum_score * 0.3
+        + synthesis.direction_score.abs() * 0.2
+    )
+    return confidence.clip(0.1, 1.0)
+
+
 def apply_decision_gate(
     exec_signal_set: SignalSet,
     synthesis: MTFSynthesis,
@@ -638,6 +661,7 @@ def apply_decision_gate(
                 "strength_multiplier": synthesis.strength_multiplier,
                 "mtf_mode": None,
             },
+            confidence=_compute_confidence(synthesis),
         )
 
     # Direction gate
@@ -681,6 +705,7 @@ def apply_decision_gate(
             "strength_multiplier": synthesis.strength_multiplier,
             "mtf_mode": mtf_mode,
         },
+        confidence=_compute_confidence(synthesis),
     )
 
 
