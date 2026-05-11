@@ -397,6 +397,27 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         output_fields=["funding_pressure"],
         supported_conditions=["gt", "lt"],
     ),
+
+    # == ml (2) ==
+    "FractalEntropy": IndicatorDef(
+        category="ml",
+        params={
+            "bins": ParamDef("int", 5, 30, 10, 5),
+            "lookback": ParamDef("int", 30, 200, 100, 10),
+        },
+        output_fields=["mfe_score"],
+        supported_conditions=["gt", "lt"],
+        naming="mfe",
+        compute_mode="lazy",
+    ),
+    "MultifactorOsc": IndicatorDef(
+        category="ml",
+        params={"lookback": ParamDef("int", 10, 50, 20, 5)},
+        output_fields=["mf_osc"],
+        supported_conditions=["gt", "lt", "cross_above", "cross_below"],
+        naming="mf_osc",
+        compute_mode="lazy",
+    ),
 }
 
 
@@ -434,7 +455,7 @@ def resolve_indicator_column(
     name: str,
     params: dict,
     field_name: str = "",
-    naming: str = "default",
+    naming: str = "",
 ) -> str:
     """Resolve indicator name + params to the expected DataFrame column name.
 
@@ -446,11 +467,17 @@ def resolve_indicator_column(
         name: Indicator name from registry (e.g. "EMA", "BB").
         params: Parameter dict (e.g. {"period": 20}).
         field_name: Optional field for multi-output indicators (e.g. "upper").
-        naming: Naming mode from IndicatorDef.naming.
+        naming: Naming mode from IndicatorDef.naming. If empty, auto-resolved
+            from INDICATOR_REGISTRY.
 
     Returns:
         Expected column name string.
     """
+    # Auto-resolve naming from registry if not explicitly provided
+    if not naming:
+        reg = INDICATOR_REGISTRY.get(name)
+        naming = reg.naming if reg else "default"
+
     if naming == "default":
         reg = INDICATOR_REGISTRY.get(name)
         prefix = reg.output_fields[0] if reg else name.lower()
@@ -510,6 +537,15 @@ def resolve_indicator_column(
         period = int(params["period"])
         field = field_name or "aroon_up"
         return f"{field}_{period}"
+
+    if naming == "mfe":
+        bins = int(params["bins"])
+        lookback = int(params["lookback"])
+        return f"mfe_score_{bins}_{lookback}"
+
+    if naming == "mf_osc":
+        lookback = int(params["lookback"])
+        return f"mf_osc_{lookback}"
 
     # Unknown naming mode fallback
     return name.lower()

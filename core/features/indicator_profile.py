@@ -353,6 +353,23 @@ PROFILES: Dict[str, IndicatorProfile] = {
         follow_probability=0.50,
     ),
 
+    # == ml (2) ==
+    "FractalEntropy": IndicatorProfile(
+        recommended_roles=["entry_guard"],
+        recommended_params={"bins": [10], "lookback": [100]},
+        recommended_conditions=[
+            ConditionPreset("gt", [0.8]),
+            ConditionPreset("lt", [0.4]),
+        ],
+        follow_probability=0.45,
+    ),
+    "MultifactorOsc": IndicatorProfile(
+        recommended_roles=["entry_trigger", "exit_trigger"],
+        recommended_params={"lookback": [20]},
+        recommended_conditions=[_GT, _LT, _CROSS_ABOVE, _CROSS_BELOW],
+        follow_probability=0.45,
+    ),
+
     # == structure (1) ==
     "VolumeProfile": IndicatorProfile(
         recommended_roles=["entry_guard", "exit_guard"],

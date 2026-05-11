@@ -250,7 +250,7 @@ class TestRegistryNamingField:
 
     def test_all_indicators_have_valid_naming(self):
         valid_modes = {"default", "bb", "macd", "stoch", "kc", "dc",
-                       "vp", "pattern", "psar", "aroon"}
+                       "vp", "pattern", "psar", "aroon", "mfe", "mf_osc"}
         for name, defn in INDICATOR_REGISTRY.items():
             assert defn.naming in valid_modes, \
                 f"{name} has invalid naming mode: {defn.naming}"

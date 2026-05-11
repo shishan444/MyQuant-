@@ -77,6 +77,9 @@ _DEFAULT_PARAMS: Dict[str, List[Dict[str, Any]]] = {
     "FundingZScore": [{"period": 30}],
     "OIPriceDivergence": [{"period": 14}],
     "FundingPressure": [{"period": 8}],
+    # ML indicators (compute_mode="lazy", skipped by default)
+    "FractalEntropy": [{"bins": 10, "lookback": 100}],
+    "MultifactorOsc": [{"lookback": 20}],
 }
 
 
@@ -308,6 +311,21 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
             period = int(params["period"])
             new_cols[f"funding_pressure_{period}"] = df["funding_rate"].rolling(period, min_periods=1).sum()
 
+    # ── ML indicators ──
+    elif name == "FractalEntropy":
+        from core.features.ml_indicators import compute_fractal_entropy
+        bins = int(params["bins"])
+        lookback = int(params["lookback"])
+        new_cols[f"mfe_score_{bins}_{lookback}"] = compute_fractal_entropy(
+            df["close"], bins=bins, lookback=lookback,
+        )
+    elif name == "MultifactorOsc":
+        from core.features.ml_indicators import compute_multifactor_osc
+        lookback = int(params["lookback"])
+        result = compute_multifactor_osc(df, lookback=lookback)
+        if result is not None:
+            new_cols[f"mf_osc_{lookback}"] = result
+
     return new_cols
 
 
@@ -387,6 +405,8 @@ def _rolling_volume_profile(
 
 def compute_all_indicators(
     df: pd.DataFrame,
+    *,
+    skip_lazy: bool = True,
     stop_check: Optional[Callable[[], None]] = None,
 ) -> pd.DataFrame:
     """Pre-compute all default indicators and append as columns.
@@ -394,6 +414,8 @@ def compute_all_indicators(
     Args:
         df: OHLCV DataFrame with columns: open, high, low, close, volume
             and DatetimeIndex.
+        skip_lazy: If True, skip indicators with compute_mode="lazy"
+            (ML indicators, VolumeProfile). Default True for performance.
         stop_check: Optional callback that raises on stop request.
             Called before each indicator computation.
 
@@ -403,6 +425,9 @@ def compute_all_indicators(
     result = df.copy()
 
     for name, param_sets in _DEFAULT_PARAMS.items():
+        reg = INDICATOR_REGISTRY.get(name)
+        if skip_lazy and reg and reg.compute_mode == "lazy":
+            continue
         for params in param_sets:
             if stop_check is not None:
                 stop_check()
