@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
 
+import logging
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
@@ -102,11 +103,12 @@ def _compute_indicator(df: pd.DataFrame, name: str, params: Dict[str, Any]) -> D
             new_cols[f"macd_histogram_{fast}_{slow}_{signal}"] = macd_df.iloc[:, 2]
     elif name == "BB":
         period, std = int(params["period"]), float(params["std"])
+        std_str = str(std).replace(".0", "")  # align with executor.py naming
         bb_df = ta.bbands(df["close"], length=period, std=std)
         if bb_df is not None:
-            new_cols[f"bb_upper_{period}_{std}"] = bb_df.iloc[:, 0]
-            new_cols[f"bb_middle_{period}_{std}"] = bb_df.iloc[:, 1]
-            new_cols[f"bb_lower_{period}_{std}"] = bb_df.iloc[:, 2]
+            new_cols[f"bb_upper_{period}_{std_str}"] = bb_df.iloc[:, 0]
+            new_cols[f"bb_middle_{period}_{std_str}"] = bb_df.iloc[:, 1]
+            new_cols[f"bb_lower_{period}_{std_str}"] = bb_df.iloc[:, 2]
     elif name == "ATR":
         period = int(params["period"])
         new_cols[f"atr_{period}"] = ta.atr(df["high"], df["low"], df["close"], length=period)
@@ -366,8 +368,9 @@ def compute_all_indicators(
                 for col, values in new_cols.items():
                     if col not in result.columns:
                         result[col] = values
-            except Exception:
-                # Skip indicators that fail on given data
+            except (KeyError, ValueError, AttributeError, TypeError) as e:
+                logger = logging.getLogger(__name__)
+                logger.debug("Skipping indicator %s: %s", name, e)
                 continue
 
     return result

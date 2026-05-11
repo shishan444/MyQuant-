@@ -87,6 +87,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
         params={},
         output_fields=["vwap"],
         supported_conditions=["price_above", "price_below"],
+        guard_only=True,
     ),
 
     # == momentum (9) ==
@@ -160,7 +161,7 @@ INDICATOR_REGISTRY: Dict[str, IndicatorDef] = {
             "period": ParamDef("int", 5, 50, 20, 2),
             "std": ParamDef("float", 1.0, 3.0, 2.0, 0.5),
         },
-        output_fields=["upper", "middle", "lower", "bandwidth", "percent"],
+        output_fields=["upper", "middle", "lower"],
         supported_conditions=["price_above", "price_below", "lookback_any", "lookback_all",
                               "touch_bounce", "role_reversal", "wick_touch"],
     ),

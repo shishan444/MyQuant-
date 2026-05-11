@@ -296,7 +296,11 @@ def extract_context(
             ctx["price_levels"] = price_cols
 
     # Momentum extraction
-    if indicator_category == "momentum":
+    _bounded_momentum_indicators = {"CMF", "MFI", "RVOL", "VROC", "ADX"}
+    if indicator_category == "momentum" or (
+        indicator_category in ("volume", "trend_strength")
+        and gene.indicator in _bounded_momentum_indicators
+    ):
         ctx["momentum"] = indicator_col
 
     return ctx
