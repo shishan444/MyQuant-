@@ -59,7 +59,7 @@ describe("useChartIndicators", () => {
     expect(getOhlcvBySymbol).toHaveBeenCalledWith("BTCUSDT", "4h", expect.objectContaining({
       start: "2025-01-01",
       end: "2025-03-01",
-      limit: 10000,
+      limit: 50000,
     }));
 
     // Indicators fetched after candleData is available

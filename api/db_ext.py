@@ -299,6 +299,16 @@ def init_db_ext(db_path: Path) -> None:
         if 15 not in applied:
             _record_version(conn, 15)
 
+        # 15. Pending decision column (migration 016)
+        _apply_pending_decision_column(conn)
+        if 16 not in applied:
+            _record_version(conn, 16)
+
+        # 16. Confidence sizing column (migration 017)
+        _apply_confidence_sizing_column(conn)
+        if 17 not in applied:
+            _record_version(conn, 17)
+
         conn.commit()
     finally:
         conn.close()
@@ -406,6 +416,30 @@ def _apply_position_open_cost_column(conn: sqlite3.Connection) -> None:
         )
 
 
+def _apply_pending_decision_column(conn: sqlite3.Connection) -> None:
+    """Add pending_decision_json column to paper_trading_task (idempotent)."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+    if "pending_decision_json" not in existing:
+        conn.execute(
+            "ALTER TABLE paper_trading_task ADD COLUMN pending_decision_json TEXT"
+        )
+
+
+def _apply_confidence_sizing_column(conn: sqlite3.Connection) -> None:
+    """Add confidence_sizing_enabled column to paper_trading_task (idempotent)."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+    if "confidence_sizing_enabled" not in existing:
+        conn.execute(
+            "ALTER TABLE paper_trading_task ADD COLUMN confidence_sizing_enabled INTEGER DEFAULT 0"
+        )
+
+
 def _create_equity_snapshot_table(conn: sqlite3.Connection) -> None:
     """Create paper_equity_snapshot table (idempotent)."""
     conn.execute("""
@@ -420,7 +454,7 @@ def _create_equity_snapshot_table(conn: sqlite3.Connection) -> None:
         )
     """)
     conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_equity_task_time
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_equity_task_time
         ON paper_equity_snapshot(task_id, timestamp)
     """)
 
@@ -440,6 +474,7 @@ def save_paper_trading_task(
     direction: str = "long",
     score_template: str = "explorer",
     strategy_name: Optional[str] = None,
+    confidence_sizing_enabled: bool = False,
 ) -> None:
     now = _now()
     with _connect(db_path) as conn:
@@ -448,11 +483,12 @@ def save_paper_trading_task(
                (task_id, status, strategy_name, symbol, timeframe,
                 initial_cash, fee, leverage, direction, dna_json,
                 score_template, created_at, updated_at, balance,
-                execution_model)
-               VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2')""",
+                execution_model, confidence_sizing_enabled)
+               VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?)""",
             (task_id, strategy_name, symbol, timeframe,
              initial_cash, fee, leverage, direction, dna_json,
-             score_template, now, now, initial_cash),
+             score_template, now, now, initial_cash,
+             int(confidence_sizing_enabled)),
         )
         conn.commit()
 
@@ -466,12 +502,26 @@ def get_paper_trading_task(db_path: Path, task_id: str) -> Optional[Dict[str, An
         return dict(row) if row else None
 
 
+_ALLOWED_COLUMNS = frozenset({
+    "status", "started_at", "stopped_at", "stop_reason", "heartbeat_at",
+    "position_side", "position_entry", "position_quantity", "position_margin",
+    "position_funding", "position_open_cost", "balance", "unrealized_pnl",
+    "total_trades", "total_pnl", "win_count", "loss_count", "bars_held",
+    "last_bar_time", "last_bar_close", "execution_model", "pending_decision_json",
+    "updated_at",
+})
+
+
 def update_paper_trading_task(db_path: Path, task_id: str, **kwargs) -> None:
     if not kwargs:
         return
-    kwargs["updated_at"] = _now()
-    sets = ", ".join(f"{k} = ?" for k in kwargs)
-    vals = list(kwargs.values()) + [task_id]
+    # Filter to allowed columns only
+    filtered = {k: v for k, v in kwargs.items() if k in _ALLOWED_COLUMNS}
+    if not filtered:
+        return
+    filtered["updated_at"] = _now()
+    sets = ", ".join(f"{k} = ?" for k in filtered)
+    vals = list(filtered.values()) + [task_id]
     with _connect(db_path) as conn:
         conn.execute(
             f"UPDATE paper_trading_task SET {sets} WHERE task_id = ?", vals
@@ -570,7 +620,7 @@ def save_equity_snapshots(
         return
     with _connect(db_path) as conn:
         conn.executemany(
-            """INSERT INTO paper_equity_snapshot
+            """INSERT OR IGNORE INTO paper_equity_snapshot
                (task_id, timestamp, equity, balance, unrealized_pnl, position_side)
                VALUES (?, ?, ?, ?, ?, ?)""",
             [
@@ -612,6 +662,15 @@ def delete_paper_trading_task(db_path: Path, task_id: str) -> bool:
         return True
 
 
+def _compute_equity(task: dict, balance: float) -> float:
+    """Compute equity from balance + position_margin + unrealized_pnl."""
+    if not task.get("position_side"):
+        return balance
+    margin = task.get("position_margin") or 0.0
+    pnl = task.get("unrealized_pnl") or 0.0
+    return balance + margin + pnl
+
+
 def compute_trading_metrics(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
     """Compute performance metrics for a paper trading task."""
     task = get_paper_trading_task(db_path, task_id)
@@ -619,15 +678,13 @@ def compute_trading_metrics(db_path: Path, task_id: str) -> Optional[Dict[str, A
         return None
 
     initial_cash = task["initial_cash"]
-    balance = task.get("balance") or initial_cash
+    balance = task.get("balance") if task.get("balance") is not None else initial_cash
     total_trades = task.get("total_trades", 0)
     win_count = task.get("win_count", 0)
     loss_count = task.get("loss_count", 0)
 
     # Use equity for total_pnl to include all costs (open/close fees + slippage)
-    position_margin = task.get("position_margin") or 0
-    unrealized_pnl = task.get("unrealized_pnl") or 0
-    equity = balance + position_margin + unrealized_pnl
+    equity = _compute_equity(task, balance)
     total_pnl = equity - initial_cash
 
     # Win rate
@@ -670,11 +727,11 @@ def compute_trading_metrics(db_path: Path, task_id: str) -> Optional[Dict[str, A
 
     # Use equity (balance + margin + unrealized_pnl) for return calculation
     # balance alone excludes locked margin, giving misleading -100% when in position
-    position_margin = task.get("position_margin") or 0
-    unrealized_pnl = task.get("unrealized_pnl") or 0
-    equity = balance + position_margin + unrealized_pnl
+    equity = _compute_equity(task, balance)
     total_return = equity / initial_cash - 1 if initial_cash > 0 else 0.0
     avg_trade_pnl = total_pnl / max(total_trades, 1)
+
+    unrealized_pnl = task.get("unrealized_pnl", 0.0) or 0.0
 
     return {
         "task_id": task_id,
@@ -687,6 +744,8 @@ def compute_trading_metrics(db_path: Path, task_id: str) -> Optional[Dict[str, A
         "avg_trade_pnl": round(avg_trade_pnl, 2),
         "total_trades": total_trades,
         "total_pnl": round(total_pnl, 2),
+        "realized_pnl": round(task.get("total_pnl", 0.0) or 0.0, 2),
+        "unrealized_pnl": round(unrealized_pnl, 2),
         "win_count": win_count,
         "loss_count": loss_count,
     }

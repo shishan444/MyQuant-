@@ -105,16 +105,14 @@ def test_mtf_backtest_produces_valid_result():
     assert isinstance(result.total_trades, int)
     assert result.total_trades >= 0
 
-def test_mtf_backtest_without_mtf_data_falls_back():
-    """MTF strategy without dfs_by_timeframe should fall back to single-TF."""
+def test_mtf_backtest_without_mtf_data_raises():
+    """MTF strategy without dfs_by_timeframe should raise ValueError."""
     dna = _make_mtf_dna()
     enhanced_df = _make_ohlcv_df(500, "4h")
 
     engine = BacktestEngine(init_cash=100000)
-    result = engine.run(dna, enhanced_df)
-
-    assert result.total_return is not None
-    assert len(result.equity_curve) > 0
+    with pytest.raises(ValueError, match="MTF DNA requires dfs_by_timeframe"):
+        engine.run(dna, enhanced_df)
 
 def test_single_tf_backtest_unchanged():
     """Single-TF strategy should produce same results as before."""

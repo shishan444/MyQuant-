@@ -452,6 +452,7 @@ class PaperTradingTaskCreate(BaseModel):
     direction: str = Field(default="long", pattern="^(long|short|mixed)$")
     score_template: str = Field(default="explorer")
     strategy_name: Optional[str] = None
+    confidence_sizing_enabled: bool = False
 
 
 class PaperTradingTaskResponse(BaseModel):
@@ -489,6 +490,7 @@ class PaperTradingTaskResponse(BaseModel):
     last_bar_close: Optional[float] = None
     # Execution model
     execution_model: str = "v1"
+    confidence_sizing_enabled: bool = False
 
 
 class PaperTradingTaskListResponse(BaseModel):
@@ -540,5 +542,7 @@ class TradingMetricsResponse(BaseModel):
     avg_trade_pnl: float = 0.0
     total_trades: int = 0
     total_pnl: float = 0.0
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
     win_count: int = 0
     loss_count: int = 0

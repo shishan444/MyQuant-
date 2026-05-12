@@ -460,6 +460,8 @@ export function Strategies() {
         symbol: strategy.symbol,
         timeframe: strategy.timeframe,
         strategyName: strategy.name,
+        leverage: strategy.dna.risk_genes?.leverage,
+        direction: strategy.dna.risk_genes?.direction,
       },
     });
   };

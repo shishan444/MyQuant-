@@ -65,6 +65,7 @@ def _task_to_response(row: dict) -> PaperTradingTaskResponse:
         last_bar_time=row.get("last_bar_time"),
         last_bar_close=row.get("last_bar_close"),
         execution_model=row.get("execution_model", "v1"),
+        confidence_sizing_enabled=bool(row.get("confidence_sizing_enabled", 0)),
     )
 
 
@@ -93,6 +94,7 @@ def create_task(
         direction=body.direction,
         score_template=body.score_template,
         strategy_name=body.strategy_name,
+        confidence_sizing_enabled=body.confidence_sizing_enabled,
     )
     row = get_paper_trading_task(db_path, task_id)
     return _task_to_response(row)
@@ -161,7 +163,7 @@ def pause_task(
     from core.trading.runner import get_trading_controllers
     controller = get_trading_controllers().get(task_id)
     if controller:
-        controller.request_stop()
+        controller.request_stop(reason="pause")
 
     update_paper_trading_task(db_path, task_id, status="paused")
     row = get_paper_trading_task(db_path, task_id)
@@ -206,6 +208,7 @@ def restart_task(
         direction=row["direction"],
         dna_json=row["dna_json"],
         score_template=row.get("score_template", "explorer"),
+        confidence_sizing_enabled=bool(row.get("confidence_sizing_enabled", 0)),
     )
     new_row = get_paper_trading_task(db_path, new_task_id)
     return _task_to_response(new_row)
@@ -264,6 +267,12 @@ def delete_task(
         raise HTTPException(status_code=404, detail="Task not found")
     if row["status"] in ("running", "pending"):
         raise HTTPException(status_code=400, detail="Cannot delete active task. Stop it first.")
+    # Stop paused task's controller to prevent memory leak
+    if row["status"] == "paused":
+        from core.trading.runner import get_trading_controllers
+        ctrl = get_trading_controllers().get(task_id)
+        if ctrl is not None:
+            ctrl.request_stop("stop")
     ok = delete_paper_trading_task(db_path, task_id)
     return {"deleted": ok}
 

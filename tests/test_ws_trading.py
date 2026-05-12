@@ -97,7 +97,7 @@ class TestTradingSnapshotHelper:
         assert result["balance"] == 80000.0
 
     def test_snapshot_returns_none_for_stopped_task(self, trading_app):
-        """_get_trading_snapshot returns None for stopped tasks."""
+        """_get_trading_snapshot returns data for stopped tasks (allowed status)."""
         app, db_path = trading_app
         from api.db_ext import save_paper_trading_task, update_paper_trading_task
 
@@ -113,7 +113,8 @@ class TestTradingSnapshotHelper:
         mock_ws.app.state.db_path = db_path
 
         result = _get_trading_snapshot(mock_ws, "snap-stopped")
-        assert result is None
+        assert result is not None
+        assert result["status"] == "stopped"
 
     def test_snapshot_returns_none_for_nonexistent_task(self, trading_app):
         """_get_trading_snapshot returns None for unknown task IDs."""

@@ -73,8 +73,8 @@ describe("TradingChart", () => {
     expect(screen.getByTestId("signal-count").textContent).toBe("1");
   });
 
-  // --- tradesToSignals: filters out non-open/close ---
-  it("filters out trades with action other than open/close", () => {
+  // --- tradesToSignals: includes add/reduce actions as signals ---
+  it("includes trades with action other than open/close as signals", () => {
     mockUseChartIndicators.mockReturnValue({
       candleData: [{ timestamp: "2025-01-05T08:00:00Z", open: 100, high: 110, low: 95, close: 105, volume: 1000 }],
       volumeData: [],
@@ -87,7 +87,7 @@ describe("TradingChart", () => {
     ];
     render(<TradingChart symbol="BTCUSDT" timeframe="4h" trades={trades} />);
 
-    expect(screen.getByTestId("signal-count").textContent).toBe("0");
+    expect(screen.getByTestId("signal-count").textContent).toBe("2");
   });
 
   // --- Empty trades ---

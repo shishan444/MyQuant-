@@ -455,7 +455,7 @@ class TestProcessBarV2:
     def test_full_pipeline(self):
         """process_bar_v2: no decision -> snapshot only."""
         acc = _make_account(fee=0.0, position_size=0.3)
-        events = acc.process_bar_v2(
+        events, deferred = acc.process_bar_v2(
             bar_high=102.0, bar_low=99.0,
             bar_open=100.0, bar_close=101.0,
             bar_time=_ts(0),
@@ -473,7 +473,7 @@ class TestProcessBarV2:
         )
         # Process bar where SL triggers AND there's a pending close
         decision = Decision(action="close", reason="signal")
-        events = acc.process_bar_v2(
+        events, deferred = acc.process_bar_v2(
             bar_high=98.0, bar_low=90.0,  # low=90 < 100*0.95 -> SL
             bar_open=95.0, bar_close=97.0,
             bar_time=_ts(1),
@@ -488,7 +488,7 @@ class TestProcessBarV2:
         """Decision executes at bar_open price."""
         acc = _make_account(fee=0.0, direction="long", position_size=0.5)
         decision = Decision(action="open", direction="long", target_position_pct=0.5)
-        events = acc.process_bar_v2(
+        events, deferred = acc.process_bar_v2(
             bar_high=105.0, bar_low=99.0,
             bar_open=100.0, bar_close=103.0,
             bar_time=_ts(0),

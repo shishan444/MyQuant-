@@ -158,8 +158,9 @@ class TestMTFSignalGeneration:
         from core.strategy.executor import dna_to_signal_set
 
         dna = make_mtf_dna(timeframes=("4h", "15m"), cross_layer_logic="AND")
-        df = make_ohlcv(n=300, freq="4h")
-        signal_set = dna_to_signal_set(dna, df)
+        df_4h = make_ohlcv(n=300, freq="4h")
+        df_15m = make_ohlcv(n=1200, freq="15min")
+        signal_set = dna_to_signal_set(dna, df_4h, dfs_by_timeframe={"4h": df_4h, "15m": df_15m})
         assert signal_set.entries.dtype == bool
 
     def test_mtf_or_produces_signals(self):
@@ -167,8 +168,9 @@ class TestMTFSignalGeneration:
         from core.strategy.executor import dna_to_signal_set
 
         dna = make_mtf_dna(timeframes=("4h", "15m"), cross_layer_logic="OR")
-        df = make_ohlcv(n=300, freq="4h")
-        signal_set = dna_to_signal_set(dna, df)
+        df_4h = make_ohlcv(n=300, freq="4h")
+        df_15m = make_ohlcv(n=1200, freq="15min")
+        signal_set = dna_to_signal_set(dna, df_4h, dfs_by_timeframe={"4h": df_4h, "15m": df_15m})
         assert signal_set.entries.dtype == bool
 
 # ============================================================================

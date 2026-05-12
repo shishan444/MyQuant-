@@ -11,6 +11,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+const LEVERAGE_OPTIONS = [1, 2, 3, 5, 10];
+
+const DIRECTION_OPTIONS: { value: string; label: string }[] = [
+  { value: "long", label: "仅多" },
+  { value: "short", label: "仅空" },
+  { value: "mixed", label: "混合" },
+];
+
 interface CreateTaskDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -18,7 +26,9 @@ interface CreateTaskDialogProps {
   symbol: string;
   timeframe: string;
   initialCash: number;
-  onConfirm: (initialCash: number) => void;
+  leverage: number;
+  direction: string;
+  onConfirm: (params: { initialCash: number; leverage: number; direction: string }) => void;
 }
 
 export function CreateTaskDialog({
@@ -28,16 +38,21 @@ export function CreateTaskDialog({
   symbol,
   timeframe,
   initialCash: defaultCash,
+  leverage: defaultLeverage,
+  direction: defaultDirection,
   onConfirm,
 }: CreateTaskDialogProps) {
   const [cash, setCash] = useState(defaultCash);
+  const [leverage, setLeverage] = useState(defaultLeverage);
+  const [direction, setDirection] = useState(defaultDirection);
 
-  // Sync when dialog opens with a new default
-  const [prevDefault, setPrevDefault] = useState(defaultCash);
-  if (defaultCash !== prevDefault) {
-    setPrevDefault(defaultCash);
-    setCash(defaultCash);
-  }
+  // Sync when dialog opens with new defaults
+  const [prevCash, setPrevCash] = useState(defaultCash);
+  const [prevLeverage, setPrevLeverage] = useState(defaultLeverage);
+  const [prevDirection, setPrevDirection] = useState(defaultDirection);
+  if (defaultCash !== prevCash) { setPrevCash(defaultCash); setCash(defaultCash); }
+  if (defaultLeverage !== prevLeverage) { setPrevLeverage(defaultLeverage); setLeverage(defaultLeverage); }
+  if (defaultDirection !== prevDirection) { setPrevDirection(defaultDirection); setDirection(defaultDirection); }
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -45,29 +60,28 @@ export function CreateTaskDialog({
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <TrendingUp className="h-5 w-5 text-accent-gold" />
-            Create Paper Trading Task
+            创建模拟交易任务
           </AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-3 text-sm text-text-secondary">
               <p>
-                Start paper trading with this strategy. The runner will process
-                historical bars first, then switch to real-time mode.
+                使用该策略启动模拟交易。运行引擎将先处理历史数据，然后切换至实时模式。
               </p>
               <div className="grid grid-cols-2 gap-2 rounded-lg border border-border-default p-3">
                 <div>
-                  <span className="text-xs text-text-muted">Strategy</span>
+                  <span className="text-xs text-text-muted">策略</span>
                   <p className="font-medium text-text-primary">
-                    {strategyName || "Unnamed"}
+                    {strategyName || "未命名策略"}
                   </p>
                 </div>
                 <div>
-                  <span className="text-xs text-text-muted">Market</span>
+                  <span className="text-xs text-text-muted">交易对</span>
                   <p className="font-medium text-text-primary">
                     {symbol} / {timeframe}
                   </p>
                 </div>
                 <div>
-                  <span className="text-xs text-text-muted">Initial Capital</span>
+                  <span className="text-xs text-text-muted">初始资金</span>
                   <input
                     type="number"
                     min={100}
@@ -77,14 +91,52 @@ export function CreateTaskDialog({
                     className="w-full rounded border border-border-default bg-transparent px-2 py-1 font-num text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-gold"
                   />
                 </div>
+                <div>
+                  <span className="text-xs text-text-muted">杠杆倍数</span>
+                  <div className="flex gap-1 mt-0.5">
+                    {LEVERAGE_OPTIONS.map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => setLeverage(opt)}
+                        className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                          leverage === opt
+                            ? "bg-accent-gold/20 text-accent-gold border border-accent-gold/40"
+                            : "border border-border-default text-text-muted hover:text-text-primary hover:border-text-muted"
+                        }`}
+                      >
+                        {opt}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-xs text-text-muted">交易方向</span>
+                  <div className="flex gap-1 mt-0.5">
+                    {DIRECTION_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setDirection(opt.value)}
+                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                          direction === opt.value
+                            ? "bg-accent-gold/20 text-accent-gold border border-accent-gold/40"
+                            : "border border-border-default text-text-muted hover:text-text-primary hover:border-text-muted"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={() => onConfirm(cash)}>
-            Create Task
+          <AlertDialogCancel>取消</AlertDialogCancel>
+          <AlertDialogAction onClick={() => onConfirm({ initialCash: cash, leverage, direction })}>
+            创建任务
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

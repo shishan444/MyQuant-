@@ -124,7 +124,7 @@ describe("Trading page", () => {
     } as any);
 
     render(<Trading />, { wrapper: createWrapper() });
-    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.getByText("加载中...")).toBeInTheDocument();
   });
 
   // --- Empty state ---
@@ -137,8 +137,8 @@ describe("Trading page", () => {
     } as any);
 
     render(<Trading />, { wrapper: createWrapper() });
-    expect(screen.getByText("No paper trading tasks")).toBeInTheDocument();
-    expect(screen.getByText("Go to Strategies")).toBeInTheDocument();
+    expect(screen.getByText("暂无模拟交易任务")).toBeInTheDocument();
+    expect(screen.getByText("前往策略库")).toBeInTheDocument();
   });
 
   // --- Task list renders ---
@@ -174,14 +174,14 @@ describe("Trading page", () => {
 
     render(<Trading />, { wrapper: createWrapper() });
     // Running badge appears in sidebar and possibly detail panel
-    expect(screen.getAllByText("Running").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("运行中").length).toBeGreaterThanOrEqual(1);
   });
 
   // --- Delete button visible on stopped tasks ---
   it("shows delete button only on stopped tasks", () => {
     const tasks = [
       makeTask({ task_id: "t1", status: "stopped", strategy_name: "Stopped" }),
-      makeTask({ task_id: "t2", status: "running", strategy_name: "Running" }),
+      makeTask({ task_id: "t2", status: "running", strategy_name: "运行中" }),
     ];
     mockUseTradingTasks.mockReturnValue({
       data: { tasks, total: 2 },
@@ -195,7 +195,7 @@ describe("Trading page", () => {
     // Stopped task should have a delete button area (Trash2 icon)
     const allText = document.body.textContent ?? "";
     // The running task detail panel should be selected (auto-select running)
-    expect(allText).toContain("Running");
+    expect(allText).toContain("运行中");
   });
 
   // --- Task selection ---

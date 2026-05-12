@@ -222,6 +222,7 @@ class TestRunnerStateSaveRestore:
         acc = _make_account()
         runner = TradingRunner(db_path=trading_db, data_dir=trading_db.parent / "data")
         runner._restore_account_state(acc, row)
+        runner._restore_balance_and_position(acc, row)
 
         assert acc.balance == 95000
         assert acc.position is None
@@ -247,6 +248,7 @@ class TestRunnerStateSaveRestore:
         acc = _make_account()
         runner = TradingRunner(db_path=trading_db, data_dir=trading_db.parent / "data")
         runner._restore_account_state(acc, row)
+        runner._restore_balance_and_position(acc, row)
 
         assert acc.position is not None
         assert acc.position.side == "long"
@@ -429,7 +431,7 @@ class TestPendingDecision:
         acc = _make_account(direction="long", position_size=0.5)
 
         # Bar 0: no pending decision, no events
-        events_0 = acc.process_bar_v2(
+        events_0, deferred_0 = acc.process_bar_v2(
             bar_high=102, bar_low=99, bar_open=100, bar_close=101,
             bar_time="2024-01-01T00:00:00",
             pending_decision=None,
@@ -438,7 +440,7 @@ class TestPendingDecision:
 
         # Bar 1: execute pending open decision
         decision = Decision(action="open", direction="long", target_position_pct=0.5)
-        events_1 = acc.process_bar_v2(
+        events_1, deferred_1 = acc.process_bar_v2(
             bar_high=105, bar_low=100, bar_open=102, bar_close=104,
             bar_time="2024-01-01T04:00:00",
             pending_decision=decision,
@@ -460,7 +462,7 @@ class TestPendingDecision:
 
         # Bar where SL triggers AND pending close exists
         close_decision = Decision(action="close", reason="signal")
-        events = acc.process_bar_v2(
+        events, deferred = acc.process_bar_v2(
             bar_high=98, bar_low=90,  # low=90 < 95 = SL level
             bar_open=95, bar_close=97,
             bar_time="2024-01-01T04:00:00",

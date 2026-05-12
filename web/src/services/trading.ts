@@ -29,6 +29,7 @@ export interface TradingTask {
   loss_count: number;
   last_bar_time: string | null;
   last_bar_close: number | null;
+  bars_held: number;
 }
 
 export interface TradingTaskList {

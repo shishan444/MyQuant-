@@ -18,7 +18,7 @@ describe("MetricsDashboard", () => {
   // --- PnL formatting ---
   it("renders Total PnL with currency format", () => {
     render(<MetricsDashboard metrics={mockTradingMetrics} initialCash={100000} />);
-    expect(screen.getByText("Total PnL")).toBeInTheDocument();
+    expect(screen.getByText("总盈亏")).toBeInTheDocument();
     expect(screen.getByText("$2,000")).toBeInTheDocument();
   });
 
@@ -41,7 +41,7 @@ describe("MetricsDashboard", () => {
   // --- Return percentage ---
   it("renders Return with percent format", () => {
     render(<MetricsDashboard metrics={mockTradingMetrics} initialCash={100000} />);
-    expect(screen.getByText("Return")).toBeInTheDocument();
+    expect(screen.getByText("收益率")).toBeInTheDocument();
     // total_return_pct=2.0 -> formatPercent(2.0/100) = "+2.0%"
     expect(screen.getByText("+2.0%")).toBeInTheDocument();
   });
@@ -85,13 +85,13 @@ describe("MetricsDashboard", () => {
   it("renders Trades with W/L format", () => {
     render(<MetricsDashboard metrics={mockTradingMetrics} initialCash={100000} />);
     // win_count=3, loss_count=2 -> "3W / 2L"
-    expect(screen.getByText("3W / 2L")).toBeInTheDocument();
+    expect(screen.getByText("3胜/2负")).toBeInTheDocument();
   });
 
   // --- All 6 labels present ---
   it("renders all 6 stat labels", () => {
     render(<MetricsDashboard metrics={mockTradingMetrics} initialCash={100000} />);
-    const labels = ["Total PnL", "Return", "Win Rate", "Profit Factor", "Max Drawdown", "Trades"];
+    const labels = ["总盈亏", "收益率", "胜率", "盈亏比", "最大回撤", "交易次数"];
     for (const label of labels) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }

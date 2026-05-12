@@ -69,7 +69,7 @@ def _get_task_snapshot(websocket: WebSocket, task_id: str) -> Optional[Dict[str,
             return None
         # Only send snapshot for active or recently active tasks
         status = row.get("status", "")
-        if status not in ("running", "paused", "pending", "completed"):
+        if status not in ("running", "paused", "pending", "stopped"):
             return None
         return {
             "type": "task_snapshot",
@@ -154,7 +154,7 @@ def _get_trading_snapshot(websocket: WebSocket, task_id: str) -> Optional[Dict[s
         if row is None:
             return None
         status = row.get("status", "")
-        if status not in ("running", "paused", "pending", "completed"):
+        if status not in ("running", "paused", "pending", "stopped"):
             return None
         return {
             "type": "task_snapshot",

@@ -296,6 +296,11 @@ class TradingRunner(threading.Thread):
                 task_id, sorted(dfs_by_timeframe.keys()),
             )
 
+        # Build judgment config from task settings
+        config = JudgmentConfig(
+            confidence_sizing_enabled=bool(task_row.get("confidence_sizing_enabled", 0)),
+        )
+
         # Resume: minimal replay from last_bar_time
         pending_decision: Optional[Decision] = None
         last_bar_time = task_row.get("last_bar_time")
@@ -307,6 +312,7 @@ class TradingRunner(threading.Thread):
             pending_decision = self._min_replay(
                 account, sig_set, df, start_idx, task_id, controller,
                 save_paper_trade, timeframe, pending_decision,
+                config=config,
             )
 
         # Save state after replay
@@ -316,7 +322,6 @@ class TradingRunner(threading.Thread):
         # Main loop
         bar_interval = _BAR_SECONDS.get(timeframe, 86400)
         poll_wait = min(bar_interval, 60)
-        config = JudgmentConfig()
 
         # MTF: track last refresh time per timeframe for throttled refresh
         now_utc = pd.Timestamp.now(tz="UTC")
@@ -446,9 +451,11 @@ class TradingRunner(threading.Thread):
         self, account, sig_set, df, start_idx, task_id,
         controller, save_trade_fn, timeframe,
         initial_pending: Optional[Decision] = None,
+        config: Optional[JudgmentConfig] = None,
     ) -> Optional[Decision]:
         """Replay bars from start_idx, return last pending decision."""
-        config = JudgmentConfig()
+        if config is None:
+            config = JudgmentConfig()
         pending: Optional[Decision] = initial_pending
 
         for i in range(start_idx, len(df)):

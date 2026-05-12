@@ -16,7 +16,7 @@ _RATE_PER_8H = 0.001
 
 _HOURS_PER_BAR = {
     "1m": 1 / 60, "5m": 5 / 60, "15m": 0.25, "30m": 0.5,
-    "1h": 1, "4h": 4, "1d": 24, "3d": 72,
+    "1h": 1, "2h": 2, "4h": 4, "1d": 24, "3d": 72,
 }
 
 
@@ -37,18 +37,21 @@ class VirtualAccount:
         init_cash: float = 100_000.0,
         fee: float = 0.001,
         slippage: float = 0.0,
+        leverage: Optional[int] = None,
+        direction: Optional[str] = None,
+        timeframe: Optional[str] = None,
     ):
         self._init_cash = init_cash
         self._fee = fee
         self._slippage = slippage
 
-        # Risk parameters from DNA
-        self._leverage: int = dna.risk_genes.leverage
-        self._direction: str = dna.risk_genes.direction
+        # Risk parameters: user selection overrides DNA defaults
+        self._leverage: int = leverage if leverage is not None else dna.risk_genes.leverage
+        self._direction: str = direction if direction is not None else dna.risk_genes.direction
         self._position_size: float = dna.risk_genes.position_size
         self._stop_loss: float = dna.risk_genes.stop_loss or 0.0
         self._take_profit: Optional[float] = dna.risk_genes.take_profit
-        self._timeframe: str = dna.execution_genes.timeframe
+        self._timeframe: str = timeframe or dna.execution_genes.timeframe
 
         # Cumulative stats from prior sessions (for resume)
         self._prior_trades: int = 0
@@ -143,6 +146,8 @@ class VirtualAccount:
             "quantity": trade.quantity,
             "pnl": trade.pnl,
             "exit_reason": reason,
+            "fee_paid": close_fee,
+            "slippage_paid": slippage_cost,
         }
 
     def _open_position(self, side: str, price: float, size_pct: float = 0.0) -> dict:
@@ -165,6 +170,8 @@ class VirtualAccount:
             "side": side,
             "entry_price": price,
             "quantity": quantity,
+            "fee_paid": open_fee,
+            "slippage_paid": open_slippage,
         }
 
     def _add_position(self, price: float, target_pct: float = 0.0) -> dict:
@@ -176,7 +183,11 @@ class VirtualAccount:
         if gap <= 0:
             return {"type": "add_skipped", "reason": "already_at_target"}
         equity = self._equity(price)
-        add_value = min(equity * gap, self.balance)  # don't exceed available balance
+        # Reserve fee+slippage space to prevent negative balance
+        # fee = add_value * cost_rate * leverage, so add_value * (1 + cost_rate * leverage) <= balance
+        est_cost_rate = self._fee + self._slippage
+        available = self.balance / (1.0 + est_cost_rate * self._leverage)
+        add_value = min(equity * gap, available)
         if add_value <= 0:
             return {"type": "add_skipped", "reason": "insufficient_balance"}
         add_qty = add_value * self._leverage / price
@@ -195,11 +206,13 @@ class VirtualAccount:
             "price": price,
             "quantity_added": add_qty,
             "new_entry_price": new_ep,
+            "fee_paid": add_fee,
+            "slippage_paid": add_slippage,
         }
 
     def _reduce_position(self, price: float) -> dict:
         pos = self.position
-        reduce_frac = min(self._position_size, 0.5)  # max 50% per reduce
+        reduce_frac = 0.5  # reduce 50% per reduce signal
         reduce_qty = pos.quantity * reduce_frac
         if reduce_qty <= 0:
             return {"type": "reduce_skipped", "reason": "zero_quantity"}
@@ -219,6 +232,8 @@ class VirtualAccount:
             "price": price,
             "quantity_reduced": reduce_qty,
             "pnl": reduce_pnl - reduce_fee - reduce_slippage,
+            "fee_paid": reduce_fee,
+            "slippage_paid": reduce_slippage,
         }
         if pos.quantity < 1e-8:
             # Fully closed via reduce: deduct remaining open_cost
@@ -369,11 +384,15 @@ class VirtualAccount:
         bar_close: float,
         bar_time: str,
         pending_decision: Optional[Decision] = None,
-    ) -> list:
+    ) -> tuple[list, Optional[Decision]]:
         """Process one bar atomically.
 
         Order: check_sl_tp -> check_liquidation -> execute_decision
                -> apply_funding -> take_snapshot.
+
+        Returns (events, deferred_decision). deferred_decision is non-None when
+        SL/TP/liquidation closed the position and the pending open decision should
+        be deferred to the next bar.
         """
         events = []
         position_closed = False
@@ -389,8 +408,13 @@ class VirtualAccount:
             events.append(self._close_position(bar_open, "liquidation"))
             position_closed = True
 
-        # Step 3: Execute pending decision (skip if SL/TP/liquidation closed)
-        if not position_closed and pending_decision is not None:
+        # Step 3: Execute pending decision
+        deferred: Optional[Decision] = None
+        if position_closed and pending_decision is not None:
+            # SL/TP/liquidation closed position; defer open decisions to next bar
+            if pending_decision.action == "open":
+                deferred = pending_decision
+        elif pending_decision is not None:
             events.extend(self.execute_decision(pending_decision, bar_open))
 
         # Step 4: Funding cost
@@ -399,4 +423,4 @@ class VirtualAccount:
         # Step 5: Snapshot
         self.take_snapshot(bar_time, bar_close)
 
-        return events
+        return events, deferred

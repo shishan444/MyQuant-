@@ -233,6 +233,7 @@ class TestRunnerStatePersistence:
         # Restore
         acc2 = VirtualAccount(dna, init_cash=100000)
         runner._restore_account_state(acc2, row)
+        runner._restore_balance_and_position(acc2, row)
         assert acc2.balance == 100000
         assert acc2.position is None
 
@@ -270,6 +271,7 @@ class TestRunnerStatePersistence:
         # Restore
         acc2 = VirtualAccount(dna, init_cash=100000, fee=0.0)
         runner._restore_account_state(acc2, row)
+        runner._restore_balance_and_position(acc2, row)
         assert acc2.position is not None
         assert acc2.position.side == "long"
         assert acc2.position.entry_price == 100.0
