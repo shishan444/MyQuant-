@@ -21,8 +21,10 @@ from core.data.updater import update_market_data
 from core.data.mtf_loader import load_mtf_data
 from core.trading.account import VirtualAccount
 from core.trading.position import Position
-from core.trading.types import BarSignals, Decision, JudgmentConfig
+from core.trading.types import BarSignals, Decision, JudgmentConfig, PositionPlan
 from core.trading.judgment import evaluate
+from core.prediction import PriceRangePredictor
+from core.prediction.genes import PredictionDNA
 
 logger = get_logger("TRADING_RUNNER")
 
@@ -301,6 +303,11 @@ class TradingRunner(threading.Thread):
             confidence_sizing_enabled=bool(task_row.get("confidence_sizing_enabled", 0)),
         )
 
+        # Initialize prediction system
+        predictor = self._init_predictor(df, task_row)
+        current_plan: Optional[PositionPlan] = None
+        prev_prediction = None
+
         # Resume: minimal replay from last_bar_time
         pending_decision: Optional[Decision] = None
         last_bar_time = task_row.get("last_bar_time")
@@ -309,10 +316,10 @@ class TradingRunner(threading.Thread):
             start_idx = self._find_replay_start(df, last_bar_time)
             # Restore pending_decision from DB before replay
             pending_decision = self._restore_pending_decision(task_row)
-            pending_decision = self._min_replay(
+            pending_decision, current_plan = self._min_replay(
                 account, sig_set, df, start_idx, task_id, controller,
                 save_paper_trade, timeframe, pending_decision,
-                config=config,
+                config=config, predictor=predictor, dna=dna,
             )
 
         # Save state after replay
@@ -373,6 +380,11 @@ class TradingRunner(threading.Thread):
                         if last_bar_time is None and created_at and ts.isoformat() < created_at:
                             continue
 
+                        # Predict price range for this bar
+                        prediction = None
+                        if predictor is not None:
+                            prediction = predictor.predict(new_df, i)
+
                         # Execute pending decision at bar open
                         events, deferred = account.process_bar_v2(
                             bar_high=float(row["high"]),
@@ -381,11 +393,37 @@ class TradingRunner(threading.Thread):
                             bar_close=float(row["close"]),
                             bar_time=ts.isoformat(),
                             pending_decision=pending_decision,
+                            position_plan=current_plan,
+                            prediction_result=prediction,
                         )
                         self._log_events(
                             save_paper_trade, task_id, ts.isoformat(), events,
                         )
                         pending_decision = None
+
+                        # Observe previous bar's actual result
+                        if predictor is not None and prev_prediction is not None:
+                            prev_row = new_df.iloc[i - 1] if i > 0 else None
+                            if prev_row is not None:
+                                predictor.observe(
+                                    float(prev_row["high"]),
+                                    float(prev_row["low"]),
+                                    prev_prediction,
+                                )
+                        prev_prediction = prediction
+
+                        # Manage PositionPlan lifecycle
+                        for ev in events:
+                            if ev.get("type") == "position_opened" and prediction is not None:
+                                current_plan = PositionPlan.from_prediction(
+                                    prediction=prediction,
+                                    target_pct=dna.risk_genes.position_size,
+                                    side=ev["side"],
+                                    entry_price=ev["entry_price"],
+                                    stop_loss=dna.risk_genes.stop_loss or 0.05,
+                                )
+                            elif ev.get("type") == "position_closed":
+                                current_plan = None
 
                         # If SL/TP deferred an open decision, preserve it
                         if deferred is not None:
@@ -415,6 +453,30 @@ class TradingRunner(threading.Thread):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _init_predictor(self, df, task_row: dict):
+        """Initialize PriceRangePredictor with stored or default DNA."""
+        import json as _json
+        pred_dna_json = task_row.get("prediction_dna_json")
+        try:
+            if pred_dna_json:
+                pred_dna = PredictionDNA.from_json(pred_dna_json)
+            else:
+                pred_dna = PredictionDNA(
+                    omega=1e-5, alpha=0.10, beta=0.80,
+                    k_base=0.8, k_min=0.3,
+                    factor_weights={},
+                    short_window=15, mid_window=60, long_window=200,
+                )
+            predictor = PriceRangePredictor(pred_dna)
+            n_warmup = min(100, len(df) // 2)
+            if n_warmup > 0:
+                predictor.warmup(df, n_bars=n_warmup)
+            return predictor
+        except Exception:
+            logger.warning("Failed to init predictor, running without prediction",
+                         exc_info=True)
+            return None
 
     def _filter_forming_bar(self, df, timeframe: str):
         """Exclude incomplete (forming) bar."""
@@ -452,16 +514,28 @@ class TradingRunner(threading.Thread):
         controller, save_trade_fn, timeframe,
         initial_pending: Optional[Decision] = None,
         config: Optional[JudgmentConfig] = None,
-    ) -> Optional[Decision]:
-        """Replay bars from start_idx, return last pending decision."""
+        predictor=None,
+        dna=None,
+    ) -> tuple:
+        """Replay bars from start_idx, return (pending_decision, current_plan)."""
         if config is None:
             config = JudgmentConfig()
         pending: Optional[Decision] = initial_pending
+        current_plan: Optional[PositionPlan] = None
+        prev_prediction = None
 
         for i in range(start_idx, len(df)):
             controller.check_stop()
             row = df.iloc[i]
             ts = df.index[i]
+
+            # Predict if predictor available
+            prediction = None
+            if predictor is not None:
+                try:
+                    prediction = predictor.predict(df, i)
+                except Exception:
+                    pass
 
             events, deferred = account.process_bar_v2(
                 bar_high=float(row["high"]),
@@ -470,9 +544,35 @@ class TradingRunner(threading.Thread):
                 bar_close=float(row["close"]),
                 bar_time=ts.isoformat(),
                 pending_decision=pending,
+                position_plan=current_plan,
+                prediction_result=prediction,
             )
             self._log_events(save_trade_fn, task_id, ts.isoformat(), events)
             pending = deferred  # preserve deferred open decision
+
+            # Observe previous prediction
+            if predictor is not None and prev_prediction is not None:
+                prev_row = df.iloc[i - 1] if i > 0 else None
+                if prev_row is not None:
+                    predictor.observe(
+                        float(prev_row["high"]), float(prev_row["low"]),
+                        prev_prediction,
+                    )
+            prev_prediction = prediction
+
+            # Manage PositionPlan lifecycle
+            for ev in events:
+                if ev.get("type") == "position_opened" and prediction is not None and dna is not None:
+                    current_plan = PositionPlan.from_prediction(
+                        prediction=prediction,
+                        target_pct=dna.risk_genes.position_size,
+                        side=ev["side"],
+                        entry_price=ev["entry_price"],
+                        stop_loss=dna.risk_genes.stop_loss or 0.05,
+                    )
+                elif ev.get("type") == "position_closed":
+                    current_plan = None
+
             if pending is not None:
                 continue  # skip evaluate to preserve deferred decision
 
@@ -492,7 +592,7 @@ class TradingRunner(threading.Thread):
                     i + 1, len(df), task_id,
                 )
 
-        return pending
+        return pending, current_plan
 
     def _load_data(self, symbol: str, timeframe: str):
         from core.data.storage import load_parquet

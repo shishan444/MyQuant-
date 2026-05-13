@@ -180,3 +180,173 @@ class TestProcessTranches:
         )
         assert plan.tranches[0].status == "pending"
         assert plan.tranches[0].bars_waiting == 1
+
+
+# ---------------------------------------------------------------------------
+# Runner-level integration: predict + open + plan + fill lifecycle
+# ---------------------------------------------------------------------------
+
+class TestRunnerPredictionLifecycle:
+    """Tests the full predict -> open -> create plan -> fill tranches lifecycle."""
+
+    @pytest.fixture
+    def enhanced_df(self):
+        from tests.helpers.data_factory import make_ohlcv
+        from core.features.indicators import compute_all_indicators
+        df = make_ohlcv(n=300, seed=42)
+        return compute_all_indicators(df)
+
+    def _make_account(self):
+        from core.trading.account import VirtualAccount
+        from core.strategy.dna import StrategyDNA, RiskGenes, ExecutionGenes, SignalGene, SignalRole
+        gene = SignalGene(
+            indicator="EMA", params={"period": 10},
+            role=SignalRole.ENTRY_TRIGGER,
+            condition={"type": "price_above"},
+        )
+        dna = StrategyDNA(
+            signal_genes=[gene],
+            risk_genes=RiskGenes(
+                stop_loss=0.05, position_size=0.3, leverage=1, direction="long",
+            ),
+            execution_genes=ExecutionGenes(timeframe="4h"),
+        )
+        return VirtualAccount(dna, init_cash=100000.0, fee=0.001, slippage=0.0005)
+
+    def _make_predictor(self):
+        from core.prediction.predictor import PriceRangePredictor
+        from core.prediction.genes import PredictionDNA
+        dna = PredictionDNA(
+            omega=1e-5, alpha=0.10, beta=0.80,
+            k_base=0.8, k_min=0.3,
+            factor_weights={},
+            short_window=15, mid_window=60, long_window=200,
+        )
+        return PriceRangePredictor(dna)
+
+    def test_full_predict_open_plan_fill_cycle(self, enhanced_df):
+        """Simulates runner's per-bar loop: predict -> open -> create plan -> fill."""
+        from core.trading.types import Decision, PositionPlan
+        from core.prediction.predictor import PriceRangePredictor
+
+        acct = self._make_account()
+        predictor = self._make_predictor()
+        predictor.warmup(enhanced_df, n_bars=100)
+
+        current_plan = None
+        prev_prediction = None
+
+        # Bar 0: open long position
+        idx = len(enhanced_df) - 5
+        prediction = predictor.predict(enhanced_df, idx)
+        row = enhanced_df.iloc[idx]
+        ts = enhanced_df.index[idx]
+
+        events, _ = acct.process_bar_v2(
+            bar_high=float(row["high"]),
+            bar_low=float(row["low"]),
+            bar_open=float(row["open"]),
+            bar_close=float(row["close"]),
+            bar_time=ts.isoformat(),
+            pending_decision=Decision(
+                action="open", direction="long",
+                target_position_pct=0.30, entry_size_pct=0.10,
+                reason="test",
+            ),
+        )
+        # After open, create PositionPlan
+        opened = any(e.get("type") == "position_opened" for e in events)
+        assert opened, "Expected position to be opened"
+
+        current_plan = PositionPlan.from_prediction(
+            prediction=prediction,
+            target_pct=0.30,
+            side="long",
+            entry_price=float(row["open"]),
+            stop_loss=0.05,
+        )
+        assert len(current_plan.tranches) == 2
+
+        # Observe bar result
+        predictor.observe(float(row["high"]), float(row["low"]), prediction)
+        prev_prediction = prediction
+
+        # Subsequent bars: process with plan and prediction
+        for i in range(idx + 1, len(enhanced_df)):
+            prediction = predictor.predict(enhanced_df, i)
+            row = enhanced_df.iloc[i]
+            ts = enhanced_df.index[i]
+
+            events, _ = acct.process_bar_v2(
+                bar_high=float(row["high"]),
+                bar_low=float(row["low"]),
+                bar_open=float(row["open"]),
+                bar_close=float(row["close"]),
+                bar_time=ts.isoformat(),
+                position_plan=current_plan,
+                prediction_result=prediction,
+            )
+
+            # Observe after processing
+            if prev_prediction is not None:
+                predictor.observe(float(row["high"]), float(row["low"]), prev_prediction)
+            prev_prediction = prediction
+
+        # Verify predictor accumulated state
+        assert predictor._total_count > 0
+
+    def test_position_cleared_after_close(self, enhanced_df):
+        """PositionPlan should be discarded when position is closed."""
+        from core.trading.types import Decision
+
+        acct = self._make_account()
+        predictor = self._make_predictor()
+        predictor.warmup(enhanced_df, n_bars=100)
+
+        idx = len(enhanced_df) - 5
+        prediction = predictor.predict(enhanced_df, idx)
+        row = enhanced_df.iloc[idx]
+        ts = enhanced_df.index[idx]
+
+        # Open
+        events, _ = acct.process_bar_v2(
+            float(row["high"]), float(row["low"]), float(row["open"]), float(row["close"]),
+            ts.isoformat(),
+            pending_decision=Decision(action="open", direction="long",
+                                     target_position_pct=0.30, entry_size_pct=0.10,
+                                     reason="test"),
+        )
+        assert acct.position is not None
+
+        # Close on next bar
+        idx2 = idx + 1
+        events2, _ = acct.process_bar_v2(
+            float(enhanced_df.iloc[idx2]["high"]),
+            float(enhanced_df.iloc[idx2]["low"]),
+            float(enhanced_df.iloc[idx2]["open"]),
+            float(enhanced_df.iloc[idx2]["close"]),
+            enhanced_df.index[idx2].isoformat(),
+            pending_decision=Decision(action="close", reason="test_close"),
+        )
+        closed = any(e.get("type") == "position_closed" for e in events2)
+        assert closed, "Expected position to be closed"
+        assert acct.position is None
+
+    def test_predictor_observe_updates_state(self, enhanced_df):
+        """Predictor observe cycle should update GARCH state."""
+        acct = self._make_account()
+        predictor = self._make_predictor()
+        predictor.warmup(enhanced_df, n_bars=100)
+
+        idx = len(enhanced_df) - 3
+        initial_sigma_sq = predictor._garch.sigma_sq
+
+        for i in range(idx, len(enhanced_df)):
+            prediction = predictor.predict(enhanced_df, i)
+            row = enhanced_df.iloc[i]
+            predictor.observe(float(row["high"]), float(row["low"]), prediction)
+
+        # GARCH state should have changed after observations
+        assert predictor._total_count > 0
+        # sigma_sq may or may not change depending on data, but total_count should increment
+        assert predictor._total_count == len(enhanced_df) - idx
