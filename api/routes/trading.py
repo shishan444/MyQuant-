@@ -66,6 +66,7 @@ def _task_to_response(row: dict) -> PaperTradingTaskResponse:
         last_bar_close=row.get("last_bar_close"),
         execution_model=row.get("execution_model", "v1"),
         confidence_sizing_enabled=bool(row.get("confidence_sizing_enabled", 0)),
+        prediction_dna_json=row.get("prediction_dna_json"),
     )
 
 
@@ -95,6 +96,7 @@ def create_task(
         score_template=body.score_template,
         strategy_name=body.strategy_name,
         confidence_sizing_enabled=body.confidence_sizing_enabled,
+        prediction_dna_json=body.prediction_dna_json,
     )
     row = get_paper_trading_task(db_path, task_id)
     return _task_to_response(row)
@@ -209,6 +211,7 @@ def restart_task(
         dna_json=row["dna_json"],
         score_template=row.get("score_template", "explorer"),
         confidence_sizing_enabled=bool(row.get("confidence_sizing_enabled", 0)),
+        prediction_dna_json=row.get("prediction_dna_json"),
     )
     new_row = get_paper_trading_task(db_path, new_task_id)
     return _task_to_response(new_row)

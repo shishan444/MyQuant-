@@ -453,6 +453,7 @@ class PaperTradingTaskCreate(BaseModel):
     score_template: str = Field(default="explorer")
     strategy_name: Optional[str] = None
     confidence_sizing_enabled: bool = False
+    prediction_dna_json: Optional[str] = Field(default=None, description="PredictionDNA as JSON string")
 
 
 class PaperTradingTaskResponse(BaseModel):
@@ -491,6 +492,7 @@ class PaperTradingTaskResponse(BaseModel):
     # Execution model
     execution_model: str = "v1"
     confidence_sizing_enabled: bool = False
+    prediction_dna_json: Optional[str] = None
 
 
 class PaperTradingTaskListResponse(BaseModel):

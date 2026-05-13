@@ -309,6 +309,11 @@ def init_db_ext(db_path: Path) -> None:
         if 17 not in applied:
             _record_version(conn, 17)
 
+        # 17. Prediction DNA column (migration 018)
+        _apply_prediction_dna_column(conn)
+        if 18 not in applied:
+            _record_version(conn, 18)
+
         conn.commit()
     finally:
         conn.close()
@@ -440,6 +445,18 @@ def _apply_confidence_sizing_column(conn: sqlite3.Connection) -> None:
         )
 
 
+def _apply_prediction_dna_column(conn: sqlite3.Connection) -> None:
+    """Add prediction_dna_json column to paper_trading_task (idempotent)."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(paper_trading_task)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+    if "prediction_dna_json" not in existing:
+        conn.execute(
+            "ALTER TABLE paper_trading_task ADD COLUMN prediction_dna_json TEXT"
+        )
+
+
 def _create_equity_snapshot_table(conn: sqlite3.Connection) -> None:
     """Create paper_equity_snapshot table (idempotent)."""
     conn.execute("""
@@ -475,6 +492,7 @@ def save_paper_trading_task(
     score_template: str = "explorer",
     strategy_name: Optional[str] = None,
     confidence_sizing_enabled: bool = False,
+    prediction_dna_json: Optional[str] = None,
 ) -> None:
     now = _now()
     with _connect(db_path) as conn:
@@ -483,12 +501,12 @@ def save_paper_trading_task(
                (task_id, status, strategy_name, symbol, timeframe,
                 initial_cash, fee, leverage, direction, dna_json,
                 score_template, created_at, updated_at, balance,
-                execution_model, confidence_sizing_enabled)
-               VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?)""",
+                execution_model, confidence_sizing_enabled, prediction_dna_json)
+               VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2', ?, ?)""",
             (task_id, strategy_name, symbol, timeframe,
              initial_cash, fee, leverage, direction, dna_json,
              score_template, now, now, initial_cash,
-             int(confidence_sizing_enabled)),
+             int(confidence_sizing_enabled), prediction_dna_json),
         )
         conn.commit()
 
@@ -508,7 +526,7 @@ _ALLOWED_COLUMNS = frozenset({
     "position_funding", "position_open_cost", "balance", "unrealized_pnl",
     "total_trades", "total_pnl", "win_count", "loss_count", "bars_held",
     "last_bar_time", "last_bar_close", "execution_model", "pending_decision_json",
-    "updated_at",
+    "prediction_dna_json", "updated_at",
 })
 
 
