@@ -65,6 +65,69 @@ class BarSignals:
     direction: float = 1.0  # +1 long, -1 short
     confidence: float = 1.0  # MTF confidence [0.1, 1.0], default 1.0 (no effect)
 
+@dataclass
+class Tranche:
+    """Single limit-order tranche in a PositionPlan."""
+
+    price_level: float
+    size_pct: float
+    status: str = "pending"  # "pending" | "filled" | "cancelled"
+    bars_waiting: int = 0
+
+
+@dataclass
+class PositionPlan:
+    """Position building plan with multiple tranches."""
+
+    tranches: list  # List[Tranche]
+    target_pct: float
+    max_wait_bars: int = 5
+    max_chase_pct: float = 0.5
+
+    @classmethod
+    def from_prediction(
+        cls,
+        prediction,
+        target_pct: float,
+        side: str,
+        entry_price: float,
+        stop_loss: float,
+    ) -> PositionPlan:
+        """Create a plan from a PredictionResult.
+
+        Creates 2 limit-order tranches:
+        - Long: at predicted_low + width*0.2 and predicted_low
+        - Short: at predicted_high - width*0.2 and predicted_high
+        """
+        remaining_pct = target_pct * 0.67
+        size_per_tranche = remaining_pct / 2
+
+        if side == "long":
+            tranches = [
+                Tranche(
+                    price_level=prediction.low + prediction.width * 0.2,
+                    size_pct=size_per_tranche,
+                ),
+                Tranche(
+                    price_level=prediction.low,
+                    size_pct=size_per_tranche,
+                ),
+            ]
+        else:
+            tranches = [
+                Tranche(
+                    price_level=prediction.high - prediction.width * 0.2,
+                    size_pct=size_per_tranche,
+                ),
+                Tranche(
+                    price_level=prediction.high,
+                    size_pct=size_per_tranche,
+                ),
+            ]
+
+        return cls(tranches=tranches, target_pct=target_pct)
+
+
     @staticmethod
     def from_signal_set(sig_set, idx: int) -> BarSignals:
         """Extract signals for a specific bar index from a SignalSet."""

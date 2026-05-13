@@ -117,22 +117,7 @@ def evaluate(
             )
         return Decision(action="hold", reason="already at target position")
 
-    # Rule 5: no signal -> continue filling if profitable (limited by max_fill_bars)
-    if not signals.entry and not signals.exit and not signals.add and not signals.reduce:
-        if (
-            state.has_position
-            and state.actual_position_pct < target_pct
-            and state.unrealized_pnl > 0
-            and state.position_bars_held < config.max_fill_bars
-        ):
-            return Decision(
-                action="add",
-                direction=state.position_side,
-                target_position_pct=target_pct,
-                reason=f"continue_fill: {state.actual_position_pct:.1%} < {target_pct:.1%}",
-            )
-        return HOLD
-
+    # No signal: return hold (PositionPlan handles fill logic now)
     return HOLD
 
 

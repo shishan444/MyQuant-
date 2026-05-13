@@ -304,6 +304,65 @@ class VirtualAccount:
         self.position.cumulative_funding += cost
 
     # ------------------------------------------------------------------
+    # Tranche processing (PositionPlan)
+    # ------------------------------------------------------------------
+
+    def _process_tranches(self, plan, bar_high, bar_low, bar_open, prediction):
+        """Process pending tranches in a PositionPlan."""
+        events = []
+        if self.position is None:
+            return events
+
+        entry_price = self.position.entry_price
+        max_chase_price = entry_price * (1 + self._stop_loss * plan.max_chase_pct)
+
+        for tranche in plan.tranches:
+            if tranche.status != "pending":
+                continue
+
+            # Check if bar touches the tranche price level
+            touched = False
+            if self.position.side == "long":
+                touched = bar_low <= tranche.price_level <= bar_high
+            else:
+                touched = bar_low <= tranche.price_level <= bar_high
+
+            if touched:
+                # Fill tranche: add to position
+                current_pct = self._actual_position_pct(bar_open)
+                target_after_add = current_pct + tranche.size_pct
+                event = self._add_position(bar_open, target_after_add)
+                events.append(event)
+                tranche.status = "filled"
+            else:
+                # Not touched: increment wait counter
+                tranche.bars_waiting += 1
+
+                # Check chase: update price level if waiting too long
+                if (tranche.bars_waiting >= plan.max_wait_bars
+                        and prediction is not None):
+                    if self.position.side == "long":
+                        new_price = prediction.low + prediction.width * 0.2
+                        new_price = min(new_price, max_chase_price)
+                        tranche.price_level = max(tranche.price_level, new_price)
+                    else:
+                        new_price = prediction.high - prediction.width * 0.2
+                        min_chase = entry_price * (1 - self._stop_loss * plan.max_chase_pct)
+                        new_price = max(new_price, min_chase)
+                        tranche.price_level = min(tranche.price_level, new_price)
+                    tranche.bars_waiting = 0
+
+                # Cancel if beyond chase limit
+                if self.position.side == "long" and tranche.price_level > max_chase_price:
+                    tranche.status = "cancelled"
+                elif self.position.side == "short":
+                    min_chase = entry_price * (1 - self._stop_loss * plan.max_chase_pct)
+                    if tranche.price_level < min_chase:
+                        tranche.status = "cancelled"
+
+        return events
+
+    # ------------------------------------------------------------------
     # Decision execution
     # ------------------------------------------------------------------
 
@@ -384,6 +443,8 @@ class VirtualAccount:
         bar_close: float,
         bar_time: str,
         pending_decision: Optional[Decision] = None,
+        position_plan=None,
+        prediction_result=None,
     ) -> tuple[list, Optional[Decision]]:
         """Process one bar atomically.
 
@@ -417,10 +478,17 @@ class VirtualAccount:
         elif pending_decision is not None:
             events.extend(self.execute_decision(pending_decision, bar_open))
 
-        # Step 4: Funding cost
+        # Step 4: Process pending tranches (PositionPlan)
+        if self.position is not None and position_plan is not None:
+            tranche_events = self._process_tranches(
+                position_plan, bar_high, bar_low, bar_open, prediction_result,
+            )
+            events.extend(tranche_events)
+
+        # Step 5: Funding cost
         self.apply_funding(bar_close)
 
-        # Step 5: Snapshot
+        # Step 6: Snapshot
         self.take_snapshot(bar_time, bar_close)
 
         return events, deferred
