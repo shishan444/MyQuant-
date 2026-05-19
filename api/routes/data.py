@@ -556,9 +556,10 @@ def get_chart_indicators(
     if boll_enabled:
         try:
             bb_cols = _compute_indicator(df, "BB", {"period": boll_period, "std": boll_std})
-            upper_col = f"bb_upper_{boll_period}_{boll_std}"
-            middle_col = f"bb_middle_{boll_period}_{boll_std}"
-            lower_col = f"bb_lower_{boll_period}_{boll_std}"
+            std_str = str(boll_std).replace(".0", "")
+            upper_col = f"bb_upper_{boll_period}_{std_str}"
+            middle_col = f"bb_middle_{boll_period}_{std_str}"
+            lower_col = f"bb_lower_{boll_period}_{std_str}"
             if all(col in bb_cols for col in [upper_col, middle_col, lower_col]):
                 result["boll"] = {
                     "upper": [
