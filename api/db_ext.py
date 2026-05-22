@@ -314,13 +314,84 @@ def init_db_ext(db_path: Path) -> None:
         if 18 not in applied:
             _record_version(conn, 18)
 
+        # 18. Deduplicate strategies (migration 019)
+        _dedup_strategies(conn)
+        if 19 not in applied:
+            _record_version(conn, 19)
+
+        # 19. Recompute strategy names to include MTF layers (migration 020)
+        _recompute_strategy_names(conn)
+        if 20 not in applied:
+            _record_version(conn, 20)
+
         conn.commit()
     finally:
         conn.close()
 
 
 # ===================================================================
-# Paper Trading tables (migration 010)
+# Strategy dedup cleanup (migration 019)
+# ===================================================================
+
+def _dedup_strategies(conn: sqlite3.Connection) -> None:
+    """Remove duplicate strategies, keeping the one with the highest best_score per gene_signature."""
+    try:
+        # Find duplicates: gene_signature appears more than once
+        dup_sigs = conn.execute(
+            """SELECT gene_signature FROM strategy
+               WHERE gene_signature IS NOT NULL
+               GROUP BY gene_signature
+               HAVING COUNT(*) > 1"""
+        ).fetchall()
+        if not dup_sigs:
+            return
+
+        for (sig,) in dup_sigs:
+            # Get all rows with this signature, ordered by best_score DESC (NULLs last)
+            rows = conn.execute(
+                """SELECT strategy_id, best_score FROM strategy
+                   WHERE gene_signature = ?
+                   ORDER BY CASE WHEN best_score IS NULL THEN 1 ELSE 0 END, best_score DESC""",
+                (sig,),
+            ).fetchall()
+            # Keep the first (highest score), delete the rest
+            keep_id = rows[0][0]
+            delete_ids = [r[0] for r in rows[1:]]
+            if delete_ids:
+                placeholders = ",".join("?" * len(delete_ids))
+                conn.execute(
+                    f"DELETE FROM strategy WHERE strategy_id IN ({placeholders})",
+                    delete_ids,
+                )
+        logger.info("Deduped %d strategy signatures", len(dup_sigs))
+    except Exception:
+        logger.warning("Strategy dedup failed", exc_info=True)
+
+
+def _recompute_strategy_names(conn: sqlite3.Connection) -> None:
+    """Recompute all strategy names to include MTF layer data in the hash."""
+    try:
+        from core.strategy.dna import StrategyDNA, generate_strategy_name
+
+        rows = conn.execute(
+            "SELECT strategy_id, dna_json FROM strategy WHERE dna_json IS NOT NULL"
+        ).fetchall()
+        updated = 0
+        for strategy_id, dna_json in rows:
+            try:
+                dna = StrategyDNA.from_json(dna_json)
+                new_name = generate_strategy_name(dna)
+                conn.execute(
+                    "UPDATE strategy SET name = ? WHERE strategy_id = ?",
+                    (new_name, strategy_id),
+                )
+                updated += 1
+            except Exception:
+                continue
+        if updated:
+            logger.info("Recomputed %d strategy names", updated)
+    except Exception:
+        logger.warning("Strategy name recomputation failed", exc_info=True)
 # ===================================================================
 
 def _create_paper_trading_tables(conn: sqlite3.Connection) -> None:
@@ -810,16 +881,18 @@ def save_strategy(
     conn = _connect(db_path)
 
     # Dedup by gene_signature: keep the higher-scoring version.
-    # Only apply dedup for scored strategies (from evolution); manual saves
-    # (best_score=None) always insert so users can re-save with different tags/notes.
-    if gene_signature and best_score is not None:
+    if gene_signature:
         existing = conn.execute(
             "SELECT strategy_id, best_score FROM strategy WHERE gene_signature = ? LIMIT 1",
             (gene_signature,),
         ).fetchone()
         if existing:
             existing_id, existing_score = existing[0], existing[1]
-            if best_score is not None and existing_score is not None and best_score > existing_score:
+            new_is_better = (
+                best_score is not None
+                and (existing_score is None or best_score > existing_score)
+            )
+            if new_is_better:
                 # New strategy is better: replace the old one
                 conn.execute(
                     """UPDATE strategy SET

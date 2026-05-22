@@ -42,7 +42,7 @@ class AccountState:
 
 @dataclass
 class JudgmentConfig:
-    """Configuration for judgment rules."""
+    """Configuration for judgment rules and order management."""
 
     min_hold_bars: int = 3  # minimum bars before allowing close
     min_profit_ratio: float = 2.0  # minimum pnl / fee ratio to allow close
@@ -52,6 +52,13 @@ class JudgmentConfig:
     max_fill_bars: int = 3  # max consecutive no-signal auto-fill bars
     fee_rate: float = 0.001  # trading fee rate for min_profit calculation
     confidence_sizing_enabled: bool = False  # scale entry by MTF confidence
+
+    # Predictive order management
+    use_limit_orders: bool = False  # False=market execution, True=limit orders
+    pricing_alpha_base: float = 0.3  # base aggressiveness for limit price
+    pricing_alpha_range: float = 0.5  # confidence-adjusted range
+    pricing_min_fill_prob: float = 0.3  # minimum fill probability threshold
+    order_max_wait_bars: int = 5  # max bars before order expires
 
 
 @dataclass
@@ -64,6 +71,37 @@ class BarSignals:
     reduce: bool = False
     direction: float = 1.0  # +1 long, -1 short
     confidence: float = 1.0  # MTF confidence [0.1, 1.0], default 1.0 (no effect)
+
+    @staticmethod
+    def from_signal_set(sig_set, idx: int) -> BarSignals:
+        """Extract signals for a specific bar index from a SignalSet."""
+        raw_direction = (
+            float(sig_set.entry_direction.iloc[idx])
+            if sig_set.entry_direction is not None
+            else 1.0
+        )
+        # NaN protection: suppress entry when direction is invalid
+        entry = bool(sig_set.entries.iloc[idx])
+        if entry and math.isnan(raw_direction):
+            entry = False
+            raw_direction = 0.0
+
+        # Extract confidence if available
+        raw_confidence = 1.0
+        sig_confidence = getattr(sig_set, "confidence", None)
+        if sig_confidence is not None:
+            val = float(sig_confidence.iloc[idx])
+            raw_confidence = val if not math.isnan(val) else 1.0
+
+        return BarSignals(
+            entry=entry,
+            exit=bool(sig_set.exits.iloc[idx]),
+            add=bool(sig_set.adds.iloc[idx]),
+            reduce=bool(sig_set.reduces.iloc[idx]),
+            direction=raw_direction,
+            confidence=raw_confidence,
+        )
+
 
 @dataclass
 class Tranche:
@@ -128,32 +166,48 @@ class PositionPlan:
         return cls(tranches=tranches, target_pct=target_pct)
 
 
-    @staticmethod
-    def from_signal_set(sig_set, idx: int) -> BarSignals:
-        """Extract signals for a specific bar index from a SignalSet."""
-        raw_direction = (
-            float(sig_set.entry_direction.iloc[idx])
-            if sig_set.entry_direction is not None
-            else 1.0
-        )
-        # NaN protection: suppress entry when direction is invalid
-        entry = bool(sig_set.entries.iloc[idx])
-        if entry and math.isnan(raw_direction):
-            entry = False
-            raw_direction = 0.0
+# ---------------------------------------------------------------------------
+# Predictive order management types
+# ---------------------------------------------------------------------------
 
-        # Extract confidence if available
-        raw_confidence = 1.0
-        sig_confidence = getattr(sig_set, "confidence", None)
-        if sig_confidence is not None:
-            val = float(sig_confidence.iloc[idx])
-            raw_confidence = val if not math.isnan(val) else 1.0
 
-        return BarSignals(
-            entry=entry,
-            exit=bool(sig_set.exits.iloc[idx]),
-            add=bool(sig_set.adds.iloc[idx]),
-            reduce=bool(sig_set.reduces.iloc[idx]),
-            direction=raw_direction,
-            confidence=raw_confidence,
-        )
+@dataclass
+class Order:
+    """Predictive limit order for entry and position building."""
+
+    order_id: str
+    created_at_bar: int
+    side: str  # "long" | "short"
+    price: float  # limit price; 0 means market order (fallback)
+    size_pct: float  # target position percentage
+    source: str = "entry"  # "entry" | "add"
+    order_type: str = "limit"  # "limit" | "market"
+
+    # Prediction snapshot at creation time
+    predicted_range: tuple[float, float] = (0.0, 0.0)  # (low, high)
+    fill_probability: float = 0.0
+
+    # Lifecycle state
+    status: str = "pending"  # "pending" | "filled" | "cancelled" | "expired"
+    bars_waiting: int = 0
+    cancel_reason: str = ""
+
+
+@dataclass
+class OrderEvent:
+    """Record of an order lifecycle event."""
+
+    order_id: str
+    action: str  # "filled" | "cancelled" | "expired" | "created"
+    price: float  # execution price (for filled) or last price (for cancelled)
+    reason: str = ""
+
+
+@dataclass
+class PipelineResult:
+    """Output of DecisionPipeline.process_bar() for one bar."""
+
+    events: list  # List[dict] account events (position_opened, position_closed, etc.)
+    order_events: list  # List[OrderEvent]
+    prediction: object | None = None  # PredictionResult or None
+    pending_decision: object | None = None  # Decision or None (for exit signals)

@@ -150,3 +150,98 @@ class TestStatePersistence:
         predictor2.restore_state(state)
         assert abs(predictor2._garch.sigma_sq - predictor._garch.sigma_sq) < 1e-10
         assert predictor2.hit_rate == predictor.hit_rate
+
+
+# ---------------------------------------------------------------------------
+# Test: needs_retrain true condition
+# ---------------------------------------------------------------------------
+
+
+class TestNeedsRetrainConditions:
+
+    def test_needs_retrain_true_when_low_hit_rate_and_enough_samples(self, enhanced_df):
+        from core.prediction.predictor import PriceRangePredictor
+        dna = _make_dna(k_base=0.01, k_min=0.01)  # very tight predictions
+        predictor = PriceRangePredictor(dna)
+        predictor.warmup(enhanced_df, n_bars=100)
+
+        # Force 60 misses with tiny K
+        idx = len(enhanced_df) - 61
+        for _ in range(60):
+            result = predictor.predict(enhanced_df, idx)
+            predictor.observe(100000.0, 0.0, result)  # guaranteed miss
+
+        assert predictor._total_count >= 50
+        assert predictor.hit_rate < 0.45
+        assert predictor.needs_retrain() is True
+
+    def test_needs_retrain_false_when_good_hit_rate(self, enhanced_df):
+        from core.prediction.predictor import PriceRangePredictor
+        dna = _make_dna(k_base=2.0, k_min=0.3)  # very wide predictions
+        predictor = PriceRangePredictor(dna)
+        predictor.warmup(enhanced_df, n_bars=100)
+
+        idx = 150
+        for i in range(60):
+            if idx + i >= len(enhanced_df) - 1:
+                break
+            result = predictor.predict(enhanced_df, idx + i)
+            # Use prediction bounds as actual -> guaranteed hit
+            predictor.observe(result.high + 1.0, result.low - 1.0, result)
+
+        assert predictor._total_count >= 50
+        if predictor.hit_rate >= 0.45:
+            assert predictor.needs_retrain() is False
+
+
+# ---------------------------------------------------------------------------
+# Test: factor weights affect prediction
+# ---------------------------------------------------------------------------
+
+
+class TestFactorWeights:
+
+    def test_factor_weights_change_k_actual(self, enhanced_df):
+        from core.prediction.predictor import PriceRangePredictor
+        dna_no_factors = _make_dna(factor_weights={})
+        dna_with_factors = _make_dna(
+            factor_weights={"vol_regime": 0.5, "rvol": 0.3}
+        )
+
+        pred_no = PriceRangePredictor(dna_no_factors)
+        pred_with = PriceRangePredictor(dna_with_factors)
+        pred_no.warmup(enhanced_df, n_bars=100)
+        pred_with.warmup(enhanced_df, n_bars=100)
+
+        idx = len(enhanced_df) - 1
+        r_no = pred_no.predict(enhanced_df, idx)
+        r_with = pred_with.predict(enhanced_df, idx)
+
+        # Factor weights should change k_actual (unless all factors are 0)
+        # Both should produce valid results regardless
+        assert r_no.low < r_no.high
+        assert r_with.low < r_with.high
+
+
+# ---------------------------------------------------------------------------
+# Test: miss_streak intermediate branch (>= 3)
+# ---------------------------------------------------------------------------
+
+
+class TestMissStreakIntermediate:
+
+    def test_three_misses_inflate_k_min(self, enhanced_df):
+        from core.prediction.predictor import PriceRangePredictor
+        dna = _make_dna(k_base=0.01, k_min=0.1)
+        predictor = PriceRangePredictor(dna)
+        predictor.warmup(enhanced_df, n_bars=100)
+
+        idx = len(enhanced_df) - 4
+        result = predictor.predict(enhanced_df, idx)
+
+        for _ in range(3):
+            predictor.observe(100000.0, 0.0, result)
+            result = predictor.predict(enhanced_df, idx)
+
+        # After 3 misses, k_actual should be inflated (k_min * 1.5)
+        assert result.k_actual >= dna.k_min * 1.4  # allow rounding

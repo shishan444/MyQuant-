@@ -217,7 +217,7 @@ class TestStopLoss:
             Decision(action="open", direction="long"),
             open_price=100.0,
         )
-        events = acc.check_sl_tp(bar_high=98.0, bar_low=93.0, bar_open=97.0)
+        events = acc.check_sl_tp(bar_high=98.0, bar_low=93.0)
         assert len(events) == 1
         assert events[0]["exit_reason"] == "sl"
         assert acc.position is None
@@ -228,7 +228,7 @@ class TestStopLoss:
             Decision(action="open", direction="long"),
             open_price=100.0,
         )
-        events = acc.check_sl_tp(bar_high=99.0, bar_low=96.0, bar_open=98.0)
+        events = acc.check_sl_tp(bar_high=99.0, bar_low=96.0)
         closed = [e for e in events if e["type"] == "position_closed"]
         assert len(closed) == 0
 
@@ -238,7 +238,7 @@ class TestStopLoss:
             Decision(action="open", direction="short"),
             open_price=100.0,
         )
-        events = acc.check_sl_tp(bar_high=107.0, bar_low=102.0, bar_open=103.0)
+        events = acc.check_sl_tp(bar_high=107.0, bar_low=102.0)
         assert events[0]["exit_reason"] == "sl"
 
     def test_sl_disabled_when_zero(self):
@@ -247,7 +247,7 @@ class TestStopLoss:
             Decision(action="open", direction="long"),
             open_price=100.0,
         )
-        events = acc.check_sl_tp(bar_high=55.0, bar_low=45.0, bar_open=50.0)
+        events = acc.check_sl_tp(bar_high=55.0, bar_low=45.0)
         closed = [e for e in events if e["type"] == "position_closed"]
         assert len(closed) == 0
 
@@ -264,7 +264,7 @@ class TestTakeProfit:
             Decision(action="open", direction="long"),
             open_price=100.0,
         )
-        events = acc.check_sl_tp(bar_high=112.0, bar_low=107.0, bar_open=108.0)
+        events = acc.check_sl_tp(bar_high=112.0, bar_low=107.0)
         assert events[0]["exit_reason"] == "tp"
 
     def test_short_tp_triggers_on_low(self):
@@ -273,7 +273,7 @@ class TestTakeProfit:
             Decision(action="open", direction="short"),
             open_price=100.0,
         )
-        events = acc.check_sl_tp(bar_high=95.0, bar_low=88.0, bar_open=93.0)
+        events = acc.check_sl_tp(bar_high=95.0, bar_low=88.0)
         assert events[0]["exit_reason"] == "tp"
 
 
@@ -289,7 +289,7 @@ class TestSLTPPriority:
             Decision(action="open", direction="long"),
             open_price=100.0,
         )
-        events = acc.check_sl_tp(bar_high=115.0, bar_low=90.0, bar_open=100.0)
+        events = acc.check_sl_tp(bar_high=115.0, bar_low=90.0)
         assert events[0]["exit_reason"] == "sl"
 
 
@@ -713,3 +713,251 @@ class TestEntrySizePct:
         events = acc.execute_decision(decision, open_price=50000)
         assert events[0]["type"] == "position_opened"
         assert acc.position.margin == pytest.approx(30000, rel=0.01)
+
+
+# ---------------------------------------------------------------------------
+# Test: Fee deduction on open/close
+# ---------------------------------------------------------------------------
+
+
+class TestFeeDeduction:
+
+    def test_open_fee_deducted(self):
+        acc = _make_account(fee=0.001, position_size=0.5, leverage=1)
+        acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=0.5),
+            open_price=100.0,
+        )
+        # margin = 50000, fee = 0.001 * 500 * 100 = 50
+        assert acc.position.open_cost > 0
+        assert acc.position.open_cost == pytest.approx(50.0, rel=0.01)
+        # balance = 100000 - 50000 - 50 = 49950
+        assert acc.balance == pytest.approx(49950.0, rel=0.01)
+
+    def test_close_fee_deducted_from_pnl(self):
+        acc = _make_account(fee=0.001, position_size=1.0, leverage=1)
+        acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=1.0),
+            open_price=100.0,
+        )
+        events = acc.execute_decision(
+            Decision(action="close", reason="signal"),
+            open_price=110.0,
+        )
+        # gross pnl = 1000 * (110-100) = 10000
+        # open_fee = 0.001 * 1000 * 100 = 100
+        # close_fee = 0.001 * 1000 * 110 = 110
+        # net pnl = 10000 - 100 - 110 = 9790
+        assert events[0]["pnl"] < 10000  # less than gross
+        assert events[0]["pnl"] == pytest.approx(9790.0, rel=0.01)
+
+    def test_no_fee_when_zero(self):
+        acc = _make_account(fee=0.0, position_size=1.0, leverage=1)
+        acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=1.0),
+            open_price=100.0,
+        )
+        assert acc.position.open_cost == 0.0
+
+    def test_insufficient_balance_returns_skipped(self):
+        acc = _make_account(init_cash=1.0, fee=0.0, position_size=0.3)
+        events = acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=0.3),
+            open_price=100.0,
+        )
+        # margin = 1 * 0.3 = 0.3, quantity = 0.3/100 = 0.003, fee=0
+        # This should succeed (margin > 0), but balance becomes tiny
+        assert events[0]["type"] == "position_opened"
+
+
+# ---------------------------------------------------------------------------
+# Test: Slippage
+# ---------------------------------------------------------------------------
+
+
+class TestSlippage:
+
+    def test_slippage_on_open(self):
+        acc = _make_account(fee=0.0, slippage=0.001, position_size=1.0, leverage=1)
+        acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=1.0),
+            open_price=100.0,
+        )
+        # slippage = 0.001 * 1000 * 100 = 100
+        assert acc.position.open_cost == pytest.approx(100.0, rel=0.01)
+        # balance = 100000 - 100000 - 100 = -100 (slippage eats into margin)
+        assert acc.balance < 0  # slippage can push balance negative
+
+    def test_slippage_on_close(self):
+        acc = _make_account(fee=0.0, slippage=0.001, position_size=1.0, leverage=1)
+        acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=1.0),
+            open_price=100.0,
+        )
+        events = acc.execute_decision(
+            Decision(action="close", reason="signal"),
+            open_price=110.0,
+        )
+        # slippage_cost = 0.001 * 1000 * 110 = 110
+        assert events[0]["slippage_paid"] == pytest.approx(110.0, rel=0.01)
+
+
+# ---------------------------------------------------------------------------
+# Test: fill_order (Order-based execution)
+# ---------------------------------------------------------------------------
+
+
+class TestFillOrder:
+
+    def _make_order(self, side="long", price=100.0, size_pct=0.3, source="entry",
+                    order_type="limit"):
+        from core.trading.types import Order
+        return Order(
+            order_id="test-fill-001",
+            created_at_bar=0,
+            side=side,
+            price=price,
+            size_pct=size_pct,
+            source=source,
+            order_type=order_type,
+        )
+
+    def test_entry_order_opens_position(self):
+        acc = _make_account(fee=0.0, direction="long")
+        order = self._make_order(side="long", price=98.0, size_pct=0.3)
+        events = acc.fill_order(order)
+        assert len(events) == 1
+        assert events[0]["type"] == "position_opened"
+        assert events[0]["entry_price"] == 98.0
+        assert acc.position is not None
+        assert acc.position.side == "long"
+
+    def test_entry_order_skipped_when_has_position(self):
+        acc = _make_account(fee=0.0, direction="long")
+        acc._open_position("long", 100.0, 0.3)
+        order = self._make_order(side="long", price=95.0)
+        events = acc.fill_order(order)
+        assert len(events) == 0
+
+    def test_add_order_increases_position(self):
+        acc = _make_account(fee=0.0, direction="long", position_size=0.3)
+        acc._open_position("long", 100.0, 0.3)
+        old_qty = acc.position.quantity
+        old_margin = acc.position.margin
+
+        order = self._make_order(side="long", price=105.0, size_pct=0.3, source="add")
+        events = acc.fill_order(order)
+        assert len(events) == 1
+        assert events[0]["type"] == "position_added"
+        assert acc.position.quantity > old_qty
+        assert acc.position.margin > old_margin
+
+    def test_add_order_skipped_when_no_position(self):
+        acc = _make_account(fee=0.0)
+        order = self._make_order(side="long", price=100.0, source="add")
+        events = acc.fill_order(order)
+        assert len(events) == 0
+
+    def test_order_price_zero_raises(self):
+        """price=0 causes ZeroDivisionError in _open_position."""
+        acc = _make_account(fee=0.0, direction="long")
+        order = self._make_order(side="long", price=0.0)
+        with pytest.raises(ZeroDivisionError):
+            acc.fill_order(order)
+
+
+# ---------------------------------------------------------------------------
+# Test: ATR-based SL/TP via stored prices
+# ---------------------------------------------------------------------------
+
+
+class TestATRStopLoss:
+    """VirtualAccount with sl_price/tp_price stored in Position."""
+
+    def test_long_sl_with_stored_price(self):
+        acc = _make_account(stop_loss=0.0)
+        # Open with explicit SL price (simulating ATR mode)
+        acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=0.3),
+            open_price=100.0,
+            sl_price=96.0,  # 4 points below entry
+        )
+        assert acc.position.sl_price == 96.0
+
+        # Bar low touches SL
+        events = acc.check_sl_tp(bar_high=102, bar_low=95.0)
+        assert len(events) == 1
+        assert events[0]["exit_reason"] == "sl"
+        assert abs(events[0]["exit_price"] - 96.0) < 0.01
+
+    def test_long_tp_with_stored_price(self):
+        acc = _make_account(stop_loss=0.0)
+        acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=0.3),
+            open_price=100.0,
+            tp_price=108.0,
+        )
+        events = acc.check_sl_tp(bar_high=110.0, bar_low=99.0)
+        assert len(events) == 1
+        assert events[0]["exit_reason"] == "tp"
+        assert abs(events[0]["exit_price"] - 108.0) < 0.01
+
+    def test_short_sl_with_stored_price(self):
+        acc = _make_account(stop_loss=0.0, direction="short")
+        acc.execute_decision(
+            Decision(action="open", direction="short", target_position_pct=0.3),
+            open_price=100.0,
+            sl_price=105.0,
+        )
+        events = acc.check_sl_tp(bar_high=106.0, bar_low=98.0)
+        assert len(events) == 1
+        assert events[0]["exit_reason"] == "sl"
+        assert abs(events[0]["exit_price"] - 105.0) < 0.01
+
+    def test_no_sl_trigger_when_price_above_stored(self):
+        acc = _make_account(stop_loss=0.0)
+        acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=0.3),
+            open_price=100.0,
+            sl_price=96.0,
+        )
+        events = acc.check_sl_tp(bar_high=102, bar_low=97.0)
+        assert len(events) == 0
+
+    def test_stored_price_overrides_percentage(self):
+        """When sl_price is stored, percentage calculation is ignored."""
+        acc = _make_account(stop_loss=0.05)  # 5% SL = 95.0
+        acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=0.3),
+            open_price=100.0,
+            sl_price=98.0,  # Stored price overrides
+        )
+        # Bar low=96.5 touches stored SL (98.0) but not percentage SL (95.0)
+        events = acc.check_sl_tp(bar_high=102, bar_low=96.5)
+        assert len(events) == 1
+        assert abs(events[0]["exit_price"] - 98.0) < 0.01
+
+    def test_fill_order_with_stored_prices(self):
+        acc = _make_account(fee=0.0)
+        from core.trading.types import Order
+        order = Order(
+            order_id="test-atr-001", created_at_bar=0,
+            side="long", price=100.0, size_pct=0.3,
+            source="entry",
+        )
+        events = acc.fill_order(order, sl_price=96.0, tp_price=108.0)
+        assert events[0]["type"] == "position_opened"
+        assert acc.position.sl_price == 96.0
+        assert acc.position.tp_price == 108.0
+
+    def test_percentage_fallback_when_no_stored_price(self):
+        """When sl_price is None, falls back to percentage calculation."""
+        acc = _make_account(stop_loss=0.05)
+        acc.execute_decision(
+            Decision(action="open", direction="long", target_position_pct=0.3),
+            open_price=100.0,
+        )
+        assert acc.position.sl_price is None
+        events = acc.check_sl_tp(bar_high=102, bar_low=94.0)
+        assert len(events) == 1
+        assert abs(events[0]["exit_price"] - 95.0) < 0.01  # 100 * 0.95

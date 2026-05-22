@@ -48,10 +48,8 @@ class TaskStopRequested(Exception):
 class TaskController:
     def __init__(self) -> None:
         self._stop_event = threading.Event()
-        self.stop_reason: str = "stop"  # "stop" | "pause"
 
-    def request_stop(self, reason: str = "stop") -> None:
-        self.stop_reason = reason
+    def request_stop(self) -> None:
         self._stop_event.set()
 
     @property
@@ -180,11 +178,8 @@ class TradingRunner(threading.Thread):
                 else:
                     account = result
         except TaskStopRequested:
-            if controller.stop_reason == "pause":
-                logger.info("Trading task %s paused via controller", task_id)
-            else:
-                logger.info("Trading task %s stopped via controller", task_id)
-                self._update_status(task_id, "stopped", "user_stop")
+            logger.info("Trading task %s stopped via controller", task_id)
+            self._update_status(task_id, "stopped", "user_stop")
         except Exception:
             logger.error("Trading task %s failed", task_id, exc_info=True)
             self._update_status(task_id, "stopped", "error")
@@ -301,26 +296,33 @@ class TradingRunner(threading.Thread):
         # Build judgment config from task settings
         config = JudgmentConfig(
             confidence_sizing_enabled=bool(task_row.get("confidence_sizing_enabled", 0)),
+            use_limit_orders=bool(task_row.get("use_limit_orders", 0)),
+            pricing_alpha_base=float(task_row.get("pricing_alpha_base", 0.3)),
+            pricing_alpha_range=float(task_row.get("pricing_alpha_range", 0.5)),
+            pricing_min_fill_prob=float(task_row.get("pricing_min_fill_prob", 0.3)),
+            order_max_wait_bars=int(task_row.get("order_max_wait_bars", 5)),
         )
 
         # Initialize prediction system
         predictor = self._init_predictor(df, task_row)
-        current_plan: Optional[PositionPlan] = None
-        prev_prediction = None
 
-        # Resume: minimal replay from last_bar_time
+        # Initialize decision pipeline
+        from core.trading.pipeline import DecisionPipeline
+        pipeline = DecisionPipeline(config=config, dna_risk_genes=dna.risk_genes)
+
         pending_decision: Optional[Decision] = None
         last_bar_time = task_row.get("last_bar_time")
         if last_bar_time:
-            sig_set = dna_to_signal_set(dna, df, dfs_by_timeframe)
-            start_idx = self._find_replay_start(df, last_bar_time)
-            # Restore pending_decision from DB before replay
-            pending_decision = self._restore_pending_decision(task_row)
-            pending_decision, current_plan = self._min_replay(
-                account, sig_set, df, start_idx, task_id, controller,
-                save_paper_trade, timeframe, pending_decision,
-                config=config, predictor=predictor, dna=dna,
+            # Task has previous state -- crash recovery scenario.
+            # Per design: crash is a bug, not a state to recover from.
+            # Mark as error and stop so user can restart a fresh task.
+            logger.error(
+                "Task %s has last_bar_time=%s but is pending -- "
+                "possible crash recovery. Marking as error.",
+                task_id, last_bar_time,
             )
+            self._update_status(task_id, "stopped", "crash_recovery")
+            return
 
         # Save state after replay
         self._save_account_state(account, task_id, df, pending_decision)
@@ -380,62 +382,26 @@ class TradingRunner(threading.Thread):
                         if last_bar_time is None and created_at and ts.isoformat() < created_at:
                             continue
 
-                        # Predict price range for this bar
-                        prediction = None
-                        if predictor is not None:
-                            prediction = predictor.predict(new_df, i)
-
-                        # Execute pending decision at bar open
-                        events, deferred = account.process_bar_v2(
+                        # Delegate all decision logic to pipeline
+                        pipe_result = pipeline.process_bar(
                             bar_high=float(row["high"]),
                             bar_low=float(row["low"]),
                             bar_open=float(row["open"]),
                             bar_close=float(row["close"]),
                             bar_time=ts.isoformat(),
-                            pending_decision=pending_decision,
-                            position_plan=current_plan,
-                            prediction_result=prediction,
+                            bar_idx=i,
+                            account=account,
+                            predictor=predictor,
+                            df=new_df,
+                            sig_set=sig_set,
+                            position_size=dna.risk_genes.position_size,
+                            stop_loss_pct=dna.risk_genes.stop_loss or 0.05,
                         )
+
                         self._log_events(
-                            save_paper_trade, task_id, ts.isoformat(), events,
+                            save_paper_trade, task_id, ts.isoformat(), pipe_result.events,
                         )
-                        pending_decision = None
-
-                        # Observe previous bar's actual result
-                        if predictor is not None and prev_prediction is not None:
-                            prev_row = new_df.iloc[i - 1] if i > 0 else None
-                            if prev_row is not None:
-                                predictor.observe(
-                                    float(prev_row["high"]),
-                                    float(prev_row["low"]),
-                                    prev_prediction,
-                                )
-                        prev_prediction = prediction
-
-                        # Manage PositionPlan lifecycle
-                        for ev in events:
-                            if ev.get("type") == "position_opened" and prediction is not None:
-                                current_plan = PositionPlan.from_prediction(
-                                    prediction=prediction,
-                                    target_pct=dna.risk_genes.position_size,
-                                    side=ev["side"],
-                                    entry_price=ev["entry_price"],
-                                    stop_loss=dna.risk_genes.stop_loss or 0.05,
-                                )
-                            elif ev.get("type") == "position_closed":
-                                current_plan = None
-
-                        # If SL/TP deferred an open decision, preserve it
-                        if deferred is not None:
-                            pending_decision = deferred
-                            continue
-
-                        # Evaluate signals for next bar
-                        signals = BarSignals.from_signal_set(sig_set, i)
-                        state = account.get_state(float(row["close"]))
-                        decision = evaluate(signals, state, config)
-                        if decision.action != "hold":
-                            pending_decision = decision
+                        pending_decision = pipe_result.pending_decision
 
                     df = new_df
             except Exception:
@@ -509,91 +475,6 @@ class TradingRunner(threading.Thread):
         logger.info("Trimmed %d warmup rows with NaN indicators", first_idx)
         return df.iloc[first_idx:]
 
-    def _min_replay(
-        self, account, sig_set, df, start_idx, task_id,
-        controller, save_trade_fn, timeframe,
-        initial_pending: Optional[Decision] = None,
-        config: Optional[JudgmentConfig] = None,
-        predictor=None,
-        dna=None,
-    ) -> tuple:
-        """Replay bars from start_idx, return (pending_decision, current_plan)."""
-        if config is None:
-            config = JudgmentConfig()
-        pending: Optional[Decision] = initial_pending
-        current_plan: Optional[PositionPlan] = None
-        prev_prediction = None
-
-        for i in range(start_idx, len(df)):
-            controller.check_stop()
-            row = df.iloc[i]
-            ts = df.index[i]
-
-            # Predict if predictor available
-            prediction = None
-            if predictor is not None:
-                try:
-                    prediction = predictor.predict(df, i)
-                except Exception:
-                    pass
-
-            events, deferred = account.process_bar_v2(
-                bar_high=float(row["high"]),
-                bar_low=float(row["low"]),
-                bar_open=float(row["open"]),
-                bar_close=float(row["close"]),
-                bar_time=ts.isoformat(),
-                pending_decision=pending,
-                position_plan=current_plan,
-                prediction_result=prediction,
-            )
-            self._log_events(save_trade_fn, task_id, ts.isoformat(), events)
-            pending = deferred  # preserve deferred open decision
-
-            # Observe previous prediction
-            if predictor is not None and prev_prediction is not None:
-                prev_row = df.iloc[i - 1] if i > 0 else None
-                if prev_row is not None:
-                    predictor.observe(
-                        float(prev_row["high"]), float(prev_row["low"]),
-                        prev_prediction,
-                    )
-            prev_prediction = prediction
-
-            # Manage PositionPlan lifecycle
-            for ev in events:
-                if ev.get("type") == "position_opened" and prediction is not None and dna is not None:
-                    current_plan = PositionPlan.from_prediction(
-                        prediction=prediction,
-                        target_pct=dna.risk_genes.position_size,
-                        side=ev["side"],
-                        entry_price=ev["entry_price"],
-                        stop_loss=dna.risk_genes.stop_loss or 0.05,
-                    )
-                elif ev.get("type") == "position_closed":
-                    current_plan = None
-
-            if pending is not None:
-                continue  # skip evaluate to preserve deferred decision
-
-            # Evaluate for next bar
-            signals = BarSignals.from_signal_set(sig_set, i)
-            state = account.get_state(float(row["close"]))
-            decision = evaluate(signals, state, config)
-            if decision.action != "hold":
-                pending = decision
-
-            # Checkpoint every 500 bars
-            if (i - start_idx + 1) % 500 == 0:
-                self._save_account_state(account, task_id, df, pending)
-                self._push_position_update(account, task_id)
-                logger.info(
-                    "Replay checkpoint at bar %d/%d for task %s",
-                    i + 1, len(df), task_id,
-                )
-
-        return pending, current_plan
-
     def _load_data(self, symbol: str, timeframe: str):
         from core.data.storage import load_parquet
         path = self.data_dir / f"{symbol}_{timeframe}.parquet"
@@ -609,40 +490,12 @@ class TradingRunner(threading.Thread):
         except Exception:
             return None
 
-    def _find_replay_start(self, df, last_bar_time: Optional[str]) -> int:
-        if last_bar_time is None:
-            return 0
-        ts = last_bar_time
-        for i in range(len(df) - 1, -1, -1):
-            if df.index[i].isoformat() <= ts:
-                return i + 1
-        return 0
-
     def _restore_account_state(self, account: VirtualAccount, task: dict) -> None:
         """Restore VirtualAccount state from DB row."""
         account._prior_trades = task.get("total_trades", 0)
         account._prior_pnl = task.get("total_pnl", 0.0)
         account._prior_wins = task.get("win_count", 0)
         account._prior_losses = task.get("loss_count", 0)
-
-    def _restore_pending_decision(self, task: dict) -> Optional[Decision]:
-        """Restore pending Decision from DB row."""
-        import json
-        raw = task.get("pending_decision_json")
-        if not raw:
-            return None
-        try:
-            d = json.loads(raw)
-            return Decision(
-                action=d["action"],
-                direction=d.get("direction", ""),
-                target_position_pct=d.get("target_position_pct", 0.0),
-                entry_size_pct=d.get("entry_size_pct", 0.0),
-                reason=d.get("reason", ""),
-            )
-        except (json.JSONDecodeError, KeyError):
-            logger.warning("Failed to restore pending_decision: %s", raw)
-            return None
 
     def _restore_balance_and_position(self, account: VirtualAccount, task: dict) -> None:
         """Restore balance and position from DB row."""

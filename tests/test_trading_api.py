@@ -3,7 +3,7 @@
 Covers:
 1. DB migration creates paper_trading_task and paper_trade tables
 2. CRUD operations for paper trading tasks
-3. API routes (create, list, get, stop, pause, resume)
+3. API routes (create, list, get, stop, restart)
 4. Runner state save/restore (PositionManager <-> DB)
 """
 import json
@@ -327,48 +327,6 @@ class TestTradingAPIStateTransitions:
             update_paper_trading_task(self.db_path, task_id, status=initial_status)
             resp = client.post(f"/api/trading/tasks/{task_id}/stop")
             assert resp.status_code == expected_code
-
-    def test_pause_pending_task(self):
-        """Pausing a pending task is allowed (status not running)."""
-        from fastapi.testclient import TestClient
-        with TestClient(self.app) as client:
-            task_id = self._create_task(client)
-            resp = client.post(f"/api/trading/tasks/{task_id}/pause")
-            assert resp.status_code == 400  # can only pause running tasks
-
-    @pytest.mark.parametrize("status", ["pending", "running", "stopped"])
-    def test_resume_only_works_for_paused(self, status):
-        from fastapi.testclient import TestClient
-        from api.db_ext import update_paper_trading_task
-        with TestClient(self.app) as client:
-            task_id = self._create_task(client)
-            if status != "pending":
-                update_paper_trading_task(self.db_path, task_id, status=status)
-            resp = client.post(f"/api/trading/tasks/{task_id}/resume")
-            if status == "paused":
-                assert resp.status_code == 200
-            else:
-                assert resp.status_code == 400
-
-    def test_pause_and_resume_flow(self):
-        """Full pause/resume flow via DB manipulation."""
-        from fastapi.testclient import TestClient
-        from api.db_ext import update_paper_trading_task
-        with TestClient(self.app) as client:
-            task_id = self._create_task(client)
-
-            # Simulate running state
-            update_paper_trading_task(self.db_path, task_id, status="running")
-
-            # Pause
-            resp = client.post(f"/api/trading/tasks/{task_id}/pause")
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "paused"
-
-            # Resume
-            resp = client.post(f"/api/trading/tasks/{task_id}/resume")
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "pending"
 
     def test_trades_empty_for_new_task(self):
         from fastapi.testclient import TestClient

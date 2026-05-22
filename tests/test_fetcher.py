@@ -39,14 +39,22 @@ def _make_kline_rows(n: int = 5, base_ts: int = 1700000000000) -> list[list]:
     return rows
 
 
+def _mock_session(kline_rows: list[list]) -> MagicMock:
+    """Build a mock requests.Session that returns *kline_rows*."""
+    session = MagicMock()
+    resp = MagicMock()
+    resp.json.return_value = kline_rows
+    resp.raise_for_status = MagicMock()
+    session.get.return_value = resp
+    return session
+
+
 class TestFetchKlinesReturnsDataframe:
     """fetch_klines returns a properly structured DataFrame."""
 
-    @patch("core.data.fetcher.Client")
-    def test_returns_dataframe(self, mock_client_cls: MagicMock) -> None:
-        mock_instance = MagicMock()
-        mock_instance.futures_historical_klines.return_value = _make_kline_rows(3)
-        mock_client_cls.return_value = mock_instance
+    @patch("core.data.fetcher._build_session")
+    def test_returns_dataframe(self, mock_build: MagicMock) -> None:
+        mock_build.return_value = _mock_session(_make_kline_rows(3))
 
         df = fetch_klines(symbol="BTCUSDT", interval="4h")
 
@@ -54,11 +62,9 @@ class TestFetchKlinesReturnsDataframe:
         expected_cols = ["open", "high", "low", "close", "volume", "trades"]
         assert list(df.columns) == expected_cols
 
-    @patch("core.data.fetcher.Client")
-    def test_column_types(self, mock_client_cls: MagicMock) -> None:
-        mock_instance = MagicMock()
-        mock_instance.futures_historical_klines.return_value = _make_kline_rows(2)
-        mock_client_cls.return_value = mock_instance
+    @patch("core.data.fetcher._build_session")
+    def test_column_types(self, mock_build: MagicMock) -> None:
+        mock_build.return_value = _mock_session(_make_kline_rows(2))
 
         df = fetch_klines()
 
@@ -66,59 +72,47 @@ class TestFetchKlinesReturnsDataframe:
             assert df[col].dtype == float
         assert df["trades"].dtype == int
 
-    @patch("core.data.fetcher.Client")
-    def test_client_called_with_correct_args(self, mock_client_cls: MagicMock) -> None:
-        mock_instance = MagicMock()
-        mock_instance.futures_historical_klines.return_value = _make_kline_rows(1)
-        mock_client_cls.return_value = mock_instance
+    @patch("core.data.fetcher._build_session")
+    def test_session_called_with_correct_params(self, mock_build: MagicMock) -> None:
+        mock_session = _mock_session(_make_kline_rows(1))
+        mock_build.return_value = mock_session
 
         fetch_klines(
             symbol="ETHUSDT",
             interval="1d",
             start_str="1 year ago UTC",
-            api_key="key",
-            api_secret="secret",
         )
 
-        mock_client_cls.assert_called_once_with("key", "secret")
-        mock_instance.futures_historical_klines.assert_called_once_with(
-            symbol="ETHUSDT",
-            interval="1d",
-            start_str="1 year ago UTC",
-        )
+        mock_session.get.assert_called_once()
+        call_kwargs = mock_session.get.call_args
+        assert "ETHUSDT" in str(call_kwargs)
+        assert "1d" in str(call_kwargs)
 
 
 class TestFetchKlinesRemovesDuplicates:
     """Duplicate timestamps are deduplicated (keep=first)."""
 
-    @patch("core.data.fetcher.Client")
-    def test_removes_duplicates(self, mock_client_cls: MagicMock) -> None:
+    @patch("core.data.fetcher._build_session")
+    def test_removes_duplicates(self, mock_build: MagicMock) -> None:
         rows = _make_kline_rows(3)
-        # Insert a duplicate of row 1 with different close price
         dup_row = rows[1].copy()
-        dup_row[4] = "99999.0"  # different close
+        dup_row[4] = "99999.0"
         rows_with_dup = rows[:2] + [dup_row] + rows[2:]
 
-        mock_instance = MagicMock()
-        mock_instance.futures_historical_klines.return_value = rows_with_dup
-        mock_client_cls.return_value = mock_instance
+        mock_build.return_value = _mock_session(rows_with_dup)
 
         df = fetch_klines()
 
-        # 4 rows in, 3 rows out (duplicate removed)
         assert len(df) == 3
-        # The kept row should be the first occurrence (original, not the dup)
         assert df.iloc[1]["close"] == float(rows[1][4])
 
 
 class TestFetchKlinesDatetimeIndex:
     """The DataFrame index is a timezone-aware DatetimeIndex."""
 
-    @patch("core.data.fetcher.Client")
-    def test_creates_datetime_index(self, mock_client_cls: MagicMock) -> None:
-        mock_instance = MagicMock()
-        mock_instance.futures_historical_klines.return_value = _make_kline_rows(2)
-        mock_client_cls.return_value = mock_instance
+    @patch("core.data.fetcher._build_session")
+    def test_creates_datetime_index(self, mock_build: MagicMock) -> None:
+        mock_build.return_value = _mock_session(_make_kline_rows(2))
 
         df = fetch_klines()
 

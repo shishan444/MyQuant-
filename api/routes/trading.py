@@ -151,42 +151,6 @@ def stop_task(
     return _task_to_response(row)
 
 
-@router.post("/tasks/{task_id}/pause", response_model=PaperTradingTaskResponse)
-def pause_task(
-    task_id: str,
-    db_path: Path = Depends(get_db_path),
-) -> PaperTradingTaskResponse:
-    row = get_paper_trading_task(db_path, task_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if row["status"] != "running":
-        raise HTTPException(status_code=400, detail="Can only pause running tasks")
-
-    from core.trading.runner import get_trading_controllers
-    controller = get_trading_controllers().get(task_id)
-    if controller:
-        controller.request_stop(reason="pause")
-
-    update_paper_trading_task(db_path, task_id, status="paused")
-    row = get_paper_trading_task(db_path, task_id)
-    return _task_to_response(row)
-
-
-@router.post("/tasks/{task_id}/resume", response_model=PaperTradingTaskResponse)
-def resume_task(
-    task_id: str,
-    db_path: Path = Depends(get_db_path),
-) -> PaperTradingTaskResponse:
-    row = get_paper_trading_task(db_path, task_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if row["status"] != "paused":
-        raise HTTPException(status_code=400, detail="Can only resume paused tasks")
-    update_paper_trading_task(db_path, task_id, status="pending")
-    row = get_paper_trading_task(db_path, task_id)
-    return _task_to_response(row)
-
-
 @router.post("/tasks/{task_id}/restart", response_model=PaperTradingTaskResponse)
 def restart_task(
     task_id: str,
@@ -270,12 +234,6 @@ def delete_task(
         raise HTTPException(status_code=404, detail="Task not found")
     if row["status"] in ("running", "pending"):
         raise HTTPException(status_code=400, detail="Cannot delete active task. Stop it first.")
-    # Stop paused task's controller to prevent memory leak
-    if row["status"] == "paused":
-        from core.trading.runner import get_trading_controllers
-        ctrl = get_trading_controllers().get(task_id)
-        if ctrl is not None:
-            ctrl.request_stop("stop")
     ok = delete_paper_trading_task(db_path, task_id)
     return {"deleted": ok}
 

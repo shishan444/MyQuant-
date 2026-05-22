@@ -90,7 +90,11 @@ API 层采用"应用工厂"模式（create_app），使得测试和配置注入�
 | scoring/templates | get_template（模板获取） |
 | data/mtf_loader | load_and_prepare_df / load_mtf_data（数据加载） |
 | persistence/db | SQLite 持久化操作 |
-| trading/runner | TradingRunner（实盘/模拟交易执行器） |
+| trading/runner | TradingRunner（模拟交易执行器） |
+| trading/pipeline | DecisionPipeline（决策管线） |
+| trading/replay | ReplayRunner（历史回放） |
+| prediction/predictor | PriceRangePredictor（价格区间预测） |
+| prediction/genes | PredictionDNA（预测公式参数） |
 
 ## 源码锚点
 

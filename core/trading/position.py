@@ -8,11 +8,15 @@ Processing order per bar (mirrors engine.py order_func_nb):
 5. Reduce signal (before add, matching engine order)
 6. Add signal (weighted average entry price)
 7. Funding cost deduction
+
+DEPRECATED: PositionManager has been replaced by VirtualAccount (core/trading/account.py).
+Only test files reference this class. Do not use in new code.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import List, Optional
+import warnings
 
 
 _RATE_PER_8H = 0.001
@@ -32,6 +36,8 @@ class Position:
     margin: float
     cumulative_funding: float = 0.0
     open_cost: float = 0.0  # opening fee + slippage, deducted from pnl at close
+    sl_price: Optional[float] = None  # absolute stop-loss price (set by pipeline)
+    tp_price: Optional[float] = None  # absolute take-profit price (set by pipeline)
 
 
 @dataclass
@@ -65,6 +71,8 @@ class PositionManager:
     - Executes immediately on current bar (no 1-bar shift)
     - Applies funding cost per-bar (backtest applies post-hoc)
     - Uses explicit balance/margin tracking
+
+    DEPRECATED: Use VirtualAccount (core/trading/account.py) instead.
     """
 
     def __init__(
@@ -74,6 +82,11 @@ class PositionManager:
         fee: float = 0.001,
         slippage: float = 0.0,
     ):
+        warnings.warn(
+            "PositionManager is deprecated. Use VirtualAccount instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._init_cash = init_cash
         self._fee = fee
         self._slippage = slippage

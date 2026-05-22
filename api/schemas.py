@@ -98,6 +98,8 @@ class RiskGenesModel(BaseModel):
     position_size: float = 0.3
     leverage: int = Field(default=1, ge=1, le=10)
     direction: str = Field(default="long", pattern="^(long|short|mixed)$")
+    sl_mode: str = Field(default="pct", pattern="^(pct|atr)$")
+    atr_period: int = Field(default=14, ge=1)
 
 
 class DNAModel(BaseModel):

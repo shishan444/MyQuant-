@@ -28,7 +28,7 @@ interface CreateTaskDialogProps {
   initialCash: number;
   leverage: number;
   direction: string;
-  onConfirm: (params: { initialCash: number; leverage: number; direction: string }) => void;
+  onConfirm: (params: { initialCash: number; leverage: number; direction: string; confidenceSizingEnabled: boolean }) => void;
 }
 
 export function CreateTaskDialog({
@@ -45,6 +45,7 @@ export function CreateTaskDialog({
   const [cash, setCash] = useState(defaultCash);
   const [leverage, setLeverage] = useState(defaultLeverage);
   const [direction, setDirection] = useState(defaultDirection);
+  const [confidenceSizing, setConfidenceSizing] = useState(false);
 
   // Sync when dialog opens with new defaults
   const [prevCash, setPrevCash] = useState(defaultCash);
@@ -129,13 +130,34 @@ export function CreateTaskDialog({
                     ))}
                   </div>
                 </div>
+                <div className="col-span-2 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs text-text-muted">置信度仓位缩放</span>
+                    <p className="text-xs text-text-muted/60">根据信号置信度动态调整入场仓位大小</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setConfidenceSizing(!confidenceSizing)}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border transition-colors ${
+                      confidenceSizing
+                        ? "bg-accent-gold border-accent-gold"
+                        : "bg-bg-secondary border-border-default"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                        confidenceSizing ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>取消</AlertDialogCancel>
-          <AlertDialogAction onClick={() => onConfirm({ initialCash: cash, leverage, direction })}>
+          <AlertDialogAction onClick={() => onConfirm({ initialCash: cash, leverage, direction, confidenceSizingEnabled: confidenceSizing })}>
             创建任务
           </AlertDialogAction>
         </AlertDialogFooter>

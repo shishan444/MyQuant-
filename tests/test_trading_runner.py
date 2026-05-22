@@ -7,8 +7,7 @@ Covers:
 3. Runner state save/restore (VirtualAccount)
 4. Runner task execution (mocked data)
 5. Forming bar filtering
-6. Minimal replay for resume
-7. Pending decision lifecycle
+6. Pending decision lifecycle
 """
 import threading
 import time
@@ -135,7 +134,6 @@ class TestStaleTaskRecovery:
     @pytest.mark.parametrize("status,should_be_recovered", [
         ("running", True),
         ("pending", False),
-        ("paused", False),
         ("stopped", False),
     ])
     def test_recovery_only_affects_running(

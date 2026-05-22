@@ -150,7 +150,9 @@ class VirtualAccount:
             "slippage_paid": slippage_cost,
         }
 
-    def _open_position(self, side: str, price: float, size_pct: float = 0.0) -> dict:
+    def _open_position(self, side: str, price: float, size_pct: float = 0.0,
+                        sl_price: Optional[float] = None,
+                        tp_price: Optional[float] = None) -> dict:
         margin = self.balance * (size_pct or self._position_size)
         if margin <= 0:
             return {"type": "open_skipped", "reason": "insufficient_balance"}
@@ -164,6 +166,8 @@ class VirtualAccount:
             quantity=quantity,
             margin=margin,
             open_cost=open_fee + open_slippage,
+            sl_price=sl_price,
+            tp_price=tp_price,
         )
         return {
             "type": "position_opened",
@@ -259,8 +263,16 @@ class VirtualAccount:
     # Risk checks
     # ------------------------------------------------------------------
 
-    def check_sl_tp(self, bar_high: float, bar_low: float, bar_open: float) -> list:
-        """Check SL/TP using bar HIGH/LOW, execute at bar_open."""
+    def check_sl_tp(self, bar_high: float, bar_low: float) -> list:
+        """Check SL/TP using bar HIGH/LOW, execute at trigger price.
+
+        SL: stop-market order, executed at the stop price.
+        TP: limit order, executed at the take-profit target.
+        When both trigger on the same bar, SL takes priority.
+
+        Uses stored sl_price/tp_price from Position if available,
+        otherwise falls back to percentage calculation.
+        """
         if self.position is None:
             return []
         events = []
@@ -268,19 +280,29 @@ class VirtualAccount:
         ep = pos.entry_price
 
         if pos.side == "long":
-            if self._stop_loss > 0 and bar_low <= ep * (1.0 - self._stop_loss):
-                events.append(self._close_position(bar_open, "sl"))
-            elif (self._take_profit is not None
-                  and self._take_profit > 0
-                  and bar_high >= ep * (1.0 + self._take_profit)):
-                events.append(self._close_position(bar_open, "tp"))
+            sl_price = pos.sl_price if pos.sl_price is not None else (
+                ep * (1.0 - self._stop_loss) if self._stop_loss > 0 else None)
+            tp_price = pos.tp_price if pos.tp_price is not None else (
+                ep * (1.0 + self._take_profit)
+                if self._take_profit and self._take_profit > 0 else None)
+            sl_hit = sl_price is not None and bar_low <= sl_price
+            tp_hit = tp_price is not None and bar_high >= tp_price
+            if sl_hit:
+                events.append(self._close_position(sl_price, "sl"))
+            elif tp_hit:
+                events.append(self._close_position(tp_price, "tp"))
         else:  # short
-            if self._stop_loss > 0 and bar_high >= ep * (1.0 + self._stop_loss):
-                events.append(self._close_position(bar_open, "sl"))
-            elif (self._take_profit is not None
-                  and self._take_profit > 0
-                  and bar_low <= ep * (1.0 - self._take_profit)):
-                events.append(self._close_position(bar_open, "tp"))
+            sl_price = pos.sl_price if pos.sl_price is not None else (
+                ep * (1.0 + self._stop_loss) if self._stop_loss > 0 else None)
+            tp_price = pos.tp_price if pos.tp_price is not None else (
+                ep * (1.0 - self._take_profit)
+                if self._take_profit and self._take_profit > 0 else None)
+            sl_hit = sl_price is not None and bar_high >= sl_price
+            tp_hit = tp_price is not None and bar_low <= tp_price
+            if sl_hit:
+                events.append(self._close_position(sl_price, "sl"))
+            elif tp_hit:
+                events.append(self._close_position(tp_price, "tp"))
 
         return events
 
@@ -314,18 +336,20 @@ class VirtualAccount:
             return events
 
         entry_price = self.position.entry_price
-        max_chase_price = entry_price * (1 + self._stop_loss * plan.max_chase_pct)
+        pos = self.position
+        # Compute chase bound from stored SL price or percentage
+        if pos.sl_price is not None:
+            sl_distance = abs(entry_price - pos.sl_price)
+        else:
+            sl_distance = entry_price * self._stop_loss
+        max_chase_price = entry_price + sl_distance * plan.max_chase_pct
 
         for tranche in plan.tranches:
             if tranche.status != "pending":
                 continue
 
             # Check if bar touches the tranche price level
-            touched = False
-            if self.position.side == "long":
-                touched = bar_low <= tranche.price_level <= bar_high
-            else:
-                touched = bar_low <= tranche.price_level <= bar_high
+            touched = bar_low <= tranche.price_level <= bar_high
 
             if touched:
                 # Fill tranche: add to position
@@ -347,7 +371,7 @@ class VirtualAccount:
                         tranche.price_level = max(tranche.price_level, new_price)
                     else:
                         new_price = prediction.high - prediction.width * 0.2
-                        min_chase = entry_price * (1 - self._stop_loss * plan.max_chase_pct)
+                        min_chase = entry_price - sl_distance * plan.max_chase_pct
                         new_price = max(new_price, min_chase)
                         tranche.price_level = min(tranche.price_level, new_price)
                     tranche.bars_waiting = 0
@@ -356,7 +380,7 @@ class VirtualAccount:
                 if self.position.side == "long" and tranche.price_level > max_chase_price:
                     tranche.status = "cancelled"
                 elif self.position.side == "short":
-                    min_chase = entry_price * (1 - self._stop_loss * plan.max_chase_pct)
+                    min_chase = entry_price - sl_distance * plan.max_chase_pct
                     if tranche.price_level < min_chase:
                         tranche.status = "cancelled"
 
@@ -366,13 +390,16 @@ class VirtualAccount:
     # Decision execution
     # ------------------------------------------------------------------
 
-    def execute_decision(self, decision: Decision, open_price: float) -> list:
+    def execute_decision(self, decision: Decision, open_price: float,
+                          sl_price: Optional[float] = None,
+                          tp_price: Optional[float] = None) -> list:
         """Execute a Decision at the given open price."""
         events = []
 
         if decision.action == "open" and self.position is None:
             side = decision.direction
-            event = self._open_position(side, open_price, decision.entry_size_pct)
+            event = self._open_position(side, open_price, decision.entry_size_pct,
+                                        sl_price=sl_price, tp_price=tp_price)
             events.append(event)
             if event["type"] == "position_opened":
                 self._bars_held_count = 0
@@ -386,6 +413,29 @@ class VirtualAccount:
 
         elif decision.action == "reduce" and self.position is not None:
             event = self._reduce_position(open_price)
+            events.append(event)
+
+        return events
+
+    def fill_order(self, order, sl_price: Optional[float] = None,
+                    tp_price: Optional[float] = None) -> list:
+        """Fill an Order from the order management system.
+
+        For entry orders: open position at order price.
+        For add orders: add to existing position.
+        """
+        from core.trading.types import Order as OrderType
+        events = []
+        exec_price = order.price if order.price > 0 else 0.0
+
+        if order.source == "entry" and self.position is None:
+            event = self._open_position(order.side, exec_price, order.size_pct,
+                                        sl_price=sl_price, tp_price=tp_price)
+            events.append(event)
+            if event.get("type") == "position_opened":
+                self._bars_held_count = 0
+        elif order.source == "add" and self.position is not None:
+            event = self._add_position(exec_price, order.size_pct)
             events.append(event)
 
         return events
@@ -459,7 +509,7 @@ class VirtualAccount:
         position_closed = False
 
         # Step 1: SL/TP check
-        sl_tp_events = self.check_sl_tp(bar_high, bar_low, bar_open)
+        sl_tp_events = self.check_sl_tp(bar_high, bar_low)
         events.extend(sl_tp_events)
         if sl_tp_events:
             position_closed = True

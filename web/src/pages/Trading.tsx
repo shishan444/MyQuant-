@@ -249,7 +249,7 @@ export function Trading() {
   }, []);
 
   const handleConfirmCreate = useCallback(
-    (params: { initialCash: number; leverage: number; direction: string }) => {
+    (params: { initialCash: number; leverage: number; direction: string; confidenceSizingEnabled: boolean }) => {
       if (pendingCreate) {
         createTask.mutate({
           dna_json: pendingCreate.dna,
@@ -259,6 +259,7 @@ export function Trading() {
           initial_cash: params.initialCash,
           leverage: params.leverage,
           direction: params.direction,
+          confidence_sizing_enabled: params.confidenceSizingEnabled,
         });
         setPendingCreate(null);
       }

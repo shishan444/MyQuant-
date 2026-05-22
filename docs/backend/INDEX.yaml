@@ -1,6 +1,6 @@
 version: "1.0"
-generated_at: "2026-05-12T00:00:00+08:00"
-git_commit: "ccbc26302be1c9bc377586642b871b882f8d5c10"
+generated_at: "2026-05-20T00:00:00+08:00"
+git_commit: "ba9b7d00466a20480c8a71031cea32058f24afa7"
 
 modules:
   - name: "策略DNA与执行"
@@ -93,14 +93,47 @@ modules:
         name: "verify_scene"
         doc_section: "#对外暴露的接口"
 
+  - name: "价格预测"
+    domain_doc: "domain/价格预测.md"
+    source_paths:
+      - "core/prediction/"
+    contracts:
+      - type: "api"
+        name: "PriceRangePredictor"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "PredictionEvolver.evolve"
+        doc_section: "#对外暴露的接口"
+      - type: "data"
+        name: "PredictionDNA"
+        doc_section: "#对外暴露的数据结构"
+      - type: "data"
+        name: "PredictionResult"
+        doc_section: "#对外暴露的数据结构"
+
   - name: "模拟交易"
     domain_doc: "domain/模拟交易.md"
     source_paths:
       - "core/trading/"
     contracts:
       - type: "api"
+        name: "DecisionPipeline.process_bar"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
+        name: "ReplayRunner.run"
+        doc_section: "#对外暴露的接口"
+      - type: "api"
         name: "run_paper_trading"
         doc_section: "#对外暴露的接口"
+      - type: "data"
+        name: "Order"
+        doc_section: "#对外暴露的数据结构"
+      - type: "data"
+        name: "PipelineResult"
+        doc_section: "#对外暴露的数据结构"
+      - type: "data"
+        name: "ReplayResult"
+        doc_section: "#对外暴露的数据结构"
 
   - name: "持久化层"
     domain_doc: "domain/持久化层.md"
@@ -202,6 +235,7 @@ flows:
     involved_modules:
       - "API接口层"
       - "模拟交易"
+      - "价格预测"
       - "策略DNA与执行"
       - "数据层"
 

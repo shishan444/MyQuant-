@@ -217,12 +217,12 @@ class TestReverseClose:
 
 class TestNoSignal:
 
-    def test_continue_fill_when_profitable_and_under_target(self):
+    def test_hold_when_profitable_and_under_target_no_signal(self):
+        """After Rule 5 removal, no-signal state returns hold even when profitable and under target."""
         state = _long_state(bars_held=2, unrealized_pnl=200.0, actual_position_pct=0.10,
                              target_position_pct=0.30)
         d = evaluate(_signals(), state)
-        assert d.action == "add"
-        assert "continue_fill" in d.reason
+        assert d.action == "hold"
 
     def test_hold_when_no_need_to_fill(self):
         state = _long_state(unrealized_pnl=200.0, actual_position_pct=0.30,

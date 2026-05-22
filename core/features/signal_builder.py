@@ -2,9 +2,14 @@
 
 Higher-level interface than executor.py - takes raw DNA and enhanced DataFrame,
 resolves indicator columns, and returns boolean signal Series.
+
+DEPRECATED: This module is dead code. Production code uses executor.py's
+_get_indicator_column() instead. Only test files reference this module.
 """
 
 from __future__ import annotations
+
+import warnings
 
 from typing import Any, Dict, List, Tuple
 

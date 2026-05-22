@@ -30,6 +30,7 @@ export interface TradingTask {
   last_bar_time: string | null;
   last_bar_close: number | null;
   bars_held: number;
+  confidence_sizing_enabled: boolean;
 }
 
 export interface TradingTaskList {
@@ -65,6 +66,7 @@ export interface CreateTradingTaskParams {
   direction?: string;
   score_template?: string;
   strategy_name?: string;
+  confidence_sizing_enabled?: boolean;
 }
 
 export async function listTradingTasks(params?: {

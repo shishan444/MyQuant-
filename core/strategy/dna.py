@@ -149,11 +149,13 @@ class ExecutionGenes:
 class RiskGenes:
     """Risk management parameters."""
 
-    stop_loss: float = 0.05               # e.g. 0.05 (5%)
-    take_profit: Optional[float] = None   # e.g. 0.10 (10%) or None
+    stop_loss: float = 0.05               # pct mode: 0.05 (5%); atr mode: 2.0 (2xATR)
+    take_profit: Optional[float] = None   # pct mode: 0.10 (10%); atr mode: 4.0 (4xATR)
     position_size: float = 0.3            # e.g. 0.3 (30%)
     leverage: int = 1                     # 1-10x
     direction: str = "long"               # "long" | "short"
+    sl_mode: str = "pct"                  # "pct" | "atr"
+    atr_period: int = 14                  # ATR lookback for sl_mode="atr"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -383,6 +385,11 @@ def generate_strategy_name(dna: "StrategyDNA") -> str:
         sig_parts.append(f"{g.indicator}:{g.role.value}:{sorted(g.params.items())}")
     sig_parts.append(f"logic:{dna.logic_genes.entry_logic}/{dna.logic_genes.exit_logic}")
     sig_parts.append(f"risk:{dna.risk_genes.stop_loss}/{dna.risk_genes.take_profit}/{dna.risk_genes.position_size}")
+    # Include MTF layers to differentiate strategies with same base genes but different layer configs
+    if dna.layers:
+        for i, layer in enumerate(dna.layers):
+            for g in layer.signal_genes:
+                sig_parts.append(f"L{i}:{g.indicator}:{g.role.value}:{sorted(g.params.items())}")
     sig_str = "|".join(sig_parts)
     hash4 = hashlib.md5(sig_str.encode()).hexdigest()[:4].upper()
 

@@ -37,7 +37,8 @@ BTC/ETH 量化交易策略进化工具。通过遗传算法自动搜索和优化
 | evolution | 遗传进化引擎 | 种群初始化、变异交叉、多样性维护、早停策略、冠军追踪 | `core/evolution/` | 声明式 |
 | discovery | 模式发现引擎 | KNN 相似匹配、决策树规则提取、统计验证 | `core/discovery/` | 声明式 |
 | validation | 假设验证引擎 | WHEN/THEN 规则验证、场景检测（6 种场景）、前瞻统计 | `core/validation/` | 声明式 |
-| trading | 模拟纸盘交易 | 虚拟账户、仓位管理、判断规则、后台运行器 | `core/trading/` | 声明式 |
+| prediction | 价格区间预测 | GARCH(1,1) 在线波动率、8 市场因子、动态 K 值、离线进化优化预测公式 | `core/prediction/` | 声明式 |
+| trading | 模拟纸盘交易与决策管线 | DecisionPipeline 决策管线、订单生成/管理、虚拟账户、历史回放、后台运行器 | `core/trading/` | 声明式 |
 | persistence | 数据持久化层 | SQLite 表管理、进化快照存储、断点恢复 | `core/persistence/` | 声明式 |
 | visualization | 图表可视化 | K 线图、权益曲线、代际趋势图生成（Plotly） | `core/visualization/` | 声明式 |
 | logging | 日志配置 | 按模块和日期组织日志文件路径 | `core/logging/` | 声明式 |
@@ -69,6 +70,7 @@ graph TD
         data[数据层]
         disc[模式发现]
         val[假设验证]
+        pred[价格预测]
         trade[模拟交易]
         persist[持久化]
         vis[可视化]
@@ -99,8 +101,11 @@ graph TD
     score --> bt
 
     trade --> strat
+    trade --> pred
     trade --> data
     trade --> logg
+
+    pred -.-> feat
 
     val --> feat
     val --> data
@@ -150,6 +155,7 @@ graph TD
 - 存储约束：SQLite 单文件数据库 + Parquet 文件，不支持分布式
 - 计算约束：回测使用 vectorbt + numba JIT 加速，进化支持多进程并行（n_workers 配置）
 - API Key 安全：通过环境变量 `${BINANCE_API_KEY}` / `${ANTHROPIC_API_KEY}` 引用，禁止硬编码
+- 预测模块自包含：prediction/ 不 import core/ 下其他模块，通过 DataFrame 列名约定与 features/ 松耦合
 
 ---
-_生成时间：2026-05-12T00:00:00+08:00 | Git Commit：ccbc26302be1c9bc377586642b871b882f8d5c10_
+_生成时间：2026-05-20T00:00:00+08:00 | Git Commit：ba9b7d00466a20480c8a71031cea32058f24afa7_
