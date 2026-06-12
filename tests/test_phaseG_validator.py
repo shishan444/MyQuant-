@@ -43,6 +43,8 @@ def _make_mtf_dna(direction="long", cross_layer_logic="AND", layers=None):
                             'RSI_14', {'type': 'lt', 'threshold': 30})
     exit_gene = SignalGene('RSI', {'period': 14}, SignalRole.EXIT_TRIGGER,
                            'RSI_14', {'type': 'gt', 'threshold': 70})
+    direction_gene = SignalGene('EMA', {'period': 50}, SignalRole.DIRECTION,
+                                None, {'type': 'price_above'})
     if layers is None:
         layers = [
             TimeframeLayer(
@@ -53,7 +55,8 @@ def _make_mtf_dna(direction="long", cross_layer_logic="AND", layers=None):
             ),
             TimeframeLayer(
                 timeframe='1d',
-                signal_genes=[entry_gene, exit_gene],
+                signal_genes=[entry_gene, exit_gene] +
+                    ([direction_gene] if direction == "mixed" else []),
                 logic_genes=LogicGenes(entry_logic='AND', exit_logic='AND'),
                 role='trend',
             ),
@@ -84,10 +87,12 @@ def test_warns_mixed_without_trend_layer():
                             'RSI_14', {'type': 'lt', 'threshold': 30})
     exit_gene = SignalGene('RSI', {'period': 14}, SignalRole.EXIT_TRIGGER,
                            'RSI_14', {'type': 'gt', 'threshold': 70})
+    direction_gene = SignalGene('EMA', {'period': 50}, SignalRole.DIRECTION,
+                                None, {'type': 'price_above'})
     layers = [
         TimeframeLayer(
             timeframe='4h',
-            signal_genes=[entry_gene, exit_gene],
+            signal_genes=[entry_gene, exit_gene, direction_gene],
             logic_genes=LogicGenes(entry_logic='AND', exit_logic='AND'),
             role='execution',
         ),

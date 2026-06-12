@@ -203,6 +203,8 @@ describe("Evolution page", () => {
         current_generation: 10,
         max_generations: 10,
         best_score: 85,
+        best_fitness: 0.82,
+        qualified_count: 3,
         created_at: "2025-01-01T00:00:00Z",
       },
     ];

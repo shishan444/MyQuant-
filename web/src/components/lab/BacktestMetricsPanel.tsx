@@ -32,11 +32,6 @@ export function BacktestMetricsPanel({ result }: BacktestMetricsPanelProps) {
       value: String(result.total_trades),
       color: result.total_trades > 10 ? "text-slate-200" : "text-amber-400",
     },
-    {
-      label: "评分",
-      value: formatNumber(result.total_score),
-      color: result.total_score > 60 ? "text-emerald-400" : result.total_score > 40 ? "text-amber-400" : "text-red-400",
-    },
   ];
 
   return (

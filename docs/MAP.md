@@ -158,4 +158,4 @@ graph TD
 - 预测模块自包含：prediction/ 不 import core/ 下其他模块，通过 DataFrame 列名约定与 features/ 松耦合
 
 ---
-_生成时间：2026-05-20T00:00:00+08:00 | Git Commit：ba9b7d00466a20480c8a71031cea32058f24afa7_
+_生成时间：2026-06-04T00:00:00+08:00 | Git Commit：updated-20260604_

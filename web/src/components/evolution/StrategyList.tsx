@@ -2,7 +2,7 @@ import { useMemo, useCallback, memo } from "react";
 import { Eye, Dna, Play, Save } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/badge";
-import { cn, formatPercent, formatNumber } from "@/lib/utils";
+import { cn, formatPercent, formatNumber, getFitnessColor } from "@/lib/utils";
 import { getStrategyName, getStrategyType } from "@/lib/strategy-utils";
 import type { DiscoveredStrategy, StrategyMetrics, DNA } from "@/types/api";
 
@@ -136,6 +136,9 @@ const StrategyRow = memo(function StrategyRow({
         {/* Strategy info */}
         <div className="flex flex-1 flex-col gap-0.5">
           <div className="flex items-center gap-1.5">
+            {strategy.qualified && (
+              <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shrink-0" title="达标" />
+            )}
             <Badge
               variant="outline"
               className={cn(
@@ -496,14 +499,30 @@ function StrategyDetail({ dna, strategy, onClose }: StrategyDetailProps) {
             />
           </div>
           <div className="mt-1.5 text-[10px] text-slate-600">
-            综合评分: <span className="font-mono text-emerald-400">{strategy.score.toFixed(1)}</span>
+            综合得分: <span className="font-mono text-emerald-400">{strategy.score.toFixed(1)}</span>
             {" "} / 代数: <span className="font-mono text-slate-300">G{strategy.generation}</span>
+            {strategy.fitness != null && (
+              <>
+                {" "} / 适应度:{" "}
+                <span className={`font-mono ${strategy.qualified ? "text-emerald-400" : getFitnessColor(strategy.fitness ?? 0)}`}>
+                  {strategy.fitness.toFixed(2)}
+                </span>
+              </>
+            )}
+            {strategy.qualified && (
+              <Badge
+                variant="outline"
+                className="ml-2 border-emerald-400/30 text-[9px] text-emerald-400 px-1 py-0"
+              >
+                达标
+              </Badge>
+            )}
           </div>
         </div>
       ) : (
         <div className="flex items-center gap-4 text-xs text-slate-500">
           <span>
-            综合评分:{" "}
+            综合得分:{" "}
             <span className="font-mono font-semibold text-emerald-400">
               {strategy.score.toFixed(1)}
             </span>

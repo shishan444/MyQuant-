@@ -1,75 +1,38 @@
-"""Normalize raw metrics to 0-100 scores using piecewise linear mapping."""
+"""DEPRECATED: Normalization is replaced by RequirementsConfig satisfaction ratios.
+
+This module exists solely for backward compatibility with code that imports
+from core.scoring.normalizer. All new code should use compute_fitness
+from core.scoring.scorer instead.
+"""
 from __future__ import annotations
 
 from typing import List, Tuple
 
-# ---------------------------------------------------------------------------
-# Piecewise linear breakpoints for each scoring dimension
-# ---------------------------------------------------------------------------
 
-# annual_return: steepest gradient in [0%, 50%] (the core range)
+# Legacy breakpoints kept for backward compat
 _RETURN_BREAKPOINTS: List[Tuple[float, float]] = [
-    (-1.0, 0.0),   # total loss
-    (0.0, 10.0),   # break-even
-    (0.10, 30.0),  # 10% return
-    (0.30, 60.0),  # 30% return
-    (0.50, 80.0),  # 50% return
-    (1.0, 95.0),   # 100% return
-    (3.0, 100.0),  # 300% return (cap)
+    (-1.0, 0.0), (0.0, 10.0), (0.10, 30.0), (0.30, 60.0),
+    (0.50, 80.0), (1.0, 95.0), (3.0, 100.0),
 ]
-
-# sharpe_ratio: steepest gradient in [0.5, 1.5]
 _SHARPE_BREAKPOINTS: List[Tuple[float, float]] = [
-    (-1.0, 0.0),
-    (0.0, 5.0),
-    (0.5, 20.0),
-    (1.0, 50.0),
-    (1.5, 75.0),
-    (2.0, 90.0),
-    (3.0, 100.0),
+    (-1.0, 0.0), (0.0, 5.0), (0.5, 20.0), (1.0, 50.0),
+    (1.5, 75.0), (2.0, 90.0), (3.0, 100.0),
 ]
-
-# max_drawdown: pure linear, using absolute drawdown (0 = perfect, 0.80 = zero)
 _DRAWDOWN_BREAKPOINTS: List[Tuple[float, float]] = [
-    (0.00, 100.0),   # 0% dd = perfect
-    (0.10, 80.0),    # 10% dd
-    (0.20, 60.0),    # 20% dd
-    (0.30, 40.0),    # 30% dd
-    (0.50, 15.0),    # 50% dd
-    (0.80, 0.0),     # 80% dd = zero
+    (0.00, 100.0), (0.10, 80.0), (0.20, 60.0), (0.30, 40.0),
+    (0.50, 15.0), (0.80, 0.0),
 ]
-
-# profit_factor: steep rise above 1.0
 _PROFIT_FACTOR_BREAKPOINTS: List[Tuple[float, float]] = [
-    (0.0, 0.0),
-    (0.5, 10.0),
-    (1.0, 30.0),
-    (1.5, 60.0),
-    (2.0, 80.0),
-    (3.0, 100.0),
+    (0.0, 0.0), (0.5, 10.0), (1.0, 30.0), (1.5, 60.0),
+    (2.0, 80.0), (3.0, 100.0),
 ]
-
-# alpha: excess return over unleveraged buy-and-hold benchmark
 _ALPHA_BREAKPOINTS: List[Tuple[float, float]] = [
-    (-0.50, 0.0),    # severely underperforms benchmark
-    (-0.20, 15.0),   # clearly underperforms
-    (0.00, 40.0),    # matches benchmark
-    (0.20, 60.0),    # outperforms by 20%
-    (0.50, 80.0),    # outperforms by 50%
-    (1.00, 95.0),    # outperforms by 100%
-    (3.00, 100.0),   # outperforms by 300%+
+    (-0.50, 0.0), (-0.20, 15.0), (0.00, 40.0), (0.20, 60.0),
+    (0.50, 80.0), (1.00, 95.0), (3.00, 100.0),
 ]
 
 
-def piecewise_normalize(
-    value: float,
-    breakpoints: List[Tuple[float, float]],
-) -> float:
-    """Piecewise linear normalization.
-
-    breakpoints: list of (input_val, output_val) tuples, must be sorted
-    by input_val. Values outside the range are clamped to the endpoints.
-    """
+def piecewise_normalize(value: float, breakpoints: List[Tuple[float, float]]) -> float:
     if value <= breakpoints[0][0]:
         return breakpoints[0][1]
     if value >= breakpoints[-1][0]:
@@ -84,11 +47,6 @@ def piecewise_normalize(
 
 
 def normalize(metric_name: str, value: float) -> float:
-    """Map a raw metric value to a 0-100 score.
-
-    Core dimensions use piecewise linear normalization for precise
-    sensitivity control. Legacy dimensions kept for backward compatibility.
-    """
     if metric_name == "annual_return":
         score = piecewise_normalize(value, _RETURN_BREAKPOINTS)
     elif metric_name == "sharpe_ratio":
@@ -100,9 +58,7 @@ def normalize(metric_name: str, value: float) -> float:
     elif metric_name == "alpha":
         score = piecewise_normalize(value, _ALPHA_BREAKPOINTS)
     elif metric_name == "monthly_consistency":
-        # Already 0-1, scale to 0-100
         score = value * 100
-    # Legacy dimensions (kept for backward compatibility with metrics.py output)
     elif metric_name == "win_rate":
         score = (value - 0.3) / 0.4 * 100
     elif metric_name == "calmar_ratio":
@@ -117,5 +73,4 @@ def normalize(metric_name: str, value: float) -> float:
         score = max(0.0, value) * 100
     else:
         score = 50.0
-
     return max(0.0, min(100.0, score))

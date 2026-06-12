@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatNumber, formatDuration } from "@/lib/utils";
-import { TIMEFRAME_LABELS, SCORE_TEMPLATE_LABELS, STOP_REASON_LABELS } from "@/lib/constants";
+import { TIMEFRAME_LABELS, SCORE_TEMPLATE_LABELS, STOP_REASON_LABELS, REQUIREMENTS_DEFAULTS } from "@/lib/constants";
 import { StrategyDetail } from "@/components/evolution/StrategyDetail";
 import { ScoreTrendChart } from "@/components/evolution/ScoreTrendChart";
 import {
@@ -110,7 +110,7 @@ export function TaskDetailDrawer({
             <OverviewTab task={task} championDna={championDna} onSeedEvolve={onSeedEvolve} onVisualVerify={onVisualVerify} />
           )}
           {activeTab === "curve" && (
-            <CurveTab records={historyRecords} targetScore={task.target_score} />
+            <CurveTab records={historyRecords} targetScore={task.target_score} targetFitness={task.best_fitness != null ? task.target_score : undefined} />
           )}
           {activeTab === "snapshots" && (
             <SnapshotsTab strategies={strategies} />
@@ -141,10 +141,18 @@ function OverviewTab({
     { label: "周期", value: task.timeframe_pool?.join("+") ?? TIMEFRAME_LABELS[task.timeframe] ?? task.timeframe },
     { label: "杠杆", value: `${task.leverage}x` },
     { label: "方向", value: task.direction === "short" ? "做空" : task.direction === "mixed" ? "混合" : "做多" },
-    { label: "评分模板", value: SCORE_TEMPLATE_LABELS[task.score_template] ?? task.score_template },
     { label: "种群大小", value: String(task.population_size) },
-    { label: "目标分数", value: String(task.target_score) },
   ];
+
+  // Build requirements display items from task data
+  const req = task.requirements;
+  const requirementItems = req ? [
+    { label: "最低年化收益", value: `${(req.min_annual_return * 100).toFixed(0)}%` },
+    { label: "最大回撤", value: `${(req.max_drawdown * 100).toFixed(0)}%` },
+    { label: "最低胜率", value: `${(req.min_win_rate * 100).toFixed(0)}%` },
+    { label: "最低交易次数", value: String(req.min_total_trades) },
+    { label: "最低盈亏比", value: req.min_profit_factor.toFixed(1) },
+  ] : null;
 
   const dataItems = [
     { label: "数据起止", value: task.data_time_start && task.data_time_end
@@ -154,7 +162,11 @@ function OverviewTab({
   ];
 
   const resultItems = [
-    { label: "最优分数", value: formatNumber(task.best_score ?? 0) },
+    { label: "综合得分", value: formatNumber(task.best_score ?? 0) },
+    { label: "最优适应度", value: task.best_fitness != null ? task.best_fitness.toFixed(2) : "-" },
+    ...(task.qualified_count != null && task.qualified_count > 0
+      ? [{ label: "达标策略数", value: String(task.qualified_count) }]
+      : []),
     { label: "运行代数", value: `${task.current_generation} / ${task.max_generations}` },
     { label: "停止原因", value: STOP_REASON_LABELS[task.stop_reason ?? ""] ?? task.stop_reason ?? "-" },
     { label: "用时", value: formatDuration(task.created_at, task.updated_at) },
@@ -173,6 +185,35 @@ function OverviewTab({
           ))}
         </div>
       </Section>
+
+      {/* Requirements (replaces score template) */}
+      {requirementItems && (
+        <Section title="达标要求">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+            {requirementItems.map((item) => (
+              <div key={item.label} className="flex items-center justify-between text-xs">
+                <span className="text-slate-500">{item.label}</span>
+                <span className="text-slate-300">{item.value}</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+      {/* Fallback: show score template if no requirements */}
+      {!requirementItems && task.score_template && (
+        <Section title="评分模板 (旧)">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500">模板</span>
+              <span className="text-slate-300">{SCORE_TEMPLATE_LABELS[task.score_template] ?? task.score_template}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500">目标分数</span>
+              <span className="text-slate-300">{task.target_score}</span>
+            </div>
+          </div>
+        </Section>
+      )}
 
       {/* Data range */}
       <Section title="数据范围">
@@ -201,7 +242,14 @@ function OverviewTab({
       {/* Champion DNA */}
       {championDna && (
         <Section title="最优策略">
-          <StrategyDetail dna={championDna} />
+          <StrategyDetail
+            dna={championDna}
+            champion_metrics={task.champion_metrics}
+            champion_dimension_scores={task.champion_dimension_scores}
+            champion_satisfaction={task.champion_satisfaction}
+            champion_fitness={task.best_fitness}
+            champion_qualified={task.qualified_count != null && task.qualified_count > 0 ? true : undefined}
+          />
           <div className="mt-3 flex items-center gap-2">
             <Button
               variant="outline"
@@ -234,9 +282,11 @@ function OverviewTab({
 function CurveTab({
   records,
   targetScore,
+  targetFitness,
 }: {
-  records: Array<{ generation: number; best_score: number; avg_score: number; created_at: string; top3_summary?: string }>;
+  records: Array<{ generation: number; best_score: number; best_fitness?: number; avg_score: number; created_at: string; top3_summary?: string }>;
   targetScore: number;
+  targetFitness?: number;
 }) {
   if (records.length === 0) {
     return <p className="text-xs text-slate-500">暂无进化曲线数据</p>;
@@ -247,6 +297,7 @@ function CurveTab({
   const enrichedRecords = records.map((r) => {
     const isChampionChange = r.best_score > prevBest;
     if (isChampionChange) prevBest = r.best_score;
+    const hasFitness = r.best_fitness != null;
 
     // Parse diagnostics
     let diag: { fallback_pct?: number; zero_trade_pct?: number; avg_trades?: number } = {};
@@ -257,12 +308,12 @@ function CurveTab({
       } catch { /* ignore */ }
     }
 
-    return { ...r, isChampionChange, diag };
+    return { ...r, isChampionChange, hasFitness, diag };
   });
 
   return (
     <div className="flex flex-col gap-4">
-      <ScoreTrendChart records={records} targetScore={targetScore} />
+      <ScoreTrendChart records={records} targetScore={targetScore} targetFitness={targetFitness} />
 
       {/* Stats summary */}
       <div className="grid grid-cols-3 gap-3">
@@ -271,13 +322,13 @@ function CurveTab({
           <div className="mt-1 text-sm font-mono text-slate-200">{records.length}</div>
         </div>
         <div className="rounded-lg border border-slate-700/30 p-3 text-center">
-          <div className="text-[11px] text-slate-500">最高分</div>
+          <div className="text-[11px] text-slate-500">最高得分</div>
           <div className="mt-1 text-sm font-mono text-amber-400">
             {formatNumber(Math.max(...records.map((r) => r.best_score)))}
           </div>
         </div>
         <div className="rounded-lg border border-slate-700/30 p-3 text-center">
-          <div className="text-[11px] text-slate-500">平均分</div>
+          <div className="text-[11px] text-slate-500">平均得分</div>
           <div className="mt-1 text-sm font-mono text-slate-300">
             {formatNumber(records.reduce((s, r) => s + r.avg_score, 0) / records.length)}
           </div>
@@ -292,6 +343,7 @@ function CurveTab({
               <tr className="border-b border-slate-700/30 text-slate-500">
                 <th className="py-1.5 text-left font-medium">代数</th>
                 <th className="py-1.5 text-right font-medium">最优</th>
+                <th className="py-1.5 text-right font-medium">适应度</th>
                 <th className="py-1.5 text-right font-medium">平均</th>
                 <th className="py-1.5 text-center font-medium">状态</th>
                 <th className="py-1.5 text-right font-medium">诊断</th>
@@ -303,6 +355,15 @@ function CurveTab({
                   <td className="py-1.5 text-slate-300">Gen {r.generation}</td>
                   <td className="py-1.5 text-right font-mono text-amber-400">
                     {formatNumber(r.best_score)}
+                  </td>
+                  <td className="py-1.5 text-right font-mono">
+                    {r.hasFitness ? (
+                      <span className={r.best_fitness! >= (targetFitness ?? 1.0) ? "text-emerald-400" : "text-slate-400"}>
+                        {r.best_fitness!.toFixed(2)}
+                      </span>
+                    ) : (
+                      <span className="text-slate-600">-</span>
+                    )}
                   </td>
                   <td className="py-1.5 text-right font-mono text-slate-400">
                     {formatNumber(r.avg_score)}

@@ -220,7 +220,7 @@ export const CONDITION_OPTIONS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Score templates
+// Score template labels (for display in task details)
 // ---------------------------------------------------------------------------
 
 export const SCORE_TEMPLATE_LABELS: Record<string, string> = {
@@ -233,23 +233,30 @@ export const SCORE_TEMPLATE_LABELS: Record<string, string> = {
   risk_first: "风控优先",
 };
 
-export const OPTIMIZE_TARGETS = [
-  {
-    value: "explorer",
-    label: "收益探索",
-    description: "年化35% | 夏普20% | 盈亏比15% | 回撤15% | 适合探索新策略",
-  },
-  {
-    value: "optimizer",
-    label: "稳健收益",
-    description: "夏普25% | 年化20% | 月度稳定20% | 适合实盘生产",
-  },
-  {
-    value: "max_return",
-    label: "极致收益",
-    description: "年化50% | 盈亏比25% | 无回撤惩罚 | 适合激进投资",
-  },
+// ---------------------------------------------------------------------------
+// Default requirements for fitness evaluation
+// ---------------------------------------------------------------------------
+
+export const REQUIREMENTS_DEFAULTS = {
+  objective: "sharpe" as const,
+  min_annual_return: 0.0,
+  max_drawdown: 0.30,
+  min_win_rate: 0.0,
+  min_total_trades: 10,
+  min_profit_factor: 1.2,
+};
+
+export const OBJECTIVE_OPTIONS = [
+  { value: "sharpe", label: "夏普比率" },
+  { value: "calmar", label: "卡尔马比率" },
+  { value: "annual_return", label: "年化收益率" },
 ] as const;
+
+export const FITNESS_COLOR_THRESHOLDS: Record<string, { good: number; mid: number }> = {
+  sharpe: { good: 1.0, mid: 0.5 },
+  calmar: { good: 2.0, mid: 1.0 },
+  annual_return: { good: 0.15, mid: 0.08 },
+};
 
 // ---------------------------------------------------------------------------
 // Task status

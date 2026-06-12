@@ -63,11 +63,18 @@ export interface Strategy {
   source: string;
   source_task_id?: string;
   best_score?: number;
+  best_fitness?: number;
+  qualified?: boolean | null;
   metrics?: StrategyMetrics | null;
   generation: number;
   parent_ids?: string;
   tags?: string;
   notes?: string;
+  verify_count?: number;
+  verify_avg_score?: number | null;
+  verify_best_score?: number | null;
+  last_verified_at?: string | null;
+  verify_star?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -88,8 +95,11 @@ export interface BacktestResult {
   win_rate: number;
   total_trades: number;
   total_score: number;
+  fitness: number;
+  qualified: boolean;
   template_name: string;
   dimension_scores?: Record<string, number>;
+  satisfaction?: Record<string, unknown>;
   run_source: string;
   equity_curve?: Array<{ timestamp: string; value: number }>;
   signals?: TradeSignal[];
@@ -123,6 +133,9 @@ export interface EvolutionTask {
   updated_at: string;
   stop_reason?: string;
   best_score?: number;
+  best_fitness?: number;
+  requirements?: RequirementsConfig;
+  qualified_count?: number;
   indicator_pool?: string[];
   timeframe_pool?: string[];
   mode?: "auto" | "seed";
@@ -142,6 +155,7 @@ export interface EvolutionTask {
     total_trades: number;
   };
   champion_dimension_scores?: Record<string, number>;
+  champion_satisfaction?: Record<string, unknown>;
   continuous?: boolean;
   population_count?: number;
   strategy_threshold?: number;
@@ -155,8 +169,19 @@ export interface EvolutionHistoryRecord {
   generation: number;
   best_score: number;
   avg_score: number;
+  best_fitness?: number;
+  avg_fitness?: number;
   top3_summary?: string;
   created_at: string;
+}
+
+export interface RequirementsConfig {
+  objective?: string;
+  min_annual_return: number;
+  max_drawdown: number;
+  min_win_rate: number;
+  min_total_trades: number;
+  min_profit_factor: number;
 }
 
 export interface Dataset {
@@ -226,6 +251,10 @@ export interface GenerationUpdate {
   last_mutations?: string[];
   population_count?: number;
   best_score_ever?: number;
+  best_fitness?: number;
+  qualified_count?: number;
+  fitness?: number;
+  qualified?: boolean;
   total_generations_so_far?: number;
   strategy_id?: string;
   score?: number;
@@ -258,6 +287,8 @@ export interface DiscoveredStrategy {
   symbol: string;
   timeframe: string;
   metrics?: StrategyMetrics | null;
+  fitness?: number;
+  qualified?: boolean;
 }
 
 export interface MutationRecord {
@@ -272,6 +303,8 @@ export interface EvolvedStrategy {
   source: "champion" | "snapshot";
   generation?: number;
   score: number;
+  fitness?: number;
+  qualified?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -414,4 +447,151 @@ export interface ChartIndicatorsResponse {
     d: Array<{ time: string; value: number }>;
     j: Array<{ time: string; value: number }>;
   } | null;
+}
+
+// ---------------------------------------------------------------------------
+// Strategy Verify (multi-period validation)
+// ---------------------------------------------------------------------------
+
+export interface VerifyDateRange {
+  start: string;
+  end: string;
+}
+
+export interface VerifyRequest {
+  strategy_ids: string[];
+  data_ranges: VerifyDateRange[];
+  init_cash?: number;
+  fee?: number;
+  slippage?: number;
+}
+
+export interface VerifyResultItem {
+  strategy_id: string;
+  data_start: string;
+  data_end: string;
+  total_return: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  win_rate: number;
+  total_trades: number;
+  profit_factor: number;
+  fitness: number;
+  qualified: boolean;
+  error?: string;
+}
+
+export interface VerifyPeriodSummary {
+  data_start: string;
+  data_end: string;
+  total_return: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  fitness: number;
+  qualified: boolean;
+}
+
+export interface VerifySummaryItem {
+  strategy_id: string;
+  strategy_name: string;
+  comprehensive_score: number;
+  avg_fitness: number;
+  qualified_count: number;
+  total_periods: number;
+  per_period_metrics: VerifyPeriodSummary[];
+}
+
+export interface VerifyResponse {
+  results: VerifyResultItem[];
+  summary: VerifySummaryItem[];
+}
+
+export interface VerifyHistoryItem {
+  result_id: string;
+  strategy_id: string;
+  strategy_name?: string;
+  symbol: string;
+  timeframe: string;
+  data_start: string;
+  data_end: string;
+  total_return: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  fitness: number;
+  qualified: number;
+  created_at: string;
+}
+
+export interface VerifyHistoryResponse {
+  items: VerifyHistoryItem[];
+  total: number;
+}
+
+export interface VerifySession {
+  session_id: string;
+  status: string;
+  strategy_ids: string;
+  data_ranges: string;
+  init_cash: number;
+  fee: number;
+  slippage: number;
+  summary_json?: string;
+  total_results: number;
+  total_strategies: number;
+  error_message?: string;
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface VerifySessionListResponse {
+  items: VerifySession[];
+  total: number;
+}
+
+// ---------------------------------------------------------------------------
+// Batch Backtest (multi-strategy × multi-period detailed backtesting)
+// ---------------------------------------------------------------------------
+
+export interface BatchBacktestRequest {
+  strategy_ids: string[];
+  data_ranges: Array<{ start: string; end: string }>;
+  init_cash?: number;
+  fee?: number;
+  slippage?: number;
+  leverage?: number;
+}
+
+export interface BatchBacktestResultItem {
+  result_id: string;
+  strategy_id: string;
+  strategy_name: string;
+  symbol: string;
+  timeframe: string;
+  data_start: string;
+  data_end: string;
+  total_return: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  win_rate: number;
+  total_trades: number;
+  profit_factor: number;
+  fitness: number;
+  qualified: boolean;
+  liquidated: boolean;
+  total_funding_cost: number;
+  error?: string;
+}
+
+export interface BatchBacktestSummaryItem {
+  strategy_id: string;
+  strategy_name: string;
+  symbol: string;
+  timeframe: string;
+  avg_total_return: number;
+  avg_sharpe_ratio: number;
+  worst_max_drawdown: number;
+  avg_fitness: number;
+  qualified_count: number;
+  total_periods: number;
+  per_period_results: BatchBacktestResultItem[];
 }

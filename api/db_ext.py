@@ -119,6 +119,41 @@ _SCORING_CONSTRAINT_COLUMNS = [
     ("max_drawdown_limit", "REAL DEFAULT 0.10"),
 ]
 
+# -- Fitness scoring columns (migration 021) --
+
+_FITNESS_EVOLUTION_TASK_COLUMNS = [
+    ("best_fitness",          "REAL"),
+    ("champion_satisfaction",  "TEXT"),
+    ("requirements_json",      "TEXT"),
+    ("qualified_count",        "INTEGER DEFAULT 0"),
+    ("target_fitness",         "REAL DEFAULT 1.0"),
+]
+
+_FITNESS_STRATEGY_COLUMNS = [
+    ("best_fitness", "REAL"),
+    ("qualified",    "INTEGER DEFAULT NULL"),
+]
+
+_FITNESS_BACKTEST_RESULT_COLUMNS = [
+    ("fitness",          "REAL DEFAULT 0.0"),
+    ("qualified",        "INTEGER DEFAULT 0"),
+    ("satisfaction_json", "TEXT"),
+]
+
+_OOS_VALIDATION_COLUMNS = [
+    ("oos_fitness",   "REAL"),
+    ("oos_qualified", "INTEGER DEFAULT 0"),
+    ("oos_metrics",   "TEXT"),
+]
+
+_VERIFY_STRATEGY_COLUMNS = [
+    ("verify_count",      "INTEGER DEFAULT 0"),
+    ("verify_avg_score",  "REAL"),
+    ("verify_best_score", "REAL"),
+    ("last_verified_at",  "TEXT"),
+    ("verify_star",       "INTEGER DEFAULT NULL"),
+]
+
 
 def _apply_constraint_columns(conn: sqlite3.Connection) -> None:
     """Add leverage/direction and data range columns to evolution_task (idempotent)."""
@@ -184,6 +219,106 @@ def _apply_strategy_ext_columns(conn: sqlite3.Connection) -> None:
     conn.row_factory = None
 
     for col_name, col_def in _STRATEGY_EXT_COLUMNS:
+        if col_name not in existing:
+            conn.execute(
+                f"ALTER TABLE strategy ADD COLUMN {col_name} {col_def}"
+            )
+
+
+def _apply_fitness_columns(conn: sqlite3.Connection) -> None:
+    """Add fitness scoring columns to evolution_task, strategy, and backtest_result (idempotent).
+
+    Migration 021: new fitness-based scoring replaces score_strategy (0-100 weighted sum)
+    with compute_fitness (satisfaction ratio product + qualified boolean gate).
+    Old columns are kept for backward compatibility.
+    """
+    tables_columns = [
+        ("evolution_task", _FITNESS_EVOLUTION_TASK_COLUMNS),
+        ("strategy", _FITNESS_STRATEGY_COLUMNS),
+        ("backtest_result", _FITNESS_BACKTEST_RESULT_COLUMNS),
+    ]
+    for table_name, columns in tables_columns:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(f"PRAGMA table_info({table_name})")
+        existing = {row[1] for row in cursor.fetchall()}
+        conn.row_factory = None
+        for col_name, col_def in columns:
+            if col_name not in existing:
+                conn.execute(
+                    f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def}"
+                )
+
+
+def _apply_oos_validation_columns(conn: sqlite3.Connection) -> None:
+    """Add OOS validation columns to evolution_task (idempotent).
+
+    Migration 022: out-of-sample validation columns for champion strategies.
+    """
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(evolution_task)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+    for col_name, col_def in _OOS_VALIDATION_COLUMNS:
+        if col_name not in existing:
+            conn.execute(
+                f"ALTER TABLE evolution_task ADD COLUMN {col_name} {col_def}"
+            )
+
+
+# -- Verify session columns (migration 023) --
+
+_VERIFY_SESSION_BT_COLUMNS = [
+    ("session_id", "TEXT"),
+]
+
+
+def _create_verify_session_table(conn: sqlite3.Connection) -> None:
+    """Create verify_session table (idempotent)."""
+    conn.execute("""CREATE TABLE IF NOT EXISTS verify_session (
+        session_id       TEXT PRIMARY KEY,
+        status           TEXT NOT NULL DEFAULT 'running',
+        strategy_ids     TEXT NOT NULL,
+        data_ranges      TEXT NOT NULL,
+        init_cash        REAL NOT NULL DEFAULT 100000,
+        fee              REAL NOT NULL DEFAULT 0.001,
+        slippage         REAL NOT NULL DEFAULT 0.0005,
+        summary_json     TEXT,
+        total_results    INTEGER DEFAULT 0,
+        total_strategies INTEGER DEFAULT 0,
+        error_message    TEXT,
+        created_at       TEXT NOT NULL,
+        completed_at     TEXT
+    )""")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_verify_session_created "
+        "ON verify_session(created_at DESC)"
+    )
+
+
+def _apply_verify_session_columns(conn: sqlite3.Connection) -> None:
+    """Add session_id column to backtest_result (idempotent)."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(backtest_result)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+    for col_name, col_def in _VERIFY_SESSION_BT_COLUMNS:
+        if col_name not in existing:
+            conn.execute(
+                f"ALTER TABLE backtest_result ADD COLUMN {col_name} {col_def}"
+            )
+
+
+def _apply_verify_strategy_columns(conn: sqlite3.Connection) -> None:
+    """Add verification summary columns to strategy (idempotent).
+
+    Migration 024: track how many times a strategy has been verified,
+    its average and best comprehensive scores, and last verification time.
+    """
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("PRAGMA table_info(strategy)")
+    existing = {row[1] for row in cursor.fetchall()}
+    conn.row_factory = None
+    for col_name, col_def in _VERIFY_STRATEGY_COLUMNS:
         if col_name not in existing:
             conn.execute(
                 f"ALTER TABLE strategy ADD COLUMN {col_name} {col_def}"
@@ -323,6 +458,32 @@ def init_db_ext(db_path: Path) -> None:
         _recompute_strategy_names(conn)
         if 20 not in applied:
             _record_version(conn, 20)
+
+        # 20. Fitness scoring columns (migration 021)
+        _apply_fitness_columns(conn)
+        if 21 not in applied:
+            _record_version(conn, 21)
+
+        # 21. OOS validation columns (migration 022)
+        _apply_oos_validation_columns(conn)
+        if 22 not in applied:
+            _record_version(conn, 22)
+
+        # 22. Verify session table + session_id column (migration 023)
+        _create_verify_session_table(conn)
+        _apply_verify_session_columns(conn)
+        if 23 not in applied:
+            _record_version(conn, 23)
+
+        # 23. Strategy verification summary columns (migration 024)
+        _apply_verify_strategy_columns(conn)
+        if 24 not in applied:
+            _record_version(conn, 24)
+
+        # 24. Strategy verification star column (migration 025)
+        _apply_verify_strategy_columns(conn)
+        if 25 not in applied:
+            _record_version(conn, 25)
 
         conn.commit()
     finally:
@@ -963,28 +1124,21 @@ def count_strategies_by_tasks(
     return result
 
 
-def list_strategies(
-    db_path: Path,
+_SORT_ALLOWED_COLUMNS = {
+    "created_at", "updated_at", "best_score", "best_fitness",
+    "name", "symbol", "timeframe", "source", "generation",
+}
+_SORT_ALLOWED_ORDERS = {"asc", "desc"}
+
+
+def _build_strategy_where(
     *,
     symbol: Optional[str] = None,
     source: Optional[str] = None,
     source_task_id: Optional[str] = None,
     tags: Optional[str] = None,
-    sort_by: str = "created_at",
-    sort_order: str = "desc",
-    limit: int = 100,
-) -> List[Dict[str, Any]]:
-    """List strategies with optional filtering and sorting.
-
-    Args:
-        symbol: filter by trading pair (e.g. 'BTCUSDT').
-        source: filter by origin (e.g. 'manual', 'evolution').
-        source_task_id: filter by originating task ID.
-        tags: substring match against the tags column.
-        sort_by: column name to sort by.
-        sort_order: 'asc' or 'desc'.
-        limit: maximum rows to return.
-    """
+    qualified: Optional[bool] = None,
+) -> tuple[str, list[Any]]:
     conditions: list[str] = []
     params: list[Any] = []
 
@@ -1000,11 +1154,59 @@ def list_strategies(
     if tags is not None:
         conditions.append("tags LIKE ?")
         params.append(f"%{tags}%")
+    if qualified is not None:
+        conditions.append("qualified = ?")
+        params.append(1 if qualified else 0)
 
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+    return where, params
+
+
+def count_strategies(
+    db_path: Path,
+    *,
+    symbol: Optional[str] = None,
+    source: Optional[str] = None,
+    source_task_id: Optional[str] = None,
+    tags: Optional[str] = None,
+    qualified: Optional[bool] = None,
+) -> int:
+    where, params = _build_strategy_where(
+        symbol=symbol, source=source, source_task_id=source_task_id,
+        tags=tags, qualified=qualified,
+    )
+    conn = _connect(db_path)
+    row = conn.execute(f"SELECT COUNT(*) FROM strategy{where}", params).fetchone()
+    conn.close()
+    return row[0]
+
+
+def list_strategies(
+    db_path: Path,
+    *,
+    symbol: Optional[str] = None,
+    source: Optional[str] = None,
+    source_task_id: Optional[str] = None,
+    tags: Optional[str] = None,
+    qualified: Optional[bool] = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    limit: int = 100,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    """List strategies with optional filtering, sorting, and pagination."""
+    if sort_by not in _SORT_ALLOWED_COLUMNS:
+        raise ValueError(f"Invalid sort_by: {sort_by!r}. Allowed: {sorted(_SORT_ALLOWED_COLUMNS)}")
+    if sort_order.lower() not in _SORT_ALLOWED_ORDERS:
+        raise ValueError(f"Invalid sort_order: {sort_order!r}. Allowed: asc, desc")
+
+    where, params = _build_strategy_where(
+        symbol=symbol, source=source, source_task_id=source_task_id,
+        tags=tags, qualified=qualified,
+    )
     order = f" ORDER BY {sort_by} {sort_order.upper()}"
-    query = f"SELECT * FROM strategy{where}{order} LIMIT ?"
-    params.append(limit)
+    query = f"SELECT * FROM strategy{where}{order} LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
 
     conn = _connect(db_path)
     rows = conn.execute(query, params).fetchall()
@@ -1025,6 +1227,7 @@ def update_strategy(
     allowed = {
         "name", "dna_json", "source", "source_task_id", "symbol", "timeframe",
         "best_score", "generation", "parent_ids", "tags", "notes", "metrics_json",
+        "verify_count", "verify_avg_score", "verify_best_score", "last_verified_at", "verify_star",
     }
     updates: list[str] = []
     params: list[Any] = []
@@ -1085,6 +1288,10 @@ def save_backtest_result(
     equity_curve: Optional[str] = None,
     trades_json: Optional[str] = None,
     run_source: str = "lab",
+    fitness: float = 0.0,
+    qualified: int = 0,
+    satisfaction_json: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> None:
     """Insert a backtest result record."""
     now = _now()
@@ -1094,12 +1301,15 @@ def save_backtest_result(
            (result_id, strategy_id, symbol, timeframe, data_start, data_end,
             init_cash, fee, slippage, total_return, sharpe_ratio, max_drawdown,
             win_rate, total_trades, total_score, template_name, dimension_scores,
-            equity_curve, trades_json, run_source, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            equity_curve, trades_json, run_source, created_at,
+            fitness, qualified, satisfaction_json, session_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                   ?, ?, ?, ?)""",
         (result_id, strategy_id, symbol, timeframe, data_start, data_end,
          init_cash, fee, slippage, total_return, sharpe_ratio, max_drawdown,
          win_rate, total_trades, total_score, template_name, dimension_scores,
-         equity_curve, trades_json, run_source, now),
+         equity_curve, trades_json, run_source, now,
+         fitness, qualified, satisfaction_json, session_id),
     )
     conn.commit()
     conn.close()
@@ -1148,6 +1358,92 @@ def list_backtest_results(
 
     conn = _connect(db_path)
     rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ===================================================================
+# Verify Session CRUD
+# ===================================================================
+
+def save_verify_session(
+    db_path: Path,
+    *,
+    session_id: str,
+    strategy_ids: str,
+    data_ranges: str,
+    init_cash: float = 100000.0,
+    fee: float = 0.001,
+    slippage: float = 0.0005,
+    status: str = "running",
+) -> None:
+    conn = _connect(db_path)
+    conn.execute(
+        """INSERT INTO verify_session
+           (session_id, status, strategy_ids, data_ranges,
+            init_cash, fee, slippage, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (session_id, status, strategy_ids, data_ranges,
+         init_cash, fee, slippage, _now()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_verify_session(db_path: Path, session_id: str) -> Optional[Dict[str, Any]]:
+    conn = _connect(db_path)
+    row = conn.execute(
+        "SELECT * FROM verify_session WHERE session_id = ?", (session_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_verify_session(
+    db_path: Path,
+    session_id: str,
+    *,
+    status: Optional[str] = None,
+    summary_json: Optional[str] = None,
+    total_results: Optional[int] = None,
+    total_strategies: Optional[int] = None,
+    error_message: Optional[str] = None,
+    completed_at: Optional[str] = None,
+) -> None:
+    fields: Dict[str, Any] = {}
+    if status is not None:
+        fields["status"] = status
+    if summary_json is not None:
+        fields["summary_json"] = summary_json
+    if total_results is not None:
+        fields["total_results"] = total_results
+    if total_strategies is not None:
+        fields["total_strategies"] = total_strategies
+    if error_message is not None:
+        fields["error_message"] = error_message
+    if completed_at is not None:
+        fields["completed_at"] = completed_at
+    if not fields:
+        return
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    conn = _connect(db_path)
+    conn.execute(
+        f"UPDATE verify_session SET {sets} WHERE session_id = ?",
+        (*fields.values(), session_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_verify_sessions(
+    db_path: Path,
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    conn = _connect(db_path)
+    rows = conn.execute(
+        "SELECT * FROM verify_session ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 

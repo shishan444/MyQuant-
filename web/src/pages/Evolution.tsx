@@ -37,7 +37,7 @@ import {
 import { useAvailableSources } from "@/hooks/useDatasets";
 import { useCreateStrategy } from "@/hooks/useStrategies";
 import { isActiveStatus, SCORE_TEMPLATE_LABELS } from "@/lib/constants";
-import type { EvolutionTask, DNA, DiscoveredStrategy } from "@/types/api";
+import type { EvolutionTask, DNA, DiscoveredStrategy, RequirementsConfig } from "@/types/api";
 
 // ---------------------------------------------------------------------------
 // Main Page Component
@@ -75,6 +75,9 @@ export function Evolution() {
 
   // --- Config collapsed state ---
   const [configCollapsed, setConfigCollapsed] = useState(false);
+
+  // --- Preset selection (passed to AutoConfigForm to seed state) ---
+  const [presetToApply, setPresetToApply] = useState<Preset | null>(null);
 
   // --- Last active task ID (for chart data retention after task completes) ---
   const [lastActiveTaskId, setLastActiveTaskId] = useState<string>("");
@@ -188,15 +191,13 @@ export function Evolution() {
       symbol: string;
       timeframePool: string[];
       indicatorPool: string[];
-      scoreTemplate: string;
       populationSize: number;
       maxGenerations: number;
-      targetScore: number;
       leverage: number;
       direction: "long" | "short" | "mixed";
       dataStart?: string;
       dataEnd?: string;
-      strategyThreshold?: number;
+      requirements?: RequirementsConfig;
     }) => {
       if (activeTask) {
         toast.error("已有正在进行的探索任务，请先停止后再创建新任务");
@@ -206,10 +207,8 @@ export function Evolution() {
         await createTask.mutateAsync({
           symbol: config.symbol,
           timeframe: config.timeframePool[0] ?? "4h",
-          score_template: config.scoreTemplate,
           population_size: config.populationSize,
           max_generations: config.maxGenerations,
-          target_score: config.targetScore,
           indicator_pool: config.indicatorPool,
           timeframe_pool: config.timeframePool,
           mode: "auto",
@@ -217,9 +216,7 @@ export function Evolution() {
           direction: config.direction,
           data_start: config.dataStart,
           data_end: config.dataEnd,
-          strategy_threshold: config.strategyThreshold ?? 80,
-          min_annual_return: (config.minAnnualReturn ?? 10) / 100,
-          max_drawdown_limit: config.maxDrawdownLimit ? config.maxDrawdownLimit / 100 : null,
+          requirements: config.requirements,
         });
         setConfigCollapsed(true);
         setMutationLog([]);
@@ -234,12 +231,11 @@ export function Evolution() {
     async (config: {
       symbol: string;
       initialDna: DNA;
-      scoreTemplate: string;
       populationSize: number;
       maxGenerations: number;
-      targetScore: number;
       leverage: number;
       direction: "long" | "short" | "mixed";
+      requirements?: RequirementsConfig;
     }) => {
       if (activeTask) {
         toast.error("已有正在进行的探索任务，请先停止后再创建新任务");
@@ -249,14 +245,13 @@ export function Evolution() {
         await createTask.mutateAsync({
           symbol: config.symbol,
           timeframe: config.initialDna.execution_genes.timeframe,
-          score_template: config.scoreTemplate,
           population_size: config.populationSize,
           max_generations: config.maxGenerations,
-          target_score: config.targetScore,
           initial_dna: config.initialDna,
           mode: "seed",
           leverage: config.leverage,
           direction: config.direction,
+          requirements: config.requirements,
         });
         setConfigCollapsed(true);
         setSeedDna(null);
@@ -296,14 +291,12 @@ export function Evolution() {
   );
 
   const handlePresetSelect = useCallback(
-    (_preset: Preset) => {
+    (preset: Preset) => {
       setSelectedMode("auto");
       setConfigCollapsed(false);
+      setPresetToApply(preset);
       configRef.current?.scrollIntoView({ behavior: "smooth" });
-      // The preset config is passed through to AutoConfigForm via context or we
-      // handle it in the form component. For simplicity, just switch mode and
-      // scroll to config.
-      toast.info(`已切换到自动模式，请配置参数后开始探索`);
+      toast.info(`已应用预设「${preset.title}」, 可调整参数后开始探索`);
     },
     []
   );
@@ -420,6 +413,21 @@ export function Evolution() {
                       {currentTask.max_generations}
                     </span>
                   )}
+                  {currentTask.best_fitness != null && (
+                    <span className="text-emerald-400">
+                      适应度 {currentTask.best_fitness.toFixed(3)}
+                    </span>
+                  )}
+                  {currentTask.best_score != null && (
+                    <span className="text-slate-500">
+                      得分 {currentTask.best_score.toFixed(1)}
+                    </span>
+                  )}
+                  {currentTask.qualified_count != null && currentTask.qualified_count > 0 && (
+                    <span className="text-sky-400">
+                      {currentTask.qualified_count} 达标
+                    </span>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -448,6 +456,8 @@ export function Evolution() {
                     onSubmit={handleStartAuto}
                     symbolOptions={dynamicSymbolOptions}
                     availableSources={sourcesData?.sources}
+                    initialPreset={presetToApply}
+                    onPresetApplied={() => setPresetToApply(null)}
                   />
                 ) : (
                   <SeedConfigForm

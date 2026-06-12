@@ -18,34 +18,34 @@ import {
   TF_LAYER_ROLES,
   INDICATOR_GROUPS,
   INDICATOR_LABELS,
-  OPTIMIZE_TARGETS,
   LEVERAGE_OPTIONS,
   DIRECTION_OPTIONS,
+  REQUIREMENTS_DEFAULTS,
+  OBJECTIVE_OPTIONS,
   sortTimeframesLongestFirst,
 } from "@/lib/constants";
-import type { AvailableSource } from "@/types/api";
+import type { AvailableSource, RequirementsConfig } from "@/types/api";
 import { getEvolutionTasks } from "@/services/evolution";
+import type { Preset } from "@/components/evolution/QuickPresets";
 
 interface AutoConfigFormProps {
   disabled: boolean;
   isPending: boolean;
   symbolOptions?: { value: string; label: string }[];
   availableSources?: AvailableSource[];
+  initialPreset?: Preset | null;
+  onPresetApplied?: () => void;
   onSubmit: (config: {
     symbol: string;
     timeframePool: string[];
     indicatorPool: string[];
-    scoreTemplate: string;
     populationSize: number;
     maxGenerations: number;
-    targetScore: number;
     leverage: number;
     direction: "long" | "short" | "mixed";
     dataStart?: string;
     dataEnd?: string;
-    strategyThreshold?: number;
-    minAnnualReturn?: number;
-    maxDrawdownLimit?: number;
+    requirements?: RequirementsConfig;
   }) => void;
 }
 
@@ -55,24 +55,29 @@ export function AutoConfigForm({
   onSubmit,
   symbolOptions,
   availableSources,
+  initialPreset,
+  onPresetApplied,
 }: AutoConfigFormProps) {
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframePool, setTimeframePool] = useState<string[]>(["4h"]);
   const [indicatorPool, setIndicatorPool] = useState<string[]>(
     INDICATOR_GROUPS.flatMap((g) => g.items)
   );
-  const [scoreTemplate, setScoreTemplate] = useState("explorer");
   const [advOpen, setAdvOpen] = useState(false);
   const [populationSize, setPopulationSize] = useState(15);
   const [maxGenerations, setMaxGenerations] = useState(200);
-  const [targetScore, setTargetScore] = useState(80);
   const [leverage, setLeverage] = useState(1);
   const [direction, setDirection] = useState<"long" | "short" | "mixed">("long");
   const [dataStart, setDataStart] = useState("");
   const [dataEnd, setDataEnd] = useState("");
-  const [strategyThreshold, setStrategyThreshold] = useState(80);
-  const [minAnnualReturn, setMinAnnualReturn] = useState(10);
-  const [maxDrawdownLimit, setMaxDrawdownLimit] = useState<string>("10");
+  const [requirements, setRequirements] = useState<RequirementsConfig>({
+    objective: REQUIREMENTS_DEFAULTS.objective,
+    min_annual_return: REQUIREMENTS_DEFAULTS.min_annual_return,
+    max_drawdown: REQUIREMENTS_DEFAULTS.max_drawdown,
+    min_win_rate: REQUIREMENTS_DEFAULTS.min_win_rate,
+    min_total_trades: REQUIREMENTS_DEFAULTS.min_total_trades,
+    min_profit_factor: REQUIREMENTS_DEFAULTS.min_profit_factor,
+  });
 
   // Pre-fill date range from the most recent task that has dates
   useEffect(() => {
@@ -88,6 +93,21 @@ export function AutoConfigForm({
       })
       .catch(() => {});
   }, []);
+
+  // Apply preset when provided
+  useEffect(() => {
+    if (!initialPreset) return;
+    if (initialPreset.indicators) {
+      setIndicatorPool(initialPreset.indicators);
+    }
+    if (initialPreset.timeframePool) {
+      setTimeframePool(initialPreset.timeframePool);
+    }
+    if (initialPreset.requirements) {
+      setRequirements(initialPreset.requirements);
+    }
+    onPresetApplied?.();
+  }, [initialPreset, onPresetApplied]);
 
   // Filter timeframes that have data for the current symbol
   const availableTimeframes = useMemo(() => {
@@ -114,7 +134,6 @@ export function AutoConfigForm({
     setTimeframePool((prev) => {
       if (prev.includes(tf)) return prev;
       if (prev.length >= 4) return prev;
-      // Keep sorted: longest first
       return sortTimeframesLongestFirst([...prev, tf]);
     });
   }, []);
@@ -129,7 +148,9 @@ export function AutoConfigForm({
     );
   }, []);
 
-  const canSubmit = indicatorPool.length >= 2 && !disabled;
+  const canSubmit = indicatorPool.length >= 2
+    && requirements.max_drawdown > 0
+    && !disabled;
 
   const handleSubmit = useCallback(() => {
     if (!canSubmit) return;
@@ -137,17 +158,13 @@ export function AutoConfigForm({
       symbol,
       timeframePool,
       indicatorPool,
-      scoreTemplate,
       populationSize,
       maxGenerations,
-      targetScore,
       leverage,
       direction,
       dataStart: dataStart || undefined,
       dataEnd: dataEnd || undefined,
-      strategyThreshold,
-      minAnnualReturn,
-      maxDrawdownLimit: maxDrawdownLimit ? Number(maxDrawdownLimit) : undefined,
+      requirements,
     });
   }, [
     canSubmit,
@@ -155,17 +172,13 @@ export function AutoConfigForm({
     symbol,
     timeframePool,
     indicatorPool,
-    scoreTemplate,
     populationSize,
     maxGenerations,
-    targetScore,
     leverage,
     direction,
     dataStart,
     dataEnd,
-    strategyThreshold,
-    minAnnualReturn,
-    maxDrawdownLimit,
+    requirements,
   ]);
 
   return (
@@ -208,7 +221,6 @@ export function AutoConfigForm({
           周期组合
         </span>
         <div className="flex flex-col gap-2">
-          {/* Selected timeframes as ordered list with role labels */}
           <div className="flex flex-wrap gap-1.5">
             {sortedPool.map((tf, idx) => {
               const isLast = idx === sortedPool.length - 1;
@@ -237,7 +249,6 @@ export function AutoConfigForm({
                 </div>
               );
             })}
-            {/* Add button */}
             {sortedPool.length < 4 && (
               <Select onValueChange={addTimeframe}>
                 <SelectTrigger className="h-6 w-6 border-dashed border-slate-700/50 bg-transparent p-0 text-[10px] hover:border-slate-600">
@@ -300,26 +311,121 @@ export function AutoConfigForm({
         </div>
       </div>
 
-      {/* Optimize target */}
+      {/* Running requirements (directly visible, replaces optimize target) */}
       <div className="flex items-start gap-3">
         <span className="mt-1 w-14 shrink-0 text-xs text-slate-400">
-          优化目标
+          运行要求
         </span>
-        <div className="flex flex-col gap-1.5">
-          <Select value={scoreTemplate} onValueChange={setScoreTemplate}>
-            <SelectTrigger className="h-7 w-36 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {OPTIMIZE_TARGETS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-slate-500">优化目标</span>
+            <Select
+              value={requirements.objective ?? "sharpe"}
+              onValueChange={(v) =>
+                setRequirements((prev) => ({ ...prev, objective: v }))
+              }
+            >
+              <SelectTrigger className="h-7 w-28 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {OBJECTIVE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-5 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-slate-500">年化收益 %</label>
+              <Input
+                type="number"
+                min={0}
+                max={1000}
+                step={1}
+                value={requirements.min_annual_return * 100}
+                onChange={(e) =>
+                  setRequirements((prev) => ({
+                    ...prev,
+                    min_annual_return: Number(e.target.value) / 100 || 0,
+                  }))
+                }
+                className="h-7 w-full text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-slate-500">最大回撤 %</label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={requirements.max_drawdown * 100}
+                onChange={(e) =>
+                  setRequirements((prev) => ({
+                    ...prev,
+                    max_drawdown: Number(e.target.value) / 100 || 0,
+                  }))
+                }
+                className="h-7 w-full text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-slate-500">最低胜率 %</label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={requirements.min_win_rate * 100}
+                onChange={(e) =>
+                  setRequirements((prev) => ({
+                    ...prev,
+                    min_win_rate: Number(e.target.value) / 100 || 0,
+                  }))
+                }
+                className="h-7 w-full text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-slate-500">最少交易</label>
+              <Input
+                type="number"
+                min={0}
+                max={1000}
+                step={1}
+                value={requirements.min_total_trades}
+                onChange={(e) =>
+                  setRequirements((prev) => ({
+                    ...prev,
+                    min_total_trades: Number(e.target.value) || 0,
+                  }))
+                }
+                className="h-7 w-full text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-slate-500">盈亏比</label>
+              <Input
+                type="number"
+                min={0}
+                max={10}
+                step={0.1}
+                value={requirements.min_profit_factor}
+                onChange={(e) =>
+                  setRequirements((prev) => ({
+                    ...prev,
+                    min_profit_factor: Number(e.target.value) || 0,
+                  }))
+                }
+                className="h-7 w-full text-xs"
+              />
+            </div>
+          </div>
           <span className="text-[10px] text-slate-600">
-            {OPTIMIZE_TARGETS.find((t) => t.value === scoreTemplate)?.description}
+            至少配置收益和回撤两项, 满足所有要求的策略将被标记为达标
           </span>
         </div>
       </div>
@@ -394,7 +500,7 @@ export function AutoConfigForm({
         )}
       </div>
 
-      {/* Advanced params (collapsible) */}
+      {/* Advanced params (collapsible) - only population size + max generations */}
       <div className="flex flex-col gap-2">
         <button
           type="button"
@@ -433,58 +539,6 @@ export function AutoConfigForm({
                 value={maxGenerations}
                 onChange={(e) =>
                   setMaxGenerations(Number(e.target.value) || 200)
-                }
-                className="h-7 w-24 text-xs"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-500">目标分数 (60-100)</label>
-              <Input
-                type="number"
-                min={60}
-                max={100}
-                value={targetScore}
-                onChange={(e) =>
-                  setTargetScore(Number(e.target.value) || 80)
-                }
-                className="h-7 w-24 text-xs"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-500">策略提取阈值 (60-100)</label>
-              <Input
-                type="number"
-                min={60}
-                max={100}
-                value={strategyThreshold}
-                onChange={(e) =>
-                  setStrategyThreshold(Number(e.target.value) || 80)
-                }
-                className="h-7 w-24 text-xs"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-500">最低年化收益 % (0-1000)</label>
-              <Input
-                type="number"
-                min={0}
-                max={1000}
-                value={minAnnualReturn}
-                onChange={(e) =>
-                  setMinAnnualReturn(Number(e.target.value) || 10)
-                }
-                className="h-7 w-24 text-xs"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-500">最大回撤限制 % (5-80)</label>
-              <Input
-                type="number"
-                min={5}
-                max={80}
-                value={maxDrawdownLimit}
-                onChange={(e) =>
-                  setMaxDrawdownLimit(e.target.value)
                 }
                 className="h-7 w-24 text-xs"
               />

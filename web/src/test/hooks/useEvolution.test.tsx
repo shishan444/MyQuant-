@@ -233,9 +233,11 @@ describe("useEvolutionWebSocket", () => {
       task_id: "task1",
       current_generation: 5,
       best_score: 60,
+      best_fitness: 0.55,
+      qualified_count: 2,
     });
     qc.setQueryData(evolutionKeys.history("task1"), {
-      records: [{ generation: 5, best_score: 60, avg_score: 40, created_at: "2025-01-01" }],
+      records: [{ generation: 5, best_score: 60, avg_score: 40, best_fitness: 0.55, avg_fitness: 0.38, created_at: "2025-01-01" }],
     });
 
     renderHook(() => useEvolutionWebSocket("task1"), { wrapper });
@@ -248,6 +250,8 @@ describe("useEvolutionWebSocket", () => {
           generation: 6,
           best_score: 72,
           avg_score: 45,
+          best_fitness: 0.68,
+          qualified_count: 3,
         }),
       });
     });
@@ -281,6 +285,7 @@ describe("useEvolutionWebSocket", () => {
         data: JSON.stringify({
           type: "evolution_complete",
           best_score: 85,
+          best_fitness: 0.82,
           champion_dna: '{"signal_genes":[]}',
         }),
       });

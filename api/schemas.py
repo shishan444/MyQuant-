@@ -61,6 +61,16 @@ class ScoreTemplate(str, Enum):
     CUSTOM = "custom"
 
 
+class RequirementsConfigModel(BaseModel):
+    """User-configurable requirements for strategy qualification."""
+    objective: str = Field(default="sharpe", description="Objective function: sharpe, calmar, or annual_return")
+    min_annual_return: float = Field(default=0.0, ge=0.0, description="Minimum annual return constraint (0 = disabled)")
+    max_drawdown: float = Field(default=0.30, ge=0.05, le=0.99, description="Maximum drawdown (0.30 = 30%)")
+    min_win_rate: float = Field(default=0.0, ge=0.0, le=1.0, description="Minimum win rate (0 = disabled)")
+    min_total_trades: int = Field(default=10, ge=0, description="Minimum total trades")
+    min_profit_factor: float = Field(default=1.2, ge=0.0, description="Minimum profit factor")
+
+
 # ── DNA Component Models ──
 
 
@@ -169,11 +179,18 @@ class StrategyResponse(BaseModel):
     source: str = "manual"
     source_task_id: Optional[str] = None
     best_score: Optional[float] = None
+    best_fitness: Optional[float] = None
+    qualified: Optional[bool] = None
     metrics: Optional[StrategyMetrics] = None
     generation: int = 0
     parent_ids: Optional[str] = None
     tags: Optional[str] = None
     notes: Optional[str] = None
+    verify_count: int = 0
+    verify_avg_score: Optional[float] = None
+    verify_best_score: Optional[float] = None
+    last_verified_at: Optional[str] = None
+    verify_star: Optional[int] = None
     created_at: str
     updated_at: str
 
@@ -193,9 +210,8 @@ class StrategyUpdate(BaseModel):
     tags: Optional[str] = None
     notes: Optional[str] = None
     best_score: Optional[float] = None
-
-
-# ── Backtest Schemas ──
+    best_fitness: Optional[float] = None
+    qualified: Optional[bool] = None
 
 
 class BacktestRequest(BaseModel):
@@ -233,8 +249,11 @@ class BacktestResponse(BaseModel):
     win_rate: float = 0.0
     total_trades: int = 0
     total_score: float = 0.0
+    fitness: float = 0.0
+    qualified: bool = False
     template_name: str = "explorer"
     dimension_scores: Optional[Dict[str, Any]] = None
+    satisfaction: Optional[Dict[str, Any]] = None
     run_source: str = "lab"
     equity_curve: Optional[List[Dict[str, Any]]] = None
     signals: Optional[List[Dict[str, Any]]] = None
@@ -264,12 +283,164 @@ class CompareResultItem(BaseModel):
     win_rate: float = 0.0
     total_trades: int = 0
     total_score: float = 0.0
+    fitness: float = 0.0
+    satisfaction: Optional[Dict[str, Any]] = None
     dimension_scores: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
 
 class CompareResponse(BaseModel):
     results: List[CompareResultItem]
+
+
+# ── Verify Schemas ──
+
+
+class VerifyDateRange(BaseModel):
+    start: str
+    end: str
+
+
+class VerifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    strategy_ids: List[str]
+    data_ranges: List[VerifyDateRange]
+    init_cash: float = 100000.0
+    fee: float = 0.001
+    slippage: float = 0.0005
+    leverage: int = 1
+
+
+class VerifyResultItem(BaseModel):
+    strategy_id: str
+    data_start: str
+    data_end: str
+    total_return: float = 0.0
+    sharpe_ratio: float = 0.0
+    max_drawdown: float = 0.0
+    win_rate: float = 0.0
+    total_trades: int = 0
+    profit_factor: float = 0.0
+    fitness: float = 0.0
+    qualified: bool = False
+    error: Optional[str] = None
+
+
+class VerifyPeriodSummary(BaseModel):
+    data_start: str
+    data_end: str
+    total_return: float = 0.0
+    sharpe_ratio: float = 0.0
+    max_drawdown: float = 0.0
+    fitness: float = 0.0
+    qualified: bool = False
+
+
+class VerifySummaryItem(BaseModel):
+    strategy_id: str
+    strategy_name: str
+    comprehensive_score: float = 0.0
+    avg_fitness: float = 0.0
+    qualified_count: int = 0
+    total_periods: int = 0
+    per_period_metrics: List[VerifyPeriodSummary] = []
+
+
+class VerifyResponse(BaseModel):
+    results: List[VerifyResultItem]
+    summary: List[VerifySummaryItem]
+
+
+# ── Batch Backtest Schemas ──
+
+
+class BatchBacktestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    strategy_ids: List[str]
+    data_ranges: List[VerifyDateRange]
+    init_cash: float = 100000.0
+    fee: float = 0.001
+    slippage: float = 0.0005
+    leverage: int = 1
+
+
+class BatchBacktestResultItem(BaseModel):
+    result_id: str
+    strategy_id: str
+    strategy_name: str = ""
+    symbol: str = ""
+    timeframe: str = ""
+    data_start: str
+    data_end: str
+    total_return: float = 0.0
+    sharpe_ratio: float = 0.0
+    max_drawdown: float = 0.0
+    win_rate: float = 0.0
+    total_trades: int = 0
+    profit_factor: float = 0.0
+    fitness: float = 0.0
+    qualified: bool = False
+    liquidated: bool = False
+    total_funding_cost: float = 0.0
+    error: Optional[str] = None
+
+
+class BatchBacktestSummaryItem(BaseModel):
+    strategy_id: str
+    strategy_name: str
+    symbol: str = ""
+    timeframe: str = ""
+    avg_total_return: float = 0.0
+    avg_sharpe_ratio: float = 0.0
+    worst_max_drawdown: float = 0.0
+    avg_fitness: float = 0.0
+    qualified_count: int = 0
+    total_periods: int = 0
+    per_period_results: List[BatchBacktestResultItem] = []
+
+
+class VerifyHistoryItem(BaseModel):
+    result_id: str
+    strategy_id: str
+    strategy_name: Optional[str] = None
+    symbol: str
+    timeframe: str
+    data_start: str
+    data_end: str
+    total_return: float = 0.0
+    sharpe_ratio: float = 0.0
+    max_drawdown: float = 0.0
+    fitness: float = 0.0
+    qualified: int = 0
+    created_at: str
+
+
+class VerifyHistoryResponse(BaseModel):
+    items: List[VerifyHistoryItem]
+    total: int
+
+
+class VerifySessionResponse(BaseModel):
+    session_id: str
+    status: str
+    strategy_ids: str
+    data_ranges: str
+    init_cash: float
+    fee: float
+    slippage: float
+    summary_json: Optional[str] = None
+    total_results: int = 0
+    total_strategies: int = 0
+    error_message: Optional[str] = None
+    created_at: str
+    completed_at: Optional[str] = None
+
+
+class VerifySessionListResponse(BaseModel):
+    items: List[VerifySessionResponse]
+    total: int
 
 
 # ── Evolution Schemas ──
@@ -281,8 +452,9 @@ class EvolutionTaskCreate(BaseModel):
     initial_dna: Optional[DNAModel] = None
     symbol: str
     timeframe: str
-    target_score: float = 80.0
+    target_score: float = 1.0
     score_template: str = "explorer"
+    requirements: Optional[RequirementsConfigModel] = None
     population_size: int = 15
     max_generations: int = 200
     elite_ratio: float = 0.5
@@ -295,7 +467,7 @@ class EvolutionTaskCreate(BaseModel):
     data_start: Optional[str] = None
     data_end: Optional[str] = None
     continuous: bool = True
-    strategy_threshold: float = Field(default=80.0, description="Score threshold for auto-extracting strategies")
+    strategy_threshold: float = Field(default=1.0, description="Fitness threshold for auto-extracting strategies")
     min_annual_return: float = Field(default=0.10, ge=0.0, le=10.0, description="Minimum annual return soft constraint (0.10 = 10%, 6.0 = 600%)")
     max_drawdown_limit: Optional[float] = Field(default=0.10, ge=0.05, le=0.80, description="Max drawdown soft constraint (0.10 = 10%). None=disabled")
 
@@ -320,6 +492,9 @@ class EvolutionTaskResponse(BaseModel):
     updated_at: str
     stop_reason: Optional[str] = None
     best_score: Optional[float] = None
+    best_fitness: Optional[float] = None
+    requirements: Optional[RequirementsConfigModel] = None
+    qualified_count: int = 0
     leverage: int = 1
     direction: str = "long"
     data_start: Optional[str] = None
@@ -332,6 +507,7 @@ class EvolutionTaskResponse(BaseModel):
     mode: Optional[str] = None
     champion_metrics: Optional[Dict[str, Any]] = None
     champion_dimension_scores: Optional[Dict[str, Any]] = None
+    champion_satisfaction: Optional[Dict[str, Any]] = None
     continuous: bool = True
     strategy_threshold: float = 80.0
     min_annual_return: float = 0.10
@@ -353,6 +529,8 @@ class EvolutionHistoryRecord(BaseModel):
     generation: int
     best_score: float
     avg_score: float
+    best_fitness: Optional[float] = None
+    avg_fitness: Optional[float] = None
     top3_summary: Optional[str] = None
     created_at: str
 
@@ -454,6 +632,7 @@ class PaperTradingTaskCreate(BaseModel):
     direction: str = Field(default="long", pattern="^(long|short|mixed)$")
     score_template: str = Field(default="explorer")
     strategy_name: Optional[str] = None
+    strategy_id: Optional[str] = Field(default=None, description="Optional strategy ID for qualified check")
     confidence_sizing_enabled: bool = False
     prediction_dna_json: Optional[str] = Field(default=None, description="PredictionDNA as JSON string")
 
@@ -495,6 +674,8 @@ class PaperTradingTaskResponse(BaseModel):
     execution_model: str = "v1"
     confidence_sizing_enabled: bool = False
     prediction_dna_json: Optional[str] = None
+    # Warnings
+    warnings: Optional[List[str]] = None
 
 
 class PaperTradingTaskListResponse(BaseModel):

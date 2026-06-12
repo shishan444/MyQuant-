@@ -38,6 +38,10 @@ _PRICE_ABOVE = ConditionPreset("price_above", [])
 _PRICE_BELOW = ConditionPreset("price_below", [])
 _CROSS_ABOVE = ConditionPreset("cross_above", [])
 _CROSS_BELOW = ConditionPreset("cross_below", [])
+_CROSS_ABOVE_SERIES = ConditionPreset("cross_above_series", [])
+_CROSS_BELOW_SERIES = ConditionPreset("cross_below_series", [])
+_LOOKBACK_ANY = ConditionPreset("lookback_any", [])
+_LOOKBACK_ALL = ConditionPreset("lookback_all", [])
 _GT = ConditionPreset("gt", [])
 _LT = ConditionPreset("lt", [])
 _EQ_1 = ConditionPreset("eq", [1])
@@ -50,32 +54,32 @@ PROFILES: Dict[str, IndicatorProfile] = {
     # == trend (6) ==
     "EMA": IndicatorProfile(
         recommended_roles=["entry_guard", "exit_guard"],
-        recommended_params={"period": [7, 20, 50, 100, 200]},
-        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW],
+        recommended_params={"period": [10, 20, 50, 100, 200]},
+        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW, _CROSS_ABOVE_SERIES, _CROSS_BELOW_SERIES],
         follow_probability=0.70,
     ),
     "SMA": IndicatorProfile(
         recommended_roles=["entry_guard", "exit_guard"],
         recommended_params={"period": [10, 20, 50, 200]},
-        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW],
+        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW, _CROSS_ABOVE_SERIES, _CROSS_BELOW_SERIES],
         follow_probability=0.70,
     ),
     "WMA": IndicatorProfile(
         recommended_roles=["entry_guard"],
         recommended_params={"period": [10, 20, 50]},
-        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW],
+        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW, _CROSS_ABOVE_SERIES, _CROSS_BELOW_SERIES],
         follow_probability=0.60,
     ),
     "DEMA": IndicatorProfile(
         recommended_roles=["entry_guard"],
         recommended_params={"period": [20, 50]},
-        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW],
+        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW, _CROSS_ABOVE_SERIES, _CROSS_BELOW_SERIES],
         follow_probability=0.60,
     ),
     "TEMA": IndicatorProfile(
         recommended_roles=["entry_guard"],
-        recommended_params={"period": [9, 25]},
-        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW],
+        recommended_params={"period": [10, 20]},
+        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW, _CROSS_ABOVE_SERIES, _CROSS_BELOW_SERIES],
         follow_probability=0.60,
     ),
     "VWAP": IndicatorProfile(
@@ -111,7 +115,7 @@ PROFILES: Dict[str, IndicatorProfile] = {
     ),
     "CCI": IndicatorProfile(
         recommended_roles=["entry_guard"],
-        recommended_params={"period": [14, 20]},
+        recommended_params={"period": [20]},
         recommended_conditions=[
             ConditionPreset("lt", [-100]),
             ConditionPreset("gt", [100]),
@@ -120,7 +124,7 @@ PROFILES: Dict[str, IndicatorProfile] = {
     ),
     "ROC": IndicatorProfile(
         recommended_roles=["entry_guard"],
-        recommended_params={"period": [9, 12, 14]},
+        recommended_params={"period": [12]},
         recommended_conditions=[_CROSS_ABOVE, _CROSS_BELOW, _GT, _LT],
         follow_probability=0.60,
     ),
@@ -135,8 +139,8 @@ PROFILES: Dict[str, IndicatorProfile] = {
     ),
     "Aroon": IndicatorProfile(
         recommended_roles=["entry_trigger"],
-        recommended_params={"period": [14]},
-        recommended_conditions=[_CROSS_ABOVE, _CROSS_BELOW, _GT, _LT],
+        recommended_params={"period": [25]},
+        recommended_conditions=[_CROSS_ABOVE, _CROSS_BELOW, _GT, _LT, _CROSS_ABOVE_SERIES, _CROSS_BELOW_SERIES],
         follow_probability=0.60,
     ),
     "CMO": IndicatorProfile(
@@ -150,7 +154,7 @@ PROFILES: Dict[str, IndicatorProfile] = {
     ),
     "TRIX": IndicatorProfile(
         recommended_roles=["entry_trigger"],
-        recommended_params={"period": [12, 25]},
+        recommended_params={"period": [12]},
         recommended_conditions=[_CROSS_ABOVE, _CROSS_BELOW, _GT, _LT],
         follow_probability=0.55,
     ),
@@ -162,6 +166,7 @@ PROFILES: Dict[str, IndicatorProfile] = {
         recommended_conditions=[
             ConditionPreset("price_below", [], target_field="lower"),
             ConditionPreset("price_above", [], target_field="upper"),
+            _LOOKBACK_ANY, _LOOKBACK_ALL,
         ],
         follow_probability=0.70,
     ),
@@ -173,13 +178,13 @@ PROFILES: Dict[str, IndicatorProfile] = {
     ),
     "Keltner": IndicatorProfile(
         recommended_roles=["entry_guard", "exit_guard"],
-        recommended_params={"ema_period": [20], "atr_period": [10], "multiplier": [1.0, 1.5, 2.0]},
+        recommended_params={"ema_period": [20], "atr_period": [10], "multiplier": [2.0]},
         recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW],
         follow_probability=0.60,
     ),
     "Donchian": IndicatorProfile(
         recommended_roles=["entry_trigger", "exit_trigger"],
-        recommended_params={"period": [20, 50]},
+        recommended_params={"period": [20]},
         recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW],
         follow_probability=0.65,
     ),
@@ -214,7 +219,7 @@ PROFILES: Dict[str, IndicatorProfile] = {
     ),
     "VROC": IndicatorProfile(
         recommended_roles=["entry_guard"],
-        recommended_params={"period": [14, 20]},
+        recommended_params={"period": [14]},
         recommended_conditions=[_GT, _LT],
         follow_probability=0.50,
     ),
@@ -233,7 +238,7 @@ PROFILES: Dict[str, IndicatorProfile] = {
     "VWMA": IndicatorProfile(
         recommended_roles=["entry_guard"],
         recommended_params={"period": [20, 50]},
-        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW],
+        recommended_conditions=[_PRICE_ABOVE, _PRICE_BELOW, _CROSS_ABOVE, _CROSS_BELOW, _CROSS_ABOVE_SERIES, _CROSS_BELOW_SERIES],
         follow_probability=0.55,
     ),
 

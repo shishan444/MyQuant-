@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { X, Loader2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { cn, formatNumber } from "@/lib/utils";
+import { cn, formatNumber, getFitnessColor } from "@/lib/utils";
 import { KlineChart } from "@/components/charts/KlineChart";
 import type { KlineChartHandle, CandleData, SignalData } from "@/components/charts/KlineChart";
 import { runBacktest } from "@/services/strategies";
@@ -296,9 +296,9 @@ function MetricsPanel({ result }: { result: BacktestResult }) {
       color: result.total_trades > 10 ? "text-slate-200" : "text-amber-400",
     },
     {
-      label: "评分",
-      value: formatNumber(result.total_score),
-      color: result.total_score > 60 ? "text-emerald-400" : result.total_score > 40 ? "text-amber-400" : "text-red-400",
+      label: "适应度",
+      value: result.fitness != null ? result.fitness.toFixed(2) : "-",
+      color: result.qualified ? "text-emerald-400" : result.fitness != null ? getFitnessColor(result.fitness) : "text-slate-500",
     },
   ];
 
@@ -318,6 +318,17 @@ function MetricsPanel({ result }: { result: BacktestResult }) {
           </div>
         ))}
       </div>
+      {result.qualified != null && (
+        <div className="mt-2 flex items-center gap-2 text-[11px]">
+          <span className={result.qualified ? "text-emerald-400" : "text-slate-500"}>
+            {result.qualified ? "达标" : "未达标"}
+          </span>
+          <span className={cn(
+            "inline-block h-2 w-2 rounded-full",
+            result.qualified ? "bg-emerald-400" : "bg-slate-600"
+          )} />
+        </div>
+      )}
       {result.total_funding_cost > 0 && (
         <div className="mt-2 text-[11px] text-amber-500/80">
           资金费用: {formatNumber(result.total_funding_cost)}

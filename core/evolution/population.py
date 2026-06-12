@@ -51,32 +51,32 @@ STRATEGY_TEMPLATES = [
              "role": "exit_trigger", "field": None,
              "condition": {"type": "gt", "threshold": 70}},
             {"indicator": "BB", "params": {"period": 20, "std": 2.0},
-             "role": "exit_guard", "field": "percent",
-             "condition": {"type": "gt", "threshold": 0.8}},
+             "role": "exit_guard", "field": "upper",
+             "condition": {"type": "price_above"}},
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # mean_reversion: BB + RSI mean reversion
+    {   # mean_reversion: BB lower/upper band + RSI
         "name": "mean_reversion",
         "genes": [
             {"indicator": "BB", "params": {"period": 20, "std": 2.0},
-             "role": "entry_trigger", "field": "percent",
-             "condition": {"type": "lt", "threshold": 0.0}},
+             "role": "entry_trigger", "field": "lower",
+             "condition": {"type": "price_below"}},
             {"indicator": "RSI", "params": {"period": 14},
              "role": "entry_guard", "field": None,
              "condition": {"type": "lt", "threshold": 35}},
             {"indicator": "BB", "params": {"period": 20, "std": 2.0},
-             "role": "exit_trigger", "field": "percent",
-             "condition": {"type": "gt", "threshold": 0.8}},
+             "role": "exit_trigger", "field": "upper",
+             "condition": {"type": "price_above"}},
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # trend_breakout: BB squeeze + MACD breakout
+    {   # trend_breakout: low ADX (consolidation) + MACD breakout
         "name": "trend_breakout",
         "genes": [
-            {"indicator": "BB", "params": {"period": 20, "std": 2.0},
-             "role": "entry_guard", "field": "bandwidth",
-             "condition": {"type": "lt", "threshold": 0.02}},
+            {"indicator": "ADX", "params": {"period": 14},
+             "role": "entry_guard", "field": None,
+             "condition": {"type": "lt", "threshold": 25}},
             {"indicator": "MACD", "params": {"fast": 12, "slow": 26, "signal": 9},
              "role": "entry_trigger", "field": "histogram",
              "condition": {"type": "cross_above", "threshold": 0}},
@@ -89,48 +89,48 @@ STRATEGY_TEMPLATES = [
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # dual_ma_cross: classic EMA(9)/EMA(21) golden/death cross
+    {   # dual_ma_cross: EMA(10) crosses above/below EMA(20)
         "name": "dual_ma_cross",
         "genes": [
-            {"indicator": "EMA", "params": {"period": 9},
+            {"indicator": "EMA", "params": {"period": 10},
              "role": "entry_trigger", "field": None,
-             "condition": {"type": "cross_above"}},
-            {"indicator": "EMA", "params": {"period": 21},
+             "condition": {"type": "cross_above_series", "target_indicator": "EMA", "target_params": {"period": 20}}},
+            {"indicator": "EMA", "params": {"period": 20},
              "role": "entry_guard", "field": None,
              "condition": {"type": "price_above"}},
-            {"indicator": "EMA", "params": {"period": 9},
+            {"indicator": "EMA", "params": {"period": 10},
              "role": "exit_trigger", "field": None,
-             "condition": {"type": "cross_below"}},
-            {"indicator": "EMA", "params": {"period": 21},
+             "condition": {"type": "cross_below_series", "target_indicator": "EMA", "target_params": {"period": 20}}},
+            {"indicator": "EMA", "params": {"period": 20},
              "role": "exit_guard", "field": None,
              "condition": {"type": "price_below"}},
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # multi_tf_trend: multi-timeframe trend confirmation with ADX
+    {   # multi_tf_trend: EMA trend + ADX strength confirmation
         "name": "multi_tf_trend",
         "genes": [
             {"indicator": "EMA", "params": {"period": 50},
              "role": "entry_trigger", "field": None,
-             "condition": {"type": "cross_above"}},
+             "condition": {"type": "price_above"}},
             {"indicator": "ADX", "params": {"period": 14},
              "role": "entry_guard", "field": None,
              "condition": {"type": "gt", "threshold": 25}},
             {"indicator": "EMA", "params": {"period": 50},
              "role": "exit_trigger", "field": None,
-             "condition": {"type": "cross_below"}},
+             "condition": {"type": "price_below"}},
             {"indicator": "ATR", "params": {"period": 14},
              "role": "exit_guard", "field": None,
              "condition": {"type": "gt", "threshold": 0}},
         ],
         "logic": {"entry_logic": "AND", "exit_logic": "OR"},
     },
-    {   # volatility: Bollinger Band volatility breakout
+    {   # volatility: low ADX (consolidation) + MACD breakout
         "name": "volatility",
         "genes": [
-            {"indicator": "BB", "params": {"period": 20, "std": 2.0},
-             "role": "entry_guard", "field": "bandwidth",
-             "condition": {"type": "lt", "threshold": 0.02}},
+            {"indicator": "ADX", "params": {"period": 14},
+             "role": "entry_guard", "field": None,
+             "condition": {"type": "lt", "threshold": 25}},
             {"indicator": "MACD", "params": {"fast": 12, "slow": 26, "signal": 9},
              "role": "entry_trigger", "field": "histogram",
              "condition": {"type": "cross_above", "threshold": 0}},
@@ -146,23 +146,108 @@ STRATEGY_TEMPLATES = [
 ]
 
 
-# Indicators suitable for DIRECTION genes: all support price_above/price_below
-_DIRECTION_INDICATORS = ["EMA", "SMA", "WMA", "DEMA", "TEMA", "VWAP", "PSAR",
-                         "BB", "Keltner", "Donchian", "VWMA"]
+# Trend indicators: use price_above (True = close > indicator = bullish)
+_DIRECTION_TREND_INDICATORS = ["EMA", "SMA", "WMA", "DEMA", "TEMA", "VWMA"]
+
+# Band indicators: use price_above on specific field
+_DIRECTION_BAND_INDICATORS = ["BB", "Keltner", "Donchian"]
+
+# Momentum indicators: use gt with directional threshold (True = bullish)
+# Each config: (indicator_name, field_name, threshold, threshold_range)
+_DIRECTION_MOMENTUM_CONFIGS = [
+    ("RSI", None, 50, (30, 70)),
+    ("MACD", "histogram", 0, (-5, 5)),
+    ("CCI", None, 0, (-200, 200)),
+    ("ROC", None, 0, (-10, 10)),
+    ("CMO", None, 0, (-50, 50)),
+    ("TRIX", None, 0, (-1, 1)),
+    ("CMF", None, 0, (-0.5, 0.5)),
+    ("MFI", None, 50, (30, 70)),
+    ("Aroon", "aroon_osc", 0, (-50, 50)),
+    ("MultifactorOsc", None, 0, (-1, 1)),
+]
 
 
 def _create_direction_gene() -> SignalGene:
-    """Create a DIRECTION gene with profile-aware indicator selection.
+    """Create a DIRECTION gene with trend or momentum indicator.
 
-    Supports all indicators that have price_above/price_below conditions,
-    not just EMA/SMA. Uses indicator profiles for parameter guidance when
-    available.
+    Two categories with "True = bullish" semantics:
+    - Trend indicators: price_above condition (close > indicator = bullish)
+    - Momentum indicators: gt condition (indicator > threshold = bullish)
     """
-    indicator_name = random.choice(_DIRECTION_INDICATORS)
+    kind = random.choices(
+        ["trend", "band", "momentum"],
+        weights=[5, 3, 4],
+    )[0]
+
+    if kind == "trend":
+        return _create_trend_direction_gene()
+    elif kind == "band":
+        return _create_band_direction_gene()
+    else:
+        return _create_momentum_direction_gene()
+
+
+def _create_trend_direction_gene() -> SignalGene:
+    """Create a DIRECTION gene using a trend indicator with price_above."""
+    indicator_name = random.choice(_DIRECTION_TREND_INDICATORS)
     reg = INDICATOR_REGISTRY.get(indicator_name)
     profile = PROFILES.get(indicator_name)
 
-    # Build params
+    params = _build_params(reg, profile)
+    return SignalGene(
+        indicator=indicator_name,
+        params=params,
+        role=SignalRole.DIRECTION,
+        field_name=None,
+        condition={"type": "price_above"},
+    )
+
+
+def _create_band_direction_gene() -> SignalGene:
+    """Create a DIRECTION gene using a band indicator with price_above."""
+    indicator_name = random.choice(_DIRECTION_BAND_INDICATORS)
+    reg = INDICATOR_REGISTRY.get(indicator_name)
+    profile = PROFILES.get(indicator_name)
+
+    params = _build_params(reg, profile)
+
+    field_name = None
+    if reg and len(reg.output_fields) > 1:
+        field_name = random.choice(reg.output_fields)
+
+    return SignalGene(
+        indicator=indicator_name,
+        params=params,
+        role=SignalRole.DIRECTION,
+        field_name=field_name,
+        condition={"type": "price_above"},
+    )
+
+
+def _create_momentum_direction_gene() -> SignalGene:
+    """Create a DIRECTION gene using a momentum indicator with gt threshold."""
+    indicator_name, field_name, threshold, (lo, hi) = random.choice(
+        _DIRECTION_MOMENTUM_CONFIGS
+    )
+    reg = INDICATOR_REGISTRY.get(indicator_name)
+    profile = PROFILES.get(indicator_name)
+
+    params = _build_params(reg, profile)
+    # Allow threshold to vary around the default
+    jittered_threshold = round(random.uniform(lo, hi), 2)
+
+    return SignalGene(
+        indicator=indicator_name,
+        params=params,
+        role=SignalRole.DIRECTION,
+        field_name=field_name,
+        condition={"type": "gt", "threshold": jittered_threshold},
+    )
+
+
+def _build_params(reg, profile) -> dict:
+    """Build indicator params using profile guidance when available."""
     if profile and profile.recommended_params and random.random() < profile.follow_probability:
         params = {}
         for pname, pdef in reg.params.items():
@@ -177,27 +262,7 @@ def _create_direction_gene() -> SignalGene:
             val = random.uniform(pdef.min, pdef.max)
             params[pname] = int(round(val / pdef.step) * pdef.step) if pdef.type == "int" \
                 else round(round(val / pdef.step) * pdef.step, 2)
-
-    # DIRECTION genes only use price_above or price_below
-    condition = {"type": random.choice(["price_above", "price_below"])}
-
-    # For band indicators, pick a specific field
-    field_name = None
-    if reg and len(reg.output_fields) > 1:
-        # Prefer upper/lower for band indicators
-        band_fields = [f for f in reg.output_fields if f in ("upper", "lower")]
-        if band_fields:
-            field_name = random.choice(band_fields)
-        else:
-            field_name = random.choice(reg.output_fields)
-
-    return SignalGene(
-        indicator=indicator_name,
-        params=params,
-        role=SignalRole.DIRECTION,
-        field_name=field_name,
-        condition=condition,
-    )
+    return params
 
 
 def _dna_from_template(
@@ -332,6 +397,11 @@ def create_random_dna(
     actual_direction = direction
 
     available_indicators = list(indicator_pool) if indicator_pool else list(INDICATOR_REGISTRY.keys())
+    # Filter out indicators that cannot be computed during evolution:
+    # - compute_mode="lazy" indicators are skipped by compute_all_indicators(skip_lazy=True)
+    # - VWAP has no compute implementation in _compute_indicator
+    _NO_COMPUTE = {"VWAP", "FractalEntropy", "MultifactorOsc", "VolumeProfile"}
+    available_indicators = [n for n in available_indicators if n not in _NO_COMPUTE]
     trigger_indicators = [
         name for name in available_indicators
         if name in INDICATOR_REGISTRY and not INDICATOR_REGISTRY[name].guard_only

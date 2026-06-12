@@ -32,8 +32,17 @@ def _make_simple_dna(direction="long"):
         field_name="RSI_14",
         condition={"type": "gt", "threshold": 70},
     )
+    genes = [gene_entry, gene_exit]
+    if direction == "mixed":
+        genes.append(SignalGene(
+            indicator="EMA",
+            params={"period": 50},
+            role=SignalRole.DIRECTION,
+            field_name=None,
+            condition={"type": "price_above"},
+        ))
     return StrategyDNA(
-        signal_genes=[gene_entry, gene_exit],
+        signal_genes=genes,
         logic_genes=LogicGenes(entry_logic="AND", exit_logic="AND"),
         execution_genes=ExecutionGenes(timeframe="4h", symbol="BTCUSDT"),
         risk_genes=RiskGenes(

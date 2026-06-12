@@ -88,6 +88,17 @@ def _task_row_to_response(
         except (json.JSONDecodeError, Exception):
             champion_dna = None
 
+    # Parse requirements from JSON column
+    requirements = None
+    req_raw = row.get("requirements_json")
+    if req_raw:
+        try:
+            from api.schemas import RequirementsConfigModel
+            req_dict = json.loads(req_raw) if isinstance(req_raw, str) else req_raw
+            requirements = RequirementsConfigModel(**req_dict)
+        except Exception:
+            requirements = None
+
     return EvolutionTaskResponse(
         task_id=row["task_id"],
         status=row["status"],
@@ -106,6 +117,9 @@ def _task_row_to_response(
         updated_at=row["updated_at"],
         stop_reason=row.get("stop_reason"),
         best_score=row.get("best_score"),
+        best_fitness=row.get("best_fitness"),
+        requirements=requirements,
+        qualified_count=row.get("qualified_count", 0),
         leverage=row.get("leverage", 1),
         direction=row.get("direction", "long"),
         data_start=row.get("data_start"),
@@ -118,6 +132,7 @@ def _task_row_to_response(
         mode=row.get("mode"),
         champion_metrics=_parse_json_dict(row.get("champion_metrics")),
         champion_dimension_scores=_parse_json_dict(row.get("champion_dimension_scores")),
+        champion_satisfaction=_parse_json_dict(row.get("champion_satisfaction")),
         continuous=bool(row.get("continuous", 1)),
         strategy_threshold=row.get("strategy_threshold", 80.0),
         min_annual_return=row.get("min_annual_return", 0.10),
@@ -167,6 +182,8 @@ def list_all_discovered_strategies(
             "source": "evolution",
             "source_task_id": s.get("source_task_id"),
             "score": score,
+            "fitness": s.get("best_fitness"),
+            "qualified": bool(s.get("qualified", 0)) if s.get("qualified") is not None else None,
             "generation": s.get("generation", 0),
             "created_at": s.get("created_at"),
             "symbol": s.get("symbol", ""),
@@ -284,6 +301,10 @@ def create_task(
     )
 
     # Update extended columns (including leverage/direction constraints and data info)
+    requirements_json = None
+    if payload.requirements:
+        requirements_json = json.dumps(payload.requirements.model_dump())
+
     conn = _get_connection(db_path)
     conn.execute(
         """UPDATE evolution_task
@@ -295,7 +316,8 @@ def create_task(
                indicator_pool = ?, timeframe_pool = ?, mode = ?,
                continuous = ?,
                strategy_threshold = ?,
-               min_annual_return = ?, max_drawdown_limit = ?
+               min_annual_return = ?, max_drawdown_limit = ?,
+               requirements_json = ?
            WHERE task_id = ?""",
         (payload.population_size, payload.max_generations,
          payload.elite_ratio, payload.n_workers,
@@ -308,6 +330,7 @@ def create_task(
          1 if payload.continuous else 0,
          payload.strategy_threshold,
          payload.min_annual_return, payload.max_drawdown_limit,
+         requirements_json,
          task_id),
     )
     conn.commit()
@@ -371,6 +394,8 @@ def get_task_history(
             generation=h["generation"],
             best_score=h["best_score"],
             avg_score=h["avg_score"],
+            best_fitness=h.get("best_fitness"),
+            avg_fitness=h.get("avg_fitness"),
             top3_summary=h.get("top3_summary"),
             created_at=h["created_at"],
         )
@@ -537,6 +562,8 @@ def get_discovered_strategies(
             "source": "evolution",
             "source_task_id": s.get("source_task_id"),
             "score": score,
+            "fitness": s.get("best_fitness"),
+            "qualified": bool(s.get("qualified", 0)) if s.get("qualified") is not None else None,
             "generation": s.get("generation", 0),
             "created_at": s.get("created_at"),
             "symbol": s.get("symbol", ""),

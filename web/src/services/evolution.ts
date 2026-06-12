@@ -5,6 +5,7 @@ import type {
   EvolutionHistoryResponse,
   EvolvedStrategy,
   DiscoveredStrategy,
+  RequirementsConfig,
 } from "@/types/api";
 
 export async function getEvolutionTasks(params?: {
@@ -39,6 +40,7 @@ export async function createEvolutionTask(payload: {
   strategy_threshold?: number;
   min_annual_return?: number;
   max_drawdown_limit?: number;
+  requirements?: RequirementsConfig;
 }): Promise<EvolutionTask> {
   const { data } = await api.post("/api/evolution/tasks", payload);
   return data;

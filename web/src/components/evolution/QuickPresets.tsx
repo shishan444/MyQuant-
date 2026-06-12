@@ -1,4 +1,6 @@
 import { cn } from "@/lib/utils";
+import { REQUIREMENTS_DEFAULTS } from "@/lib/constants";
+import type { RequirementsConfig } from "@/types/api";
 
 interface Preset {
   id: string;
@@ -7,6 +9,7 @@ interface Preset {
   indicators: string[];
   timeframePool: string[];
   scoreTemplate: string;
+  requirements: RequirementsConfig;
   mode: "auto";
 }
 
@@ -18,6 +21,7 @@ const PRESETS: Preset[] = [
     indicators: ["RSI", "BB"],
     timeframePool: ["4h"],
     scoreTemplate: "explorer",
+    requirements: { ...REQUIREMENTS_DEFAULTS, objective: "sharpe" },
     mode: "auto",
   },
   {
@@ -27,6 +31,14 @@ const PRESETS: Preset[] = [
     indicators: ["EMA", "ADX"],
     timeframePool: ["4h"],
     scoreTemplate: "optimizer",
+    requirements: {
+      objective: "sharpe",
+      min_annual_return: 0.25,
+      max_drawdown: 0.20,
+      min_win_rate: 0.0,
+      min_total_trades: 15,
+      min_profit_factor: 1.5,
+    },
     mode: "auto",
   },
   {
@@ -36,6 +48,14 @@ const PRESETS: Preset[] = [
     indicators: ["EMA", "RSI", "BB"],
     timeframePool: ["1d", "4h"],
     scoreTemplate: "explorer",
+    requirements: {
+      objective: "sharpe",
+      min_annual_return: 0.0,
+      max_drawdown: 0.40,
+      min_win_rate: 0.0,
+      min_total_trades: 5,
+      min_profit_factor: 1.0,
+    },
     mode: "auto",
   },
 ];

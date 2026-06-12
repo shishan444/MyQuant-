@@ -169,8 +169,8 @@ class TestEmptySignalSetStructure:
         assert sig.reduces.sum() == 0
 
 
-class TestAllFalseSignalSetProducesScore5:
-    """All-False signal DNA -> score=5.0 (consistent with existing behavior)."""
+class TestAllFalseSignalSetProducesZero:
+    """All-False signal DNA -> score=0.0 (untriggable strategies are eliminated)."""
 
     def test_empty_signals_score(self):
         from api.runner import EvolutionRunner
@@ -191,4 +191,4 @@ class TestAllFalseSignalSetProducesScore5:
             enhanced_df=enhanced_df,
         )
 
-        assert result["score"] == 5.0
+        assert result["score"] == 0.0

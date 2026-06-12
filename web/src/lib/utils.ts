@@ -1,8 +1,27 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { FITNESS_COLOR_THRESHOLDS } from "@/lib/constants";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+export function getFitnessColor(
+  fitness: number,
+  objective: string = "sharpe",
+  targetScore?: number,
+): string {
+  if (fitness == null || isNaN(fitness)) return "text-slate-500";
+  const thresholds = FITNESS_COLOR_THRESHOLDS[objective] ?? FITNESS_COLOR_THRESHOLDS.sharpe;
+  const good = objective === "annual_return" && targetScore != null && targetScore > 0
+    ? targetScore
+    : thresholds.good;
+  const mid = objective === "annual_return" && targetScore != null && targetScore > 0
+    ? targetScore * 0.5
+    : thresholds.mid;
+  if (fitness >= good) return "text-emerald-400";
+  if (fitness >= mid) return "text-amber-400";
+  return "text-red-400";
 }
 
 export function formatPercent(value: number): string {

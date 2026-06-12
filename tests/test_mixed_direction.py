@@ -285,13 +285,23 @@ def test_short_still_works():
     assert isinstance(result.total_return, float)
 
 def test_single_tf_mixed_has_direction_signal():
-    """Single-TF mixed strategy: entry_direction should be generated from momentum."""
+    """Single-TF mixed strategy: entry_direction should be generated from DIRECTION gene."""
     dna = _make_single_tf_mixed_dna("mixed")
+    # Add a DIRECTION gene (required for mixed strategies)
+    dna = StrategyDNA(
+        signal_genes=dna.signal_genes + [
+            SignalGene("EMA", {"period": 50}, SignalRole.DIRECTION, None,
+                        {"type": "price_above"}),
+        ],
+        logic_genes=dna.logic_genes,
+        execution_genes=dna.execution_genes,
+        risk_genes=dna.risk_genes,
+    )
     df = _make_trending_data()
 
     sig = dna_to_signal_set(dna, df)
     assert sig.entry_direction is not None, (
-        "Single-TF mixed strategy should generate entry_direction from momentum"
+        "Single-TF mixed strategy should generate entry_direction from DIRECTION gene"
     )
     # Should have both +1 and -1 values (up and down trend)
     assert (sig.entry_direction > 0).any(), "Should have positive direction (uptrend)"

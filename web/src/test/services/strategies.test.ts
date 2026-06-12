@@ -81,6 +81,8 @@ describe("strategies service", () => {
       fee: 0.001,
       slippage: 0.0005,
       run_source: "lab",
+      fitness: 0.68,
+      qualified: true,
     };
     mockedPost.mockResolvedValueOnce({ data: mockResult });
     const result = await runBacktest(payload);

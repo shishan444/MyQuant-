@@ -679,12 +679,12 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
     child_signals.extend(entry_a if entry_a else [a_genes[0]] if a_genes else [])
     child_signals.extend(exit_b if exit_b else [b_genes[-1]] if b_genes else [])
 
-    # Inherit DIRECTION gene: prefer from random parent, keep at most one
+    # Inherit DIRECTION gene: always preserve if either parent has one
     direction_a = [g for g in a_genes if g.role == SignalRole.DIRECTION]
     direction_b = [g for g in b_genes if g.role == SignalRole.DIRECTION]
-    direction_source = random.choice([direction_a, direction_b])
-    if direction_source:
-        child_signals.append(direction_source[0])
+    direction_candidates = direction_a or direction_b
+    if direction_candidates:
+        child_signals.append(random.choice(direction_candidates))
 
     if not child_signals:
         child_signals = list(a_genes)
@@ -736,12 +736,12 @@ def crossover(parent_a: StrategyDNA, parent_b: StrategyDNA) -> StrategyDNA:
                                  [la.signal_genes[0]] if la.signal_genes else [])
             layer_signals.extend(layer_exit_b if layer_exit_b else
                                  [lb.signal_genes[-1]] if lb.signal_genes else [])
-            # Inherit DIRECTION gene from random parent in this layer
+            # Inherit DIRECTION gene: always preserve if either parent has one
             layer_dir_a = [g for g in la.signal_genes if g.role == SignalRole.DIRECTION]
             layer_dir_b = [g for g in lb.signal_genes if g.role == SignalRole.DIRECTION]
-            layer_dir_source = random.choice([layer_dir_a, layer_dir_b])
-            if layer_dir_source:
-                layer_signals.append(layer_dir_source[0])
+            layer_dir_candidates = layer_dir_a or layer_dir_b
+            if layer_dir_candidates:
+                layer_signals.append(random.choice(layer_dir_candidates))
             if not layer_signals:
                 layer_signals = list(la.signal_genes)
             layer_logic = random.choice([la.logic_genes, lb.logic_genes])

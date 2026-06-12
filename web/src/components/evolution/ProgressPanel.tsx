@@ -39,11 +39,11 @@ export function ProgressPanel({
       ? Math.round((currentGeneration / maxGenerations) * 100)
       : 0;
   const bestScore = task.best_score ?? 0;
-  const targetScore = task.target_score ?? 0;
+  const bestFitness = task.best_fitness ?? 0;
   const attemptedCount = currentGeneration * (task.population_size ?? 15);
   const isActive = isActiveStatus(task.status);
   const isPaused = task.status === "paused";
-  const reachedTarget = bestScore >= targetScore;
+  const reachedTarget = (task.qualified_count ?? 0) > 0;
   const isContinuous = task.continuous === true;
   const populationCount = task.population_count ?? 1;
   const [showChampion, setShowChampion] = useState(false);
@@ -121,16 +121,28 @@ export function ProgressPanel({
       {/* Score comparison */}
       <div className="grid grid-cols-2 gap-3">
         <StatCard
-          label="当前最优"
-          value={formatNumber(bestScore)}
+          label="当前适应度"
+          value={bestFitness.toFixed(2)}
           trend={reachedTarget ? "up" : "neutral"}
         />
         <StatCard
-          label="目标分数"
-          value={formatNumber(targetScore)}
+          label="综合得分"
+          value={formatNumber(bestScore)}
           trend="neutral"
         />
       </div>
+      {/* Qualified indicator */}
+      {reachedTarget && (
+        <div className="flex items-center gap-2">
+          <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
+          <span className="text-xs font-medium text-emerald-400">已达标</span>
+          {task.qualified_count != null && task.qualified_count > 0 && (
+            <span className="text-[11px] text-slate-500">
+              达标策略: <span className="font-mono text-emerald-400">{task.qualified_count}</span>
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Diagnostics tags */}
       <div className="flex items-center gap-2">

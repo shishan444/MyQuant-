@@ -24,15 +24,15 @@ class EarlyStopChecker:
     """Check early stopping conditions after each generation.
 
     4 rules:
-    1. Target reached: best_score >= target
+    1. Target reached: best_fitness >= target
     2. Stagnation: no improvement for patience generations
-    3. Decline: best_score declining for decline_limit generations
+    3. Decline: best_fitness declining for decline_limit generations
     4. Max generations: reached max_generations
     """
 
     def __init__(
         self,
-        target_score: float = 80.0,
+        target_score: float = 1.0,
         max_generations: int = 200,
         patience: int = 15,
         min_improvement: float = 0.5,
@@ -142,21 +142,8 @@ def _tournament_select(
     return selected
 
 
-# Template-aware mutation bias overlay
-_TEMPLATE_MUTATION_BIAS = {
-    # Core templates
-    "explorer":   {"params": 1.5, "indicator": 1.2, "risk": 0.5},
-    "optimizer":  {"params": 1.0, "indicator": 1.0, "risk": 1.0},
-    "max_return": {"params": 1.8, "indicator": 1.5, "risk": 0.3},
-    # Legacy aliases
-    "profit_first": {"params": 1.5, "indicator": 1.2, "risk": 0.5},
-    "aggressive":   {"params": 1.5, "indicator": 1.2, "risk": 0.5},
-    "steady":       {"params": 1.0, "indicator": 1.0, "risk": 1.0},
-    "balanced":     {"params": 1.0, "indicator": 1.0, "risk": 1.0},
-    "risk_first":   {"params": 0.7, "indicator": 0.8, "risk": 1.8},
-    "conservative": {"params": 0.7, "indicator": 0.8, "risk": 1.8},
-    "custom":       {"params": 1.0, "indicator": 1.0, "risk": 1.0},
-}
+# Default mutation bias: balanced exploration (templates deprecated)
+_DEFAULT_MUTATION_BIAS = {"params": 1.0, "indicator": 1.0, "risk": 1.0}
 
 
 class EvolutionEngine:
@@ -171,7 +158,7 @@ class EvolutionEngine:
 
     def __init__(
         self,
-        target_score: float = 80.0,
+        target_score: float = 1.0,
         template_name: str = "explorer",
         population_size: int = 15,
         max_generations: int = 200,
@@ -237,7 +224,7 @@ class EvolutionEngine:
 
         history = []
         champion = None
-        champion_score = -1.0
+        champion_fitness = -1.0
         stagnation_count = 0
         adaptive_mut = _AdaptiveMutationController(window_size=10)
 
@@ -248,55 +235,58 @@ class EvolutionEngine:
                 ind.risk_genes.direction = self.direction
 
             # Evaluate all individuals
-            scored = []
+            evaluated = []
             if evaluate_population is not None:
                 # Batch evaluation: one call for the whole population
                 if stop_check is not None:
                     stop_check()
-                scores = evaluate_population(population)
-                scored = list(zip(population, scores))
+                fitnesses = evaluate_population(population)
+                evaluated = list(zip(population, fitnesses))
             else:
                 # Sequential per-individual evaluation (with stop checks)
                 for idx, ind in enumerate(population):
                     if stop_check is not None and idx > 0 and idx % 3 == 0:
                         stop_check()
-                    scored.append((ind, evaluate_fn(ind)))
-            scored.sort(key=lambda x: x[1], reverse=True)
+                    evaluated.append((ind, evaluate_fn(ind)))
+            evaluated.sort(key=lambda x: x[1], reverse=True)
 
-            best_score = scored[0][1]
-            avg_score = sum(s for _, s in scored) / len(scored)
+            best_fitness = evaluated[0][1]
+            avg_fitness = sum(f for _, f in evaluated) / len(evaluated)
 
             history.append({
                 "generation": gen,
-                "best_score": best_score,
-                "avg_score": avg_score,
+                "best_score": best_fitness,
+                "avg_score": avg_fitness,
+                "best_fitness": best_fitness,
+                "avg_fitness": avg_fitness,
             })
 
             # Track champion and stagnation
-            if best_score > champion_score:
-                champion = scored[0][0]
-                champion_score = best_score
+            if best_fitness > champion_fitness:
+                champion = evaluated[0][0]
+                champion_fitness = best_fitness
                 stagnation_count = 0
             else:
                 stagnation_count += 1
 
             # Record for adaptive mutation
-            adaptive_mut.record(best_score)
+            adaptive_mut.record(best_fitness)
 
-            # Expose scored population (sorted descending) so callbacks can
+            # Expose evaluated population (sorted descending) so callbacks can
             # reliably access the best individual via _population[0].
-            self._population = [ind for ind, _ in scored]
+            self._population = [ind for ind, _ in evaluated]
 
             # Callback
             if on_generation:
-                on_generation(gen, best_score, avg_score)
+                on_generation(gen, best_fitness, avg_fitness)
 
             # Early stop check
-            action, reason = stop_checker.check(best_score, gen)
+            action, reason = stop_checker.check(best_fitness, gen)
             if action == "stop":
                 return {
                     "champion": champion,
-                    "champion_score": champion_score,
+                    "champion_score": champion_fitness,
+                    "champion_fitness": champion_fitness,
                     "history": history,
                     "stop_reason": reason,
                     "total_generations": gen,
@@ -306,12 +296,12 @@ class EvolutionEngine:
             # --- Selection ---
 
             # Elite: top elite_ratio (min 2) survive unchanged
-            elite_count = max(2, int(len(scored) * self.elite_ratio))
-            elites = [ind for ind, _ in scored[:elite_count]]
+            elite_count = max(2, int(len(evaluated) * self.elite_ratio))
+            elites = [ind for ind, _ in evaluated[:elite_count]]
 
             # Parents for crossover: tournament selection from full population
             n_children = self.population_size - elite_count - 3  # reserve 3 for fresh blood
-            parents = _tournament_select(scored, n_children * 2, tournsize=3)
+            parents = _tournament_select(evaluated, n_children * 2, tournsize=3)
 
             # --- Mutation weights based on stagnation + adaptive controller ---
             if stagnation_count > 8:
@@ -347,14 +337,13 @@ class EvolutionEngine:
                         int(w * (0.5 ** i)) for i, w in enumerate(n_mut_weights_adjusted)
                     ]
 
-            # Template-aware mutation bias (overlaid on stagnation weights)
-            bias = _TEMPLATE_MUTATION_BIAS.get(self.template_name, {})
-            if bias:
-                mut_weights[0] *= bias.get("params", 1.0)
-                mut_weights[1] *= bias.get("indicator", 1.0)
-                mut_weights[3] *= bias.get("risk", 1.0)
-                total_w = sum(mut_weights)
-                mut_weights = [w / total_w * 100 for w in mut_weights]
+            # Mutation bias (overlaid on stagnation weights)
+            bias = _DEFAULT_MUTATION_BIAS
+            mut_weights[0] *= bias.get("params", 1.0)
+            mut_weights[1] *= bias.get("indicator", 1.0)
+            mut_weights[3] *= bias.get("risk", 1.0)
+            total_w = sum(mut_weights)
+            mut_weights = [w / total_w * 100 for w in mut_weights]
 
             mutation_pool = [
                 mutate_params, mutate_indicator, mutate_logic, mutate_risk,
@@ -432,9 +421,10 @@ class EvolutionEngine:
 
         return {
             "champion": champion,
-            "champion_score": champion_score,
+            "champion_score": champion_fitness,
+            "champion_fitness": champion_fitness,
             "history": history,
             "stop_reason": "max_generations",
             "total_generations": self.max_generations,
-            "target_reached": champion_score >= self.target_score,
+            "target_reached": champion_fitness >= self.target_score,
         }

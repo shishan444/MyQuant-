@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { cn, getFitnessColor } from "@/lib/utils";
 import type { DNA, TimeframeLayerModel } from "@/types/api";
 
 interface StrategyDetailProps {
@@ -14,6 +14,9 @@ interface StrategyDetailProps {
     total_trades: number;
   };
   champion_dimension_scores?: Record<string, number>;
+  champion_satisfaction?: Record<string, unknown>;
+  champion_fitness?: number;
+  champion_qualified?: boolean;
 }
 
 export function StrategyDetail({
@@ -21,6 +24,9 @@ export function StrategyDetail({
   className,
   champion_metrics,
   champion_dimension_scores,
+  champion_satisfaction,
+  champion_fitness,
+  champion_qualified,
 }: StrategyDetailProps) {
   const hasLayers = dna.layers && dna.layers.length > 0;
 
@@ -56,8 +62,39 @@ export function StrategyDetail({
   const metrics = champion_metrics;
   const dimScores = champion_dimension_scores;
 
+  // Parse satisfaction data for per-dimension display
+  const satisfactionEntries = champion_satisfaction
+    ? Object.entries(champion_satisfaction) as Array<[string, { actual: number; required: number; ratio: number; met: boolean }]>
+    : null;
+
   return (
     <div className={cn("flex flex-col gap-3", className)}>
+      {/* Fitness and qualified status */}
+      {(champion_fitness != null || champion_qualified != null) && (
+        <div className="flex items-center gap-3 text-xs">
+          {champion_fitness != null && (
+            <span className="text-slate-500">
+              适应度:{" "}
+              <span className={champion_qualified === true ? "font-mono text-emerald-400" : champion_qualified === false ? "font-mono text-amber-400" : `font-mono ${getFitnessColor(champion_fitness)}`}>
+                {champion_fitness.toFixed(2)}
+              </span>
+            </span>
+          )}
+          {champion_qualified != null && (
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-[10px]",
+                champion_qualified
+                  ? "border-emerald-400/30 text-emerald-400"
+                  : "border-slate-700/30 text-slate-500"
+              )}
+            >
+              {champion_qualified ? "达标" : "未达标"}
+            </Badge>
+          )}
+        </div>
+      )}
       {/* MTF layers display */}
       {hasLayers &&
         (dna.layers as TimeframeLayerModel[]).map((layer, idx) => {
@@ -234,6 +271,49 @@ export function StrategyDetail({
               score={dimScores?.total_trades}
               positive={metrics.total_trades > 0}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Per-dimension satisfaction details (replaces dimension_scores) */}
+      {satisfactionEntries && satisfactionEntries.length > 0 && (
+        <div className="mt-1 rounded-lg border border-slate-700/30 p-3">
+          <div className="mb-2 text-xs font-medium text-slate-300">
+            达标详情
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {satisfactionEntries.map(([dim, info]) => (
+              <div key={dim} className="flex items-center justify-between text-xs">
+                <span className="text-slate-500">{dim}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-slate-400">
+                    {typeof info.actual === "number"
+                      ? info.actual.toFixed(3)
+                      : String(info.actual)}
+                  </span>
+                  <span className="text-slate-600">
+                    / {typeof info.required === "number" ? info.required.toFixed(3) : String(info.required)}
+                  </span>
+                  <span className={cn(
+                    "font-mono text-[10px]",
+                    info.ratio >= 1.0 ? "text-emerald-400" : "text-red-400/70"
+                  )}>
+                    {typeof info.ratio === "number" ? info.ratio.toFixed(2) : String(info.ratio)}
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "text-[9px] px-1 py-0",
+                      info.met
+                        ? "border-emerald-400/30 text-emerald-400"
+                        : "border-red-400/30 text-red-400/70"
+                    )}
+                  >
+                    {info.met ? "达标" : "未达标"}
+                  </Badge>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

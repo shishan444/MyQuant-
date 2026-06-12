@@ -99,7 +99,23 @@ def create_task(
         prediction_dna_json=body.prediction_dna_json,
     )
     row = get_paper_trading_task(db_path, task_id)
-    return _task_to_response(row)
+    response = _task_to_response(row)
+
+    # Qualified warning check: if strategy_id provided, look up qualified status
+    warnings = []
+    if body.strategy_id:
+        from api.db_ext import get_strategy
+        strat = get_strategy(db_path, body.strategy_id)
+        if strat is not None:
+            qualified_val = strat.get("qualified")
+            if qualified_val is not None and not bool(qualified_val):
+                warnings.append(
+                    "Strategy has not passed qualification checks (qualified=False). "
+                    "Performance may not meet minimum requirements."
+                )
+
+    response.warnings = warnings if warnings else None
+    return response
 
 
 @router.get("/tasks", response_model=PaperTradingTaskListResponse)

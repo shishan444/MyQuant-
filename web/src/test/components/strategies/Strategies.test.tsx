@@ -15,6 +15,7 @@ vi.mock("@/services/strategies", () => ({
   deleteStrategy: vi.fn(),
   updateStrategy: vi.fn(),
   runBacktest: vi.fn(),
+  compareStrategies: vi.fn(),
 }));
 
 // Mock hooks - keep useStrategies real (delegates to mocked API), mock mutations
@@ -208,5 +209,81 @@ describe("Strategies page", () => {
     render(<Strategies />, { wrapper: createWrapper() });
     await screen.findByText("Test Strategy");
     expect(mockUseDeleteStrategy).toHaveBeenCalled();
+  });
+
+  // --- Qualified badge ---
+  it("renders qualified badge for qualified strategy", async () => {
+    mockGetStrategies.mockResolvedValue({
+      items: [makeStrategy({ strategy_id: "s1", name: "Good Strat", qualified: true, best_fitness: 1.5 })],
+      total: 1,
+    });
+
+    render(<Strategies />, { wrapper: createWrapper() });
+    await screen.findByText("Good Strat");
+    const badges = screen.getAllByText("达标");
+    expect(badges.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // --- Checkbox rendering ---
+  it("renders checkboxes in table rows", async () => {
+    mockGetStrategies.mockResolvedValue({
+      items: [
+        makeStrategy({ strategy_id: "s1", name: "Alpha" }),
+        makeStrategy({ strategy_id: "s2", name: "Beta" }),
+      ],
+      total: 2,
+    });
+
+    render(<Strategies />, { wrapper: createWrapper() });
+    await screen.findByText("Alpha");
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+    // 1 header + 2 rows = 3 checkboxes
+    expect(checkboxes.length).toBe(3);
+  });
+
+  // --- Qualified filter ---
+  it("shows qualified filter select", async () => {
+    mockGetStrategies.mockResolvedValue({ items: [makeStrategy()], total: 1 });
+
+    render(<Strategies />, { wrapper: createWrapper() });
+    await screen.findByText("Test Strategy");
+    // The qualified filter select is rendered
+    const selects = document.querySelectorAll("button[role='combobox']");
+    expect(selects.length).toBeGreaterThanOrEqual(2); // source + qualified
+  });
+
+  // --- Expand panel on row click ---
+  it("shows expand panel with strategy info when row name is clicked", async () => {
+    mockGetStrategies.mockResolvedValue({
+      items: [makeStrategy({ strategy_id: "s1", name: "Expandable" })],
+      total: 1,
+    });
+
+    render(<Strategies />, { wrapper: createWrapper() });
+    const nameEl = await screen.findByText("Expandable");
+    fireEvent.click(nameEl);
+    // Expand panel should show strategy info labels
+    await screen.findByText("策略信息");
+    expect(screen.getByText("策略结构")).toBeInTheDocument();
+  });
+
+  // --- Batch toolbar appears on selection ---
+  it("shows batch toolbar when strategies are selected", async () => {
+    mockGetStrategies.mockResolvedValue({
+      items: [
+        makeStrategy({ strategy_id: "s1", name: "Alpha" }),
+        makeStrategy({ strategy_id: "s2", name: "Beta" }),
+      ],
+      total: 2,
+    });
+
+    render(<Strategies />, { wrapper: createWrapper() });
+    await screen.findByText("Alpha");
+
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+    fireEvent.click(checkboxes[1]); // Select first strategy row
+
+    expect(screen.getByText(/已选 1 项/)).toBeInTheDocument();
+    expect(screen.getByText("批量删除")).toBeInTheDocument();
   });
 });

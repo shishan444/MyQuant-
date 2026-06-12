@@ -71,12 +71,15 @@ StrategyDNA 是系统中央数据结构，采用基因编码表示一个完整�
 4. **角色分配**：MTF 层角色由时间周期自动推导 -- >=1d 为 structure，>=1h 为 zone，<1h 为 execution
 5. **参数范围约束**：stop_loss [0.005, 0.20]，position_size [0.10, 1.0]，leverage [1, 10]
 6. **条件完整性**：cross_above_series 需要 target_indicator，lookback_any/all 需要 window + inner
+7. **按需指标计算**：`_get_indicator_column()` 在预计算列查找失败时，自动调用 `_compute_indicator()` 按需计算缺失指标并写入 DataFrame。预计算列优先命中（零开销），按需计算仅在变异产生非默认参数时触发。同参数组合在同代内只计算一次
 
 ## 设计意图
 
 StrategyDNA 采用基因编码思想，将交易策略表示为一组可序列化、可变异、可交叉组合的数据结构。这种设计使得进化算法可以直接操作策略的"基因"而非代码。SignalGene 的 role 字段实现了关注点分离 -- 触发信号和过滤信号在评估时被分别收集，通过 LogicGenes 指定的 AND/OR 逻辑组合，避免了策略语义的歧义。
 
 MTF 共振引擎（mtf_engine.py）采用三阶段管线：层评估 -> 跨层合成 -> 决策门控，将传统的布尔 AND/OR 跨层逻辑替换为多维度分数门控系统，通过 direction_score、confluence_score、momentum_score 实现更精细的多时间周期共振判断。
+
+按需指标计算（executor.py:336-354）是搜索空间扩展的关键机制。进化引擎的变异算子可以产生任意参数组合（如 EMA(37)），但预计算只覆盖 `_DEFAULT_PARAMS` 中的固定集合。按需计算在预计算 miss 时自动降级为实时计算，使变异搜索空间从 ~200 个参数组合扩展到数千个，同时保持预计算的零开销优先路径。
 
 ## 模块依赖
 

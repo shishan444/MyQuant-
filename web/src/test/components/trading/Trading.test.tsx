@@ -109,6 +109,8 @@ function makeTask(overrides: Partial<TradingTask> = {}): TradingTask {
     loss_count: 2,
     last_bar_time: null,
     last_bar_close: null,
+    bars_held: 0,
+    confidence_sizing_enabled: false,
     ...overrides,
   };
 }

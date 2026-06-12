@@ -35,15 +35,19 @@ from api.db_ext import (
     get_dataset,
     get_strategy,
     get_backtest_result,
+    get_verify_session,
     init_db_ext,
     list_backtest_results,
     list_datasets,
     list_strategies,
+    list_verify_sessions,
     save_backtest_result,
     save_dataset_meta,
     save_strategy,
+    save_verify_session,
     update_dataset_stats,
     update_strategy,
+    update_verify_session,
 )
 
 # ── Fixtures ──
@@ -489,6 +493,111 @@ class TestBacktestResult:
         results = list_backtest_results(initialized_db, run_source="evolution")
         assert len(results) == 1
         assert results[0]["result_id"] == "bt-evo"
+
+    def test_save_and_get_backtest_result_with_fitness(self, initialized_db: Path) -> None:
+        save_strategy(initialized_db, **_sample_strategy_data())
+        save_backtest_result(
+            initialized_db,
+            **_sample_backtest_data(
+                result_id="bt-fit",
+                run_source="verify",
+                fitness=1.35,
+                qualified=1,
+                satisfaction_json='{"sharpe": 0.9}',
+            ),
+        )
+        result = get_backtest_result(initialized_db, "bt-fit")
+        assert result is not None
+        assert result["fitness"] == 1.35
+        assert result["qualified"] == 1
+        assert result["satisfaction_json"] == '{"sharpe": 0.9}'
+
+    def test_save_backtest_result_defaults_fitness(self, initialized_db: Path) -> None:
+        save_strategy(initialized_db, **_sample_strategy_data())
+        save_backtest_result(initialized_db, **_sample_backtest_data(result_id="bt-def"))
+        result = get_backtest_result(initialized_db, "bt-def")
+        assert result is not None
+        assert result["fitness"] == 0.0
+        assert result["qualified"] == 0
+        assert result["satisfaction_json"] is None
+
+# ── Test: Verify Session CRUD ──
+
+class TestVerifySessionCRUD:
+    def test_save_and_get_session(self, initialized_db: Path) -> None:
+        save_verify_session(
+            initialized_db,
+            session_id="sess-001",
+            strategy_ids='["s1","s2"]',
+            data_ranges='[{"start":"2024-01-01","end":"2024-06-30"}]',
+        )
+        session = get_verify_session(initialized_db, "sess-001")
+        assert session is not None
+        assert session["status"] == "running"
+        assert session["strategy_ids"] == '["s1","s2"]'
+
+    def test_get_session_not_found(self, initialized_db: Path) -> None:
+        assert get_verify_session(initialized_db, "nonexistent") is None
+
+    def test_update_session_completed(self, initialized_db: Path) -> None:
+        save_verify_session(
+            initialized_db,
+            session_id="sess-002",
+            strategy_ids='["s1"]',
+            data_ranges='[{"start":"2024-01-01","end":"2024-03-31"}]',
+        )
+        update_verify_session(
+            initialized_db,
+            "sess-002",
+            status="completed",
+            summary_json='[{"strategy_id":"s1","score":1.5}]',
+            total_results=3,
+            total_strategies=1,
+            completed_at="2025-06-05T12:00:00Z",
+        )
+        session = get_verify_session(initialized_db, "sess-002")
+        assert session["status"] == "completed"
+        assert session["total_results"] == 3
+        assert session["summary_json"] is not None
+
+    def test_update_session_failed(self, initialized_db: Path) -> None:
+        save_verify_session(
+            initialized_db,
+            session_id="sess-003",
+            strategy_ids='["s1"]',
+            data_ranges='[]',
+        )
+        update_verify_session(
+            initialized_db,
+            "sess-003",
+            status="failed",
+            error_message="No data ranges",
+        )
+        session = get_verify_session(initialized_db, "sess-003")
+        assert session["status"] == "failed"
+        assert session["error_message"] == "No data ranges"
+
+    def test_list_sessions_ordered(self, initialized_db: Path) -> None:
+        for i in range(3):
+            save_verify_session(
+                initialized_db,
+                session_id=f"sess-list-{i}",
+                strategy_ids='[]',
+                data_ranges='[]',
+            )
+        sessions = list_verify_sessions(initialized_db)
+        assert len(sessions) >= 3
+
+    def test_backtest_result_with_session_id(self, initialized_db: Path) -> None:
+        save_strategy(initialized_db, **_sample_strategy_data())
+        save_backtest_result(
+            initialized_db,
+            **_sample_backtest_data(result_id="bt-sess", session_id="sess-001"),
+        )
+        result = get_backtest_result(initialized_db, "bt-sess")
+        assert result is not None
+        assert result["session_id"] == "sess-001"
+
 
 # ── Test: Dataset Metadata CRUD ──
 

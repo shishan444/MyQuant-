@@ -13,7 +13,9 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import pandas as pd
 
 from core.evolution.engine import EvolutionEngine
 from core.evolution.diversity import compute_diversity, compute_phenotype_diversity, _gene_signature
@@ -174,6 +176,33 @@ def _push_ws(task_id: str, payload: Dict[str, Any]) -> None:
             logger.warning("ws push failed for task %s", task_id, exc_info=True)
 
 
+def _split_train_test(
+    df: pd.DataFrame,
+    train_ratio: float = 0.7,
+    min_bars: int = 100,
+) -> tuple:
+    """Split a time-series DataFrame into train and test sets.
+
+    Returns (train_df, test_df). If data is too short, test_df is None
+    and the full df is used as train_df.
+    """
+    if len(df) < min_bars:
+        logger.warning(
+            "Data too short for train/test split (%d bars < %d min), "
+            "using full dataset for training",
+            len(df), min_bars,
+        )
+        return df, None
+
+    if train_ratio <= 0.0 or train_ratio >= 1.0:
+        return df, None
+
+    split_idx = int(len(df) * train_ratio)
+    train_df = df.iloc[:split_idx].copy()
+    test_df = df.iloc[split_idx:].copy()
+    return train_df, test_df
+
+
 class EvolutionRunner(threading.Thread):
     """Daemon thread that picks up pending evolution tasks and runs them."""
 
@@ -311,6 +340,16 @@ class EvolutionRunner(threading.Thread):
             return
 
         target_score = task_row["target_score"]
+
+        # Adjust target_score default based on objective type.
+        # Frontend does not pass target_score, so it defaults to 1.0 from the schema.
+        # Sharpe: 1.0 is a reasonable target. annual_return: use user's min_annual_return.
+        req = self._build_requirements(task_row)
+        if target_score == 1.0 and req.objective == "annual_return" and req.min_annual_return > 0:
+            target_score = req.min_annual_return
+        elif target_score == 1.0 and req.objective == "calmar":
+            target_score = 2.0
+
         template = task_row["score_template"]
         pop_size = task_row.get("population_size", 15)
         max_gens = task_row.get("max_generations", 200)
@@ -345,6 +384,16 @@ class EvolutionRunner(threading.Thread):
             update_task(self.db_path, task_id, status="stopped", stop_reason="no_data")
             return
 
+        # Train/test split for out-of-sample validation
+        train_ratio = float(task_row.get("train_ratio", 0.7))
+        _train_df, _test_df = _split_train_test(_enhanced_df, train_ratio)
+        if _test_df is not None:
+            logger.info(
+                "Task %s: train/test split %.0f%%/%.0f%% (%d/%d bars)",
+                task_id, train_ratio * 100, (1 - train_ratio) * 100,
+                len(_train_df), len(_test_df),
+            )
+
         controller.check_stop()
         update_phase(self.db_path, task_id, "evolution_running")
         update_heartbeat(self.db_path, task_id)
@@ -378,7 +427,7 @@ class EvolutionRunner(threading.Thread):
         def evaluate_fn(individual: StrategyDNA) -> float:
             result = self._evaluate_dna(
                 individual, task_row, leverage, _eval_direction,
-                enhanced_df=_enhanced_df, dfs_by_timeframe=_dfs_by_timeframe,
+                enhanced_df=_train_df, dfs_by_timeframe=_dfs_by_timeframe,
             )
             if isinstance(result, dict):
                 individual._eval_diagnostics = result
@@ -389,14 +438,14 @@ class EvolutionRunner(threading.Thread):
             """Batch-evaluate a population using BacktestEngine.batch_run."""
             return self._evaluate_population(
                 population, task_row, leverage, _eval_direction,
-                enhanced_df=_enhanced_df, dfs_by_timeframe=_dfs_by_timeframe,
+                enhanced_df=_train_df, dfs_by_timeframe=_dfs_by_timeframe,
             )
 
         # Track mutations for logging
         last_mutations: List[str] = []
         global_gen_offset = 0  # Offset for continuous mode: avoids history overwrite
         discovered_signatures: set = set()  # Signatures of auto-extracted strategies
-        strategy_threshold = task_row.get("strategy_threshold", 80.0)
+        strategy_threshold = task_row.get("strategy_threshold", 1.0)
         champion_tracker = ChampionTracker()
 
         def on_generation(gen: int, best_score: float, avg_score: float) -> None:
@@ -481,8 +530,9 @@ class EvolutionRunner(threading.Thread):
                         conn2 = sqlite3.connect(str(self.db_path))
                         conn2.execute("PRAGMA journal_mode=WAL")
                         conn2.execute(
-                            "UPDATE evolution_task SET best_score = ?, champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
+                            "UPDATE evolution_task SET best_score = ?, best_fitness = ?, champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
                             (
+                                champion_rec.score,
                                 champion_rec.score,
                                 json.dumps(champion_rec.metrics),
                                 json.dumps(champion_rec.dimension_scores),
@@ -499,8 +549,8 @@ class EvolutionRunner(threading.Thread):
                         conn2 = sqlite3.connect(str(self.db_path))
                         conn2.execute("PRAGMA journal_mode=WAL")
                         conn2.execute(
-                            "UPDATE evolution_task SET best_score = ? WHERE task_id = ? AND (best_score IS NULL OR best_score < ?)",
-                            (best_score, task_id, best_score),
+                            "UPDATE evolution_task SET best_score = ?, best_fitness = ? WHERE task_id = ? AND (best_score IS NULL OR best_score < ?)",
+                            (best_score, best_score, task_id, best_score),
                         )
                         conn2.commit()
                         conn2.close()
@@ -509,7 +559,7 @@ class EvolutionRunner(threading.Thread):
             if hasattr(engine, '_population') and engine._population:
                 for ind in engine._population:
                     diag = getattr(ind, '_eval_diagnostics', None)
-                    if not diag or diag.get("score", 0) < strategy_threshold:
+                    if not diag or not diag.get("qualified", False):
                         continue
                     sig = _gene_signature(ind)
                     if sig in discovered_signatures:
@@ -528,7 +578,7 @@ class EvolutionRunner(threading.Thread):
                             name=name,
                             source="evolution",
                             source_task_id=task_id,
-                            best_score=diag["score"],
+                            best_score=diag.get("fitness", diag.get("score", 0)),
                             gene_signature=sig,
                             generation=global_gen,
                             metrics_json=json.dumps(diag.get("raw_metrics")) if diag.get("raw_metrics") else None,
@@ -537,7 +587,9 @@ class EvolutionRunner(threading.Thread):
                             "type": "strategy_discovered",
                             "task_id": task_id,
                             "strategy_id": ind.strategy_id,
-                            "score": diag["score"],
+                            "score": diag.get("fitness", diag.get("score", 0)),
+                            "fitness": diag.get("fitness", 0),
+                            "qualified": diag.get("qualified", False),
                             "name": name,
                             "generation": global_gen,
                         })
@@ -550,10 +602,18 @@ class EvolutionRunner(threading.Thread):
                 "task_id": task_id,
                 "generation": global_gen,
                 "best_score": best_score,
+                "best_fitness": best_score,
                 "avg_score": avg_score,
                 "target_score": target_score,
                 "max_generations": max_gens,
             }
+            # Add qualified_count from population diagnostics
+            if hasattr(engine, '_population') and engine._population:
+                qualified_count = sum(
+                    1 for ind in engine._population
+                    if getattr(ind, '_eval_diagnostics', {}).get("qualified", False)
+                )
+                ws_payload["qualified_count"] = qualified_count
             if hasattr(engine, '_population') and engine._population:
                 best_ind = engine._population[0]
                 if hasattr(best_ind, 'to_dict'):
@@ -654,10 +714,37 @@ class EvolutionRunner(threading.Thread):
                 import sqlite3
                 conn = sqlite3.connect(str(self.db_path))
                 conn.execute(
-                    "UPDATE evolution_task SET champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
-                    (json.dumps(champion_rec.metrics),
+                    "UPDATE evolution_task SET best_fitness = ?, champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
+                    (champion_rec.score,
+                     json.dumps(champion_rec.metrics),
                      json.dumps(champion_rec.dimension_scores),
                      task_id),
+                )
+                conn.commit()
+                conn.close()
+
+            # Out-of-sample validation on test split
+            if _test_df is not None and len(_test_df) >= 50:
+                oos_result = self._evaluate_dna(
+                    champion, task_row, leverage, _eval_direction,
+                    enhanced_df=_test_df, dfs_by_timeframe=None,
+                )
+                oos_fitness = oos_result.get("fitness", 0.0) if isinstance(oos_result, dict) else 0.0
+                oos_qualified = oos_result.get("qualified", False) if isinstance(oos_result, dict) else False
+                oos_metrics = oos_result.get("raw_metrics", {}) if isinstance(oos_result, dict) else {}
+
+                logger.info(
+                    "Task %s: OOS validation fitness=%.4f qualified=%s trades=%s",
+                    task_id, oos_fitness, oos_qualified,
+                    oos_result.get("total_trades", 0) if isinstance(oos_result, dict) else 0,
+                )
+
+                # Persist OOS results
+                import sqlite3
+                conn = sqlite3.connect(str(self.db_path))
+                conn.execute(
+                    "UPDATE evolution_task SET oos_fitness = ?, oos_qualified = ?, oos_metrics = ? WHERE task_id = ?",
+                    (oos_fitness, int(oos_qualified), json.dumps(oos_metrics), task_id),
                 )
                 conn.commit()
                 conn.close()
@@ -675,12 +762,42 @@ class EvolutionRunner(threading.Thread):
             "task_id": task_id,
             "stop_reason": stop_reason,
             "total_generations": result["total_generations"],
-            "champion_score": result["champion_score"],
+            "champion_score": result["champion_fitness"],
             "generation": result["total_generations"],
-            "best_score": result["champion_score"],
+            "best_score": result["champion_fitness"],
+            "best_fitness": result["champion_fitness"],
             "target_score": target_score,
             "max_generations": max_gens,
         })
+
+    def _build_requirements(self, task_row: Dict[str, Any]):
+        """Build RequirementsConfig from task config.
+
+        Prefers requirements_json (full config from frontend).
+        Falls back to legacy min_annual_return/max_drawdown_limit columns.
+        """
+        from core.scoring.scorer import RequirementsConfig
+
+        requirements_json = task_row.get("requirements_json")
+        if requirements_json:
+            try:
+                data = json.loads(requirements_json) if isinstance(requirements_json, str) else requirements_json
+                return RequirementsConfig(
+                    objective=data.get("objective", "sharpe"),
+                    min_annual_return=data.get("min_annual_return", 0.0),
+                    max_drawdown=data.get("max_drawdown", 0.30),
+                    min_win_rate=data.get("min_win_rate", 0.0),
+                    min_total_trades=data.get("min_total_trades", 10),
+                    min_profit_factor=data.get("min_profit_factor", 1.2),
+                )
+            except (json.JSONDecodeError, Exception):
+                pass
+
+        return RequirementsConfig(
+            objective="sharpe",
+            min_annual_return=task_row.get("min_annual_return", 0.0),
+            max_drawdown=task_row.get("max_drawdown_limit") or 0.30,
+        )
 
     def _evaluate_dna(self, individual: StrategyDNA, task_row: Dict[str, Any],
                        leverage: int = 1, direction: str = "long",
@@ -705,7 +822,7 @@ class EvolutionRunner(threading.Thread):
         try:
             from core.backtest.engine import BacktestEngine
             from core.strategy.executor import dna_to_signal_set
-            from core.scoring.scorer import score_strategy
+            from core.scoring.scorer import compute_fitness, RequirementsConfig
 
             # Load data on demand if not pre-loaded (backward compatibility)
             if enhanced_df is None:
@@ -746,7 +863,9 @@ class EvolutionRunner(threading.Thread):
                                          dfs_by_timeframe=dfs_by_timeframe)
 
             if sig_set.entries.sum() == 0:
-                diagnostics["score"] = 5.0
+                diagnostics["score"] = 0.0
+                diagnostics["fitness"] = 0.0
+                diagnostics["qualified"] = False
                 diagnostics["fallback"] = False
                 return diagnostics
 
@@ -757,28 +876,27 @@ class EvolutionRunner(threading.Thread):
 
             # Use pre-computed metrics from BacktestEngine (avoids double computation)
             metrics = bt_result.metrics_dict
-            template_name = task_row.get("score_template", "explorer")
 
-            # Build runtime template with user scoring constraints
-            from core.scoring.templates import get_template as _get_tpl
-            _base = _get_tpl(template_name)
-            _max_dd_limit = task_row.get("max_drawdown_limit")
-            _min_ar_limit = task_row.get("min_annual_return", 0.10)
-
-            score_result = score_strategy(
-                metrics, template=_base,
+            # Build requirements from task config (prefer requirements_json over legacy columns)
+            req = self._build_requirements(task_row)
+            fitness_result = compute_fitness(
+                metrics, requirements=req,
                 liquidated=bt_result.liquidated,
-                max_drawdown_limit=_max_dd_limit,
-                min_annual_return_limit=_min_ar_limit,
             )
 
-            diagnostics["score"] = score_result["total_score"]
+            diagnostics["score"] = fitness_result["fitness"]
+            diagnostics["fitness"] = fitness_result["fitness"]
+            diagnostics["qualified"] = fitness_result["qualified"]
+            diagnostics["satisfaction"] = fitness_result.get("satisfaction", {})
             diagnostics["total_trades"] = bt_result.total_trades
             diagnostics["fallback"] = False
             diagnostics["liquidated"] = bt_result.liquidated
             diagnostics["data_bars"] = bt_result.data_bars
-            diagnostics["raw_metrics"] = score_result["raw_metrics"]
-            diagnostics["dimension_scores"] = score_result["dimension_scores"]
+            diagnostics["raw_metrics"] = fitness_result["raw_metrics"]
+            diagnostics["dimension_scores"] = {
+                k: round(v["ratio"] * 100, 1)
+                for k, v in fitness_result.get("satisfaction", {}).items()
+            }
 
             return diagnostics
 
@@ -810,7 +928,7 @@ class EvolutionRunner(threading.Thread):
         try:
             from core.backtest.engine import BacktestEngine
             from core.strategy.executor import dna_to_signal_set, _empty_signal_set, clear_indicator_cache
-            from core.scoring.scorer import score_strategy
+            from core.scoring.scorer import compute_fitness, RequirementsConfig
 
             if enhanced_df is None:
                 # Cannot batch without data -- fallback to individual evaluation
@@ -849,33 +967,34 @@ class EvolutionRunner(threading.Thread):
 
             template_name = task_row.get("score_template", "explorer")
 
-            # Build runtime template with user scoring constraints
-            from core.scoring.templates import get_template as _get_tpl
-            _base = _get_tpl(template_name)
-            _max_dd_limit = task_row.get("max_drawdown_limit")
-            _min_ar_limit = task_row.get("min_annual_return", 0.10)
+            # Build requirements from task config (prefer requirements_json over legacy columns)
+            req = self._build_requirements(task_row)
 
             scores = []
             for i, (ind, bt_result) in enumerate(zip(population, bt_results)):
                 metrics = bt_result.metrics_dict
-                score_result = score_strategy(
-                    metrics, template=_base,
+                fitness_result = compute_fitness(
+                    metrics, requirements=req,
                     liquidated=bt_result.liquidated,
-                    max_drawdown_limit=_max_dd_limit,
-                    min_annual_return_limit=_min_ar_limit,
                 )
                 # Store diagnostics on individual (same as evaluate_fn)
                 ind._eval_diagnostics = {
-                    "score": score_result["total_score"],
+                    "score": fitness_result["fitness"],
+                    "fitness": fitness_result["fitness"],
+                    "qualified": fitness_result["qualified"],
+                    "satisfaction": fitness_result.get("satisfaction", {}),
                     "total_trades": bt_result.total_trades,
                     "data_bars": bt_result.data_bars,
-                    "raw_metrics": score_result["raw_metrics"],
-                    "dimension_scores": score_result["dimension_scores"],
+                    "raw_metrics": fitness_result["raw_metrics"],
+                    "dimension_scores": {
+                        k: round(v["ratio"] * 100, 1)
+                        for k, v in fitness_result.get("satisfaction", {}).items()
+                    },
                     "liquidated": bt_result.liquidated,
                     "used_real_data": True,
                     "fallback": False,
                 }
-                scores.append(score_result["total_score"])
+                scores.append(fitness_result["fitness"])
 
             return scores
 

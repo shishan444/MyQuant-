@@ -17,11 +17,12 @@ import {
   INDICATOR_FLAT_LIST as INDICATOR_OPTIONS,
   INDICATOR_LABELS,
   CONDITION_OPTIONS,
-  OPTIMIZE_TARGETS,
   LEVERAGE_OPTIONS,
   DIRECTION_OPTIONS,
+  REQUIREMENTS_DEFAULTS,
+  OBJECTIVE_OPTIONS,
 } from "@/lib/constants";
-import type { SignalGene, TimeframeLayerModel, DNA } from "@/types/api";
+import type { SignalGene, TimeframeLayerModel, DNA, RequirementsConfig } from "@/types/api";
 
 interface LayerData {
   timeframe: string;
@@ -39,12 +40,11 @@ interface SeedConfigFormProps {
   onSubmit: (config: {
     symbol: string;
     initialDna: DNA;
-    scoreTemplate: string;
     populationSize: number;
     maxGenerations: number;
-    targetScore: number;
     leverage: number;
     direction: "long" | "short" | "mixed";
+    requirements?: RequirementsConfig;
   }) => void;
   seedDna?: DNA | null;
 }
@@ -83,17 +83,23 @@ export function SeedConfigForm({
   symbolOptions,
 }: SeedConfigFormProps) {
   const [symbol, setSymbol] = useState("BTCUSDT");
-  const [scoreTemplate, setScoreTemplate] = useState("explorer");
   const [advOpen, setAdvOpen] = useState(false);
   const [populationSize, setPopulationSize] = useState(15);
   const [maxGenerations, setMaxGenerations] = useState(200);
-  const [targetScore, setTargetScore] = useState(80);
   const [crossLayerLogic, setCrossLayerLogic] = useState<"AND" | "OR">("AND");
   const [stopLoss, setStopLoss] = useState(5);
   const [takeProfit, setTakeProfit] = useState(10);
   const [positionSize, setPositionSize] = useState(30);
   const [leverage, setLeverage] = useState(1);
   const [direction, setDirection] = useState<"long" | "short" | "mixed">("long");
+  const [requirements, setRequirements] = useState<RequirementsConfig>({
+    objective: REQUIREMENTS_DEFAULTS.objective,
+    min_annual_return: REQUIREMENTS_DEFAULTS.min_annual_return,
+    max_drawdown: REQUIREMENTS_DEFAULTS.max_drawdown,
+    min_win_rate: REQUIREMENTS_DEFAULTS.min_win_rate,
+    min_total_trades: REQUIREMENTS_DEFAULTS.min_total_trades,
+    min_profit_factor: REQUIREMENTS_DEFAULTS.min_profit_factor,
+  });
 
   const initialLayers = useMemo((): LayerData[] => {
     if (seedDna?.layers && seedDna.layers.length > 0) {
@@ -276,12 +282,11 @@ export function SeedConfigForm({
     onSubmit({
       symbol,
       initialDna: dna,
-      scoreTemplate,
       populationSize,
       maxGenerations,
-      targetScore,
       leverage,
       direction,
+      requirements,
     });
   }, [
     canSubmit,
@@ -294,10 +299,9 @@ export function SeedConfigForm({
     positionSize,
     leverage,
     direction,
-    scoreTemplate,
     populationSize,
     maxGenerations,
-    targetScore,
+    requirements,
   ]);
 
   return (
@@ -587,26 +591,121 @@ export function SeedConfigForm({
         </p>
       )}
 
-      {/* Optimize target */}
+      {/* Running requirements (directly visible) */}
       <div className="flex items-start gap-3">
         <span className="mt-1 w-14 shrink-0 text-xs text-slate-400">
-          优化目标
+          运行要求
         </span>
-        <div className="flex flex-col gap-1.5">
-          <Select value={scoreTemplate} onValueChange={setScoreTemplate}>
-            <SelectTrigger className="h-7 w-36 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {OPTIMIZE_TARGETS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-slate-500">优化目标</span>
+            <Select
+              value={requirements.objective ?? "sharpe"}
+              onValueChange={(v) =>
+                setRequirements((prev) => ({ ...prev, objective: v }))
+              }
+            >
+              <SelectTrigger className="h-7 w-28 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {OBJECTIVE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-5 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-slate-500">年化收益 %</label>
+              <Input
+                type="number"
+                min={0}
+                max={1000}
+                step={1}
+                value={requirements.min_annual_return * 100}
+                onChange={(e) =>
+                  setRequirements((prev) => ({
+                    ...prev,
+                    min_annual_return: Number(e.target.value) / 100 || 0,
+                  }))
+                }
+                className="h-7 w-full text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-slate-500">最大回撤 %</label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={requirements.max_drawdown * 100}
+                onChange={(e) =>
+                  setRequirements((prev) => ({
+                    ...prev,
+                    max_drawdown: Number(e.target.value) / 100 || 0,
+                  }))
+                }
+                className="h-7 w-full text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-slate-500">最低胜率 %</label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={requirements.min_win_rate * 100}
+                onChange={(e) =>
+                  setRequirements((prev) => ({
+                    ...prev,
+                    min_win_rate: Number(e.target.value) / 100 || 0,
+                  }))
+                }
+                className="h-7 w-full text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-slate-500">最少交易</label>
+              <Input
+                type="number"
+                min={0}
+                max={1000}
+                step={1}
+                value={requirements.min_total_trades}
+                onChange={(e) =>
+                  setRequirements((prev) => ({
+                    ...prev,
+                    min_total_trades: Number(e.target.value) || 0,
+                  }))
+                }
+                className="h-7 w-full text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-slate-500">盈亏比</label>
+              <Input
+                type="number"
+                min={0}
+                max={10}
+                step={0.1}
+                value={requirements.min_profit_factor}
+                onChange={(e) =>
+                  setRequirements((prev) => ({
+                    ...prev,
+                    min_profit_factor: Number(e.target.value) || 0,
+                  }))
+                }
+                className="h-7 w-full text-xs"
+              />
+            </div>
+          </div>
           <span className="text-[10px] text-slate-600">
-            {OPTIMIZE_TARGETS.find((t) => t.value === scoreTemplate)?.description}
+            至少配置收益和回撤两项, 满足所有要求的策略将被标记为达标
           </span>
         </div>
       </div>
@@ -617,7 +716,7 @@ export function SeedConfigForm({
         包括: 调整参数/替换指标/改变周期/增减条件/增减周期层
       </p>
 
-      {/* Advanced params (collapsible) */}
+      {/* Advanced params (collapsible) - only population size + max generations */}
       <div className="flex flex-col gap-2">
         <button
           type="button"
@@ -660,21 +759,6 @@ export function SeedConfigForm({
                 value={maxGenerations}
                 onChange={(e) =>
                   setMaxGenerations(Number(e.target.value) || 200)
-                }
-                className="h-7 w-24 text-xs"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-500">
-                目标分数 (60-100)
-              </label>
-              <Input
-                type="number"
-                min={60}
-                max={100}
-                value={targetScore}
-                onChange={(e) =>
-                  setTargetScore(Number(e.target.value) || 80)
                 }
                 className="h-7 w-24 text-xs"
               />

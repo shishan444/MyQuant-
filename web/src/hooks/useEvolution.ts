@@ -179,6 +179,8 @@ export function useEvolutionWebSocket(taskId: string | null) {
                   ...prev,
                   ...(update.current_generation != null ? { current_generation: update.current_generation } : {}),
                   ...(update.best_score != null ? { best_score: update.best_score } : {}),
+                  ...(update.best_fitness != null ? { best_fitness: update.best_fitness } : {}),
+                  ...(update.qualified_count != null ? { qualified_count: update.qualified_count } : {}),
                   ...(update.current_phase != null ? { current_phase: update.current_phase } : {}),
                   status: update.status ?? prev.status,
                 };
@@ -237,6 +239,8 @@ export function useEvolutionWebSocket(taskId: string | null) {
                   ...prev,
                   ...(update.generation != null ? { current_generation: update.generation } : {}),
                   ...(update.best_score != null ? { best_score: update.best_score } : {}),
+                  ...(update.best_fitness != null ? { best_fitness: update.best_fitness } : {}),
+                  ...(update.qualified_count != null ? { qualified_count: update.qualified_count } : {}),
                   champion_dna: update.champion_dna ?? prev.champion_dna,
                   status:
                     update.type === "evolution_complete"
@@ -259,6 +263,7 @@ export function useEvolutionWebSocket(taskId: string | null) {
                     generation: update.generation,
                     best_score: update.best_score ?? 0,
                     avg_score: update.avg_score ?? 0,
+                    ...(update.best_fitness != null ? { best_fitness: update.best_fitness } : {}),
                     created_at: new Date().toISOString(),
                   };
                   const records = prev.records ?? [];

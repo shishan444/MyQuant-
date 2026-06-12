@@ -168,6 +168,8 @@ export const mockBacktestResult = {
   win_rate: 0.6,
   total_trades: 10,
   total_score: 72,
+  fitness: 0.68,
+  qualified: true,
   template_name: "default",
   run_source: "lab",
   total_funding_cost: 0,

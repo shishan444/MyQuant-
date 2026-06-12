@@ -91,8 +91,8 @@ describe("evolution service", () => {
   // --- getEvolutionHistory (response mapping) ---
   it("getEvolutionHistory maps backend 'generations' to 'records'", async () => {
     const generations = [
-      { generation: 1, best_score: 50, avg_score: 40, created_at: "2024-01-01" },
-      { generation: 2, best_score: 55, avg_score: 45, created_at: "2024-01-02" },
+      { generation: 1, best_score: 50, avg_score: 40, best_fitness: 0.45, avg_fitness: 0.35, created_at: "2024-01-01" },
+      { generation: 2, best_score: 55, avg_score: 45, best_fitness: 0.52, avg_fitness: 0.40, created_at: "2024-01-02" },
     ];
     mockedGet.mockResolvedValueOnce({ data: { task_id: "t1", generations } });
 

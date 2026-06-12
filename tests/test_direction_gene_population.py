@@ -97,7 +97,7 @@ class TestDirectionGeneDiversity:
         )
 
     def test_direction_gene_condition_variety(self):
-        """DIRECTION gene should use both price_above and price_below."""
+        """DIRECTION gene should use price_above (trend) and gt (momentum) conditions."""
         conditions_seen = set()
         for seed in range(200):
             random.seed(seed)
@@ -106,8 +106,8 @@ class TestDirectionGeneDiversity:
             if dir_genes:
                 conditions_seen.add(dir_genes[0].condition.get("type"))
 
-        assert "price_above" in conditions_seen
-        assert "price_below" in conditions_seen
+        assert "price_above" in conditions_seen, f"Expected price_above, got: {conditions_seen}"
+        assert "gt" in conditions_seen, f"Expected gt (momentum), got: {conditions_seen}"
 
 
 class TestMixedDNABacktest:

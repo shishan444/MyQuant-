@@ -15,6 +15,8 @@ export interface ChartDataPoint {
   generation: number;
   bestScore: number;
   avgScore: number;
+  bestFitness?: number;
+  avgFitness?: number;
   cumulativeBest: number;
   prevBestScore?: number;
   isChampionChange?: boolean;
@@ -101,6 +103,8 @@ export function transformChartData(
       generation: r.generation,
       bestScore: r.best_score,
       avgScore: r.avg_score,
+      bestFitness: r.best_fitness,
+      avgFitness: r.avg_fitness,
       cumulativeBest: r.best_score, // placeholder, computed in pass 2
       prevBestScore: undefined,
       isChampionChange: false,

@@ -9,9 +9,11 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Lab } from "@/pages/Lab";
 import { Evolution } from "@/pages/Evolution";
 import { Strategies } from "@/pages/Strategies";
+import { Verify } from "@/pages/Verify";
 import { Trading } from "@/pages/Trading";
 import { DataManagement } from "@/pages/DataManagement";
 import { Settings } from "@/pages/Settings";
+import { BatchBacktest } from "@/pages/BatchBacktest";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,6 +29,8 @@ const router = createBrowserRouter([
       { path: "/lab", element: <ErrorBoundary><Lab /></ErrorBoundary> },
       { path: "/evolution", element: <ErrorBoundary><Evolution /></ErrorBoundary> },
       { path: "/strategies", element: <ErrorBoundary><Strategies /></ErrorBoundary> },
+      { path: "/verify", element: <ErrorBoundary><Verify /></ErrorBoundary> },
+      { path: "/batch-backtest", element: <ErrorBoundary><BatchBacktest /></ErrorBoundary> },
       { path: "/trading", element: <ErrorBoundary><Trading /></ErrorBoundary> },
       { path: "/data", element: <ErrorBoundary><DataManagement /></ErrorBoundary> },
       { path: "/settings", element: <ErrorBoundary><Settings /></ErrorBoundary> },

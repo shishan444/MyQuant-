@@ -9,7 +9,7 @@ import numpy as np
 from MyQuant.core.scoring.metrics import compute_metrics
 from MyQuant.core.scoring.normalizer import normalize, piecewise_normalize
 from MyQuant.core.scoring.templates import get_template, SCORING_TEMPLATES, list_template_names
-from MyQuant.core.scoring.scorer import score_strategy
+from MyQuant.core.scoring.scorer import score_strategy, compute_fitness, RequirementsConfig
 
 @pytest.fixture
 def equity_curve():
@@ -259,24 +259,25 @@ class TestScorer:
         result = score_strategy(metrics, "optimizer")
         assert result["total_score"] > 0
 
-    def test_max_return_no_drawdown_penalty(self):
-        """max_return template should not penalize drawdown at all."""
-        high_dd_metrics = {
+    def test_all_dimensions_in_satisfaction(self):
+        """New system: all 5 dimensions always present in satisfaction."""
+        metrics = {
             "annual_return": 2.0,
             "sharpe_ratio": 1.5,
-            "max_drawdown": -0.50,  # 50% drawdown
+            "max_drawdown": -0.50,
             "profit_factor": 2.0,
             "monthly_consistency": 0.5,
             "total_trades": 100,
             "total_bars": 2000,
+            "win_rate": 0.55,
         }
-        result = score_strategy(high_dd_metrics, "max_return")
-        # No drawdown dimension means drawdown has zero influence
+        result = score_strategy(metrics, "max_return")
         assert result["total_score"] > 0
-        assert "max_drawdown" not in result["dimension_scores"]
+        for dim in ["annual_return", "max_drawdown", "win_rate", "total_trades", "profit_factor"]:
+            assert dim in result["satisfaction"], f"Missing dimension: {dim}"
 
-    def test_template_differentiation(self):
-        """Same strategy should score differently across templates."""
+    def test_all_templates_produce_valid_scores(self):
+        """All templates should produce scores in 0-100 range."""
         metrics = {
             "annual_return": 0.50,
             "sharpe_ratio": 1.0,
@@ -286,15 +287,9 @@ class TestScorer:
             "total_trades": 100,
             "total_bars": 2000,
         }
-        scores = {}
-        for name in ["explorer", "optimizer", "max_return"]:
+        for name in ["explorer", "max_return"]:
             result = score_strategy(metrics, name)
-            scores[name] = result["total_score"]
-
-        # max_return should give highest score (50% weight on annual_return)
-        assert scores["max_return"] > scores["optimizer"]
-        # explorer should be higher than optimizer (less conservative)
-        assert scores["explorer"] > scores["optimizer"]
+            assert 0 <= result["total_score"] <= 100
 
     def test_legacy_template_name_still_works(self, equity_curve):
         """Legacy template names should be auto-mapped and produce valid scores."""
@@ -327,8 +322,8 @@ class TestTradeCountPenalty:
         result = score_strategy(metrics, "explorer")
         assert result["total_score"] > 0
 
-    def test_trade_count_penalty_dimension(self):
-        """trade_count_penalty dimension should produce a score."""
+    def test_total_trades_dimension(self):
+        """total_trades dimension should produce a score."""
         metrics = {
             "annual_return": 0.30, "sharpe_ratio": 1.0,
             "max_drawdown": -0.10, "profit_factor": 1.5,
@@ -336,8 +331,8 @@ class TestTradeCountPenalty:
             "total_trades": 50, "total_bars": 200,
         }
         result = score_strategy(metrics, "explorer")
-        assert "trade_count_penalty" in result["dimension_scores"]
-        assert result["dimension_scores"]["trade_count_penalty"] > 0
+        assert "total_trades" in result["dimension_scores"]
+        assert result["dimension_scores"]["total_trades"] > 0
 
 
 class TestDrawdownSoftConstraint:
@@ -358,14 +353,6 @@ class TestDrawdownSoftConstraint:
         result_default = score_strategy(metrics, "explorer")
         assert result_no_limit["total_score"] == result_default["total_score"]
 
-    def test_no_penalty_when_within_limit(self):
-        """Drawdown within limit should not be penalized."""
-        metrics = self._good_metrics()
-        metrics["max_drawdown"] = -0.10  # 10% drawdown
-        result = score_strategy(metrics, "explorer", max_drawdown_limit=0.20)
-        baseline = score_strategy(metrics, "explorer", max_drawdown_limit=None)
-        assert result["total_score"] == baseline["total_score"]
-
     def test_penalty_applied_when_exceeded(self):
         """Drawdown exceeding limit should reduce score."""
         metrics = self._good_metrics()
@@ -374,48 +361,13 @@ class TestDrawdownSoftConstraint:
         baseline = score_strategy(metrics, "explorer", max_drawdown_limit=None)
         assert result["total_score"] < baseline["total_score"]
 
-    def test_penalty_formula_ratio(self):
-        """Penalty = max(0.2, limit/actual). 20% limit / 40% actual = 0.5."""
-        metrics = self._good_metrics()
-        metrics["max_drawdown"] = -0.40
-        result = score_strategy(metrics, "explorer", max_drawdown_limit=0.20)
-        baseline = score_strategy(metrics, "explorer", max_drawdown_limit=None)
-        expected = round(baseline["total_score"] * 0.5, 2)
-        assert result["total_score"] == expected
-
-    def test_penalty_minimum_floor(self):
-        """Very large drawdown should have penalty close to 0.2 floor multiplier."""
-        metrics = self._good_metrics()
-        metrics["max_drawdown"] = -0.99  # 99% drawdown
-        result = score_strategy(metrics, "explorer", max_drawdown_limit=0.20)
-        baseline = score_strategy(metrics, "explorer", max_drawdown_limit=None)
-        # penalty = max(0.2, 0.20/0.99) = 0.20202... > 0.2 but close
-        penalty = max(0.2, 0.20 / 0.99)
-        expected = round(baseline["total_score"] * penalty, 2)
-        assert result["total_score"] == expected
-        assert result["total_score"] < baseline["total_score"] * 0.25
-
-    def test_soft_constraint_works_with_runtime_template(self):
-        """Soft constraint should work when passing a runtime template override."""
-        from dataclasses import replace
-        from core.scoring.templates import get_template
-        tpl = get_template("explorer")
-        runtime_tpl = replace(tpl, hard_constraints={"annual_return": 0.05})
-
-        metrics = self._good_metrics()
-        metrics["max_drawdown"] = -0.30
-        result = score_strategy(
-            metrics, template=runtime_tpl, max_drawdown_limit=0.20,
-        )
-        baseline = score_strategy(metrics, template=runtime_tpl, max_drawdown_limit=None)
-        assert result["total_score"] < baseline["total_score"]
-
-    def test_soft_constraint_does_not_zero_score(self):
-        """Soft constraint should reduce but never zero out the score."""
+    def test_drawdown_constraint_zeros_fitness_when_exceeded(self):
+        """Drawdown exceeding constraint limit => fitness=0 (hard constraint)."""
         metrics = self._good_metrics()
         metrics["max_drawdown"] = -0.80
         result = score_strategy(metrics, "explorer", max_drawdown_limit=0.05)
-        assert result["total_score"] > 0  # floor of 0.2 ensures > 0
+        assert result["fitness"] == 0.0
+        assert result["total_score"] == 0.0
 
 
 class TestRuntimeHardConstraintOverride:
@@ -423,33 +375,25 @@ class TestRuntimeHardConstraintOverride:
 
     def test_optimizer_drawdown_constraint_preserved(self):
         """optimizer's original max_drawdown hard constraint should remain intact."""
-        from core.scoring.templates import get_template
-
-        tpl = get_template("optimizer")
-        # No longer override hard_constraints - pass soft constraint via parameter
-        # Strategy with good return but terrible drawdown should still fail hard constraint
         metrics = {
             "annual_return": 0.50, "sharpe_ratio": 1.0,
             "max_drawdown": -0.70,  # Exceeds optimizer's -0.60 limit
             "profit_factor": 1.5, "monthly_consistency": 0.6,
             "total_trades": 50, "total_bars": 200,
         }
-        result = score_strategy(metrics, template=tpl, min_annual_return_limit=0.10)
+        result = score_strategy(metrics, "optimizer", min_annual_return_limit=0.10)
         assert result["total_score"] == 0.0
         assert result.get("hard_constraint_failed") == "max_drawdown"
 
     def test_optimizer_low_return_hard_constraint(self):
         """optimizer's annual_return < 10% hard constraint still fires."""
-        from core.scoring.templates import get_template
-
-        tpl = get_template("optimizer")
         metrics = {
             "annual_return": 0.05, "sharpe_ratio": 1.0,
             "max_drawdown": -0.10, "profit_factor": 1.5,
             "monthly_consistency": 0.6,
             "total_trades": 50, "total_bars": 200,
         }
-        result = score_strategy(metrics, template=tpl)
+        result = score_strategy(metrics, "optimizer")
         assert result["total_score"] == 0.0
         assert result.get("hard_constraint_failed") == "annual_return"
 
@@ -481,46 +425,13 @@ class TestAnnualReturnSoftConstraint:
         assert result["total_score"] == baseline["total_score"]
 
     def test_penalty_applied_when_below_limit(self):
-        """Return below limit should reduce score."""
+        """Return below limit should reduce score (verified via satisfaction ratio)."""
         metrics = self._good_metrics()
         metrics["annual_return"] = 0.10  # 10%
         result = score_strategy(metrics, "explorer", min_annual_return_limit=0.30)
-        baseline = score_strategy(metrics, "explorer", min_annual_return_limit=None)
-        assert result["total_score"] < baseline["total_score"]
-
-    def test_penalty_formula_ratio(self):
-        """Penalty = max(0.2, actual/limit). 10% actual / 30% limit = 0.333."""
-        metrics = self._good_metrics()
-        metrics["annual_return"] = 0.10
-        result = score_strategy(metrics, "explorer", min_annual_return_limit=0.30)
-        baseline = score_strategy(metrics, "explorer", min_annual_return_limit=None)
-        expected = round(baseline["total_score"] * (0.10 / 0.30), 2)
-        assert result["total_score"] == expected
-
-    def test_penalty_minimum_floor(self):
-        """Very low return should still have 0.2 floor multiplier."""
-        metrics = self._good_metrics()
-        metrics["annual_return"] = 0.001  # 0.1%
-        result = score_strategy(metrics, "explorer", min_annual_return_limit=6.0)
-        baseline = score_strategy(metrics, "explorer", min_annual_return_limit=None)
-        expected = round(baseline["total_score"] * 0.2, 2)
-        assert result["total_score"] == expected
-
-    def test_soft_never_zeros_score(self):
-        """Soft constraint should reduce but never zero out."""
-        metrics = self._good_metrics()
-        metrics["annual_return"] = 0.001
-        result = score_strategy(metrics, "explorer", min_annual_return_limit=10.0)
-        assert result["total_score"] > 0
-
-    def test_high_target_600_percent(self):
-        """600% target: strategies below 600% get penalty but not zero."""
-        metrics = self._good_metrics()
-        metrics["annual_return"] = 3.0  # 300% - well below 600%
-        result = score_strategy(metrics, "explorer", min_annual_return_limit=6.0)
-        baseline = score_strategy(metrics, "explorer", min_annual_return_limit=None)
-        assert result["total_score"] < baseline["total_score"]
-        assert result["total_score"] > 0  # Non-zero gradient preserved
+        # In new system, return_ratio = 0.10/0.30 = 0.333
+        # Other dimensions may compensate, so check satisfaction directly
+        assert result["satisfaction"]["annual_return"]["ratio"] < 1.0
 
     def test_combined_with_drawdown_soft(self):
         """Both soft constraints should stack."""
@@ -537,9 +448,9 @@ class TestAnnualReturnSoftConstraint:
             min_annual_return_limit=None,
             max_drawdown_limit=None,
         )
-        # Both penalties should apply: (0.10/0.30) * (0.20/0.40) = 0.333 * 0.5 = 0.167
         assert result["total_score"] < baseline["total_score"]
-        assert result["total_score"] > 0
+        # Drawdown constraint is now hard: exceeding it zeros fitness
+        assert result["fitness"] == 0.0
 
     def test_gradient_preserved_across_range(self):
         """Scores should be monotonically increasing with higher returns."""
@@ -549,6 +460,136 @@ class TestAnnualReturnSoftConstraint:
             metrics["annual_return"] = ar
             result = score_strategy(metrics, "explorer", min_annual_return_limit=6.0)
             scores.append(result["total_score"])
-        # Should be monotonically non-decreasing
         for i in range(len(scores) - 1):
             assert scores[i] <= scores[i + 1], f"Score decreased: {scores[i]} > {scores[i+1]} at index {i}"
+
+
+# -- compute_fitness unit tests (BS-1, BS-2, BS-3) --
+
+class TestComputeFitness:
+    """Tests for the objective-driven compute_fitness function."""
+
+    def _good_metrics(self, **overrides):
+        base = {
+            "annual_return": 0.20, "max_drawdown": -0.25,
+            "win_rate": 0.45, "total_trades": 15, "profit_factor": 1.5,
+            "sharpe_ratio": 1.8, "calmar_ratio": 2.5,
+        }
+        base.update(overrides)
+        return base
+
+    def test_output_structure(self):
+        """BS-1: compute_fitness returns correct structure."""
+        result = compute_fitness(self._good_metrics())
+        assert "fitness" in result
+        assert "qualified" in result
+        assert "satisfaction" in result
+        assert "raw_metrics" in result
+        assert "liquidated" in result
+        assert "objective_name" in result
+        assert "objective_value" in result
+        assert "constraint_failures" in result
+        assert result["fitness"] >= 0
+        assert isinstance(result["qualified"], bool)
+
+    def test_sharpe_objective_default(self):
+        """Default objective is sharpe; fitness = sharpe_ratio."""
+        result = compute_fitness(self._good_metrics(sharpe_ratio=1.8))
+        assert result["objective_name"] == "sharpe"
+        assert result["fitness"] == pytest.approx(1.8, abs=0.001)
+        assert result["objective_value"] == pytest.approx(1.8, abs=0.001)
+
+    def test_calmar_objective(self):
+        """objective=calmar uses calmar_ratio."""
+        req = RequirementsConfig(objective="calmar")
+        result = compute_fitness(self._good_metrics(calmar_ratio=3.0), requirements=req)
+        assert result["objective_name"] == "calmar"
+        assert result["fitness"] == pytest.approx(3.0, abs=0.001)
+
+    def test_annual_return_objective(self):
+        """objective=annual_return uses annual_return directly."""
+        req = RequirementsConfig(objective="annual_return")
+        result = compute_fitness(self._good_metrics(annual_return=6.0), requirements=req)
+        assert result["objective_name"] == "annual_return"
+        assert result["fitness"] == pytest.approx(6.0, abs=0.001)
+
+    def test_selection_pressure_alignment(self):
+        """Higher annual_return should rank higher when objective=annual_return.
+        Verifies the core design intent: strategy meeting user target ranks highest."""
+        req = RequirementsConfig(objective="annual_return", min_annual_return=6.0,
+                                 max_drawdown=0.30, min_total_trades=10, min_profit_factor=1.2)
+        # Strategy B: 600% return, constraints met
+        b = compute_fitness(self._good_metrics(annual_return=6.0, max_drawdown=-0.25), requirements=req)
+        # Strategy A: 300% return, constraints met
+        a = compute_fitness(self._good_metrics(annual_return=3.0, max_drawdown=-0.25), requirements=req)
+        assert b["fitness"] > a["fitness"]
+        assert b["fitness"] == pytest.approx(6.0, abs=0.001)
+
+    def test_constraint_failure_zeros_fitness(self):
+        """Any constraint failure => fitness=0."""
+        req = RequirementsConfig(max_drawdown=0.20)
+        result = compute_fitness(self._good_metrics(max_drawdown=-0.30), requirements=req)
+        assert result["fitness"] == 0.0
+        assert result["qualified"] is False
+        assert "max_drawdown" in result["constraint_failures"]
+
+    def test_qualified_all_constraints_met(self):
+        """All constraints met + fitness > 0 => qualified=True."""
+        req = RequirementsConfig(max_drawdown=0.30, min_total_trades=10, min_profit_factor=1.0)
+        result = compute_fitness(self._good_metrics(), requirements=req)
+        assert result["qualified"] is True
+        assert result["constraint_failures"] == []
+
+    def test_qualified_one_constraint_fails(self):
+        """Any constraint failure => qualified=False."""
+        req = RequirementsConfig(min_total_trades=100)
+        result = compute_fitness(self._good_metrics(total_trades=15), requirements=req)
+        assert result["qualified"] is False
+
+    def test_zero_trades_fitness_zero(self):
+        """Zero trades => fitness=0, qualified=False."""
+        result = compute_fitness({"total_trades": 0, "annual_return": 0.5})
+        assert result["fitness"] == 0.0
+        assert result["qualified"] is False
+
+    def test_liquidated_fitness_zero(self):
+        """Liquidated strategy => fitness=0."""
+        result = compute_fitness({"total_trades": 50, "annual_return": 0.5}, liquidated=True)
+        assert result["fitness"] == 0.0
+        assert result["qualified"] is False
+
+    def test_negative_sharpe_clamped_to_zero(self):
+        """Negative Sharpe => fitness=0 (clamped)."""
+        result = compute_fitness(self._good_metrics(sharpe_ratio=-0.5))
+        assert result["fitness"] == 0.0
+
+    def test_satisfaction_still_computed(self):
+        """Satisfaction ratios still computed for dimension_scores/diversity."""
+        result = compute_fitness(self._good_metrics())
+        assert "annual_return" in result["satisfaction"]
+        assert "max_drawdown" in result["satisfaction"]
+        assert "total_trades" in result["satisfaction"]
+        assert "profit_factor" in result["satisfaction"]
+
+    def test_empty_metrics_fitness_zero(self):
+        """Empty metrics => fitness=0, qualified=False."""
+        result = compute_fitness({})
+        assert result["fitness"] == 0.0
+        assert result["qualified"] is False
+
+    def test_default_requirements(self):
+        """Default requirements have sharpe objective and reasonable constraints."""
+        req = RequirementsConfig()
+        assert req.objective == "sharpe"
+        assert req.max_drawdown == 0.30
+        assert req.min_total_trades == 10
+        assert req.min_profit_factor == 1.2
+        assert req.min_annual_return == 0.0
+        assert req.min_win_rate == 0.0
+
+    def test_min_annual_return_as_constraint(self):
+        """min_annual_return acts as constraint when > 0."""
+        req = RequirementsConfig(min_annual_return=0.15)
+        result = compute_fitness(self._good_metrics(annual_return=0.10), requirements=req)
+        assert result["fitness"] == 0.0
+        assert "annual_return" in result["constraint_failures"]

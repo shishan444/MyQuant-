@@ -60,14 +60,13 @@ describe("parseDiagnostics", () => {
 
 function makeRecord(overrides: Partial<EvolutionHistoryRecord> = {}): EvolutionHistoryRecord {
   return {
-    id: 1,
-    task_id: "t1",
     generation: 1,
     best_score: 50,
     avg_score: 40,
-    best_dna_id: "d1",
+    best_fitness: 0.45,
+    avg_fitness: 0.35,
     top3_summary: "",
-    timestamp: "2024-01-01T00:00:00Z",
+    created_at: "2024-01-01T00:00:00Z",
     ...overrides,
   };
 }

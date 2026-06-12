@@ -26,7 +26,8 @@ export function HistoryTable({
           <tr className="border-b border-slate-700/30 text-slate-500">
             <th className="py-2 text-left font-medium">交易对/周期</th>
             <th className="py-2 text-center font-medium">方向</th>
-            <th className="py-2 text-right font-medium">最优分</th>
+            <th className="py-2 text-right font-medium">综合得分</th>
+            <th className="py-2 text-right font-medium">适应度</th>
             <th className="py-2 text-center font-medium">产出</th>
             <th className="py-2 text-center font-medium">效率</th>
             <th className="py-2 text-center font-medium">代数</th>
@@ -95,6 +96,11 @@ const HistoryRow = memo(function HistoryRow({ task, onView, onSeedEvolve }: Hist
       </td>
       <td className="py-3 text-right font-mono font-semibold text-slate-200">
         {formatNumber(task.best_score ?? 0)}
+      </td>
+      <td className="py-3 text-right font-mono text-slate-300">
+        {task.best_fitness != null
+          ? task.best_fitness.toFixed(2)
+          : "-"}
       </td>
       <td className="py-3 text-center">
         {strategyCount > 0 ? (

@@ -10,6 +10,7 @@ import {
   formatDuration,
   formatDateTime,
   cn,
+  getFitnessColor,
 } from "@/lib/utils";
 
 describe("formatPercent", () => {
@@ -108,5 +109,40 @@ describe("cn", () => {
 
   it("handles conditional classes", () => {
     expect(cn("foo", false && "bar", "baz")).toBe("foo baz");
+  });
+});
+
+describe("getFitnessColor", () => {
+  it("returns green for sharpe >= 1.0", () => {
+    expect(getFitnessColor(1.5)).toBe("text-emerald-400");
+  });
+
+  it("returns amber for sharpe between 0.5 and 1.0", () => {
+    expect(getFitnessColor(0.75)).toBe("text-amber-400");
+  });
+
+  it("returns red for sharpe <= 0.5", () => {
+    expect(getFitnessColor(0.3)).toBe("text-red-400");
+  });
+
+  it("uses calmar thresholds when objective=calmar", () => {
+    expect(getFitnessColor(2.5, "calmar")).toBe("text-emerald-400");
+    expect(getFitnessColor(1.5, "calmar")).toBe("text-amber-400");
+    expect(getFitnessColor(0.5, "calmar")).toBe("text-red-400");
+  });
+
+  it("uses targetScore for annual_return objective", () => {
+    expect(getFitnessColor(6.0, "annual_return", 6.0)).toBe("text-emerald-400");
+    expect(getFitnessColor(3.0, "annual_return", 6.0)).toBe("text-amber-400");
+    expect(getFitnessColor(1.0, "annual_return", 6.0)).toBe("text-red-400");
+  });
+
+  it("defaults to sharpe for unknown objective", () => {
+    expect(getFitnessColor(1.5, "unknown")).toBe("text-emerald-400");
+  });
+
+  it("handles null/NaN gracefully", () => {
+    expect(getFitnessColor(null as unknown as number)).toBe("text-slate-500");
+    expect(getFitnessColor(NaN)).toBe("text-slate-500");
   });
 });

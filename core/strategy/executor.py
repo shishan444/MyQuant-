@@ -333,6 +333,26 @@ def _get_indicator_column(df: pd.DataFrame, gene, _cache=None) -> pd.Series:
         cache[cache_key] = result
         return result
 
+    # On-demand compute: if the indicator is registered but the column was not
+    # pre-computed (e.g. mutation produced non-default params), compute it now.
+    if reg is not None:
+        from core.features.indicators import _compute_indicator
+        new_cols = _compute_indicator(df, indicator, params)
+        if new_cols:
+            for name, series in new_cols.items():
+                df[name] = series
+            # Retry lookup after writing computed columns
+            if col in df.columns:
+                result = df[col]
+                cache[cache_key] = result
+                return result
+            # Column name mismatch — try matching by output
+            for name in new_cols:
+                if col in name or name in col:
+                    result = df[name]
+                    cache[cache_key] = result
+                    return result
+
     raise ValueError(f"Column '{col}' not found in DataFrame. Available: {list(df.columns)}")
 
 
@@ -720,15 +740,10 @@ def dna_to_signal_set(
     dna_direction = getattr(dna.risk_genes, "direction", "long")
     if dna_direction == "mixed":
         if direction_genes:
-            # Use DIRECTION gene signals (priority over momentum)
             entry_direction = direction_genes[0]
         else:
-            # Fallback: momentum-based
-            momentum = close.pct_change(5)
-            entry_direction = pd.Series(
-                np.where(momentum >= 0, 1.0, -1.0),
-                index=enhanced_df.index,
-            )
+            # No DIRECTION gene: neutral direction (signals will not fire)
+            entry_direction = pd.Series(0.0, index=enhanced_df.index)
     else:
         # For single-direction DNA, set explicit direction
         entry_direction = pd.Series(
@@ -872,15 +887,10 @@ def batch_signal_sets(
         entry_direction = None
         if getattr(dna.risk_genes, "direction", None) == "mixed":
             if direction_genes:
-                # Use DIRECTION gene signals (priority over momentum)
                 entry_direction = direction_genes[0]
             else:
-                # Fallback: momentum-based
-                momentum = enhanced_df["close"].pct_change(5)
-                entry_direction = pd.Series(
-                    np.where(momentum >= 0, 1.0, -1.0),
-                    index=enhanced_df.index,
-                )
+                # No DIRECTION gene: neutral direction
+                entry_direction = pd.Series(0.0, index=enhanced_df.index)
 
         results.append(SignalSet(
             entries=entries,

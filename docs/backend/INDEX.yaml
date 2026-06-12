@@ -1,6 +1,6 @@
 version: "1.0"
-generated_at: "2026-05-20T00:00:00+08:00"
-git_commit: "ba9b7d00466a20480c8a71031cea32058f24afa7"
+generated_at: "2026-06-04T00:00:00+08:00"
+git_commit: "updated-20260604"
 
 modules:
   - name: "策略DNA与执行"

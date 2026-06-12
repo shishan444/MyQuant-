@@ -48,6 +48,17 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
         if not exit_signals:
             errors.append("No exit signal defined (need at least one exit_trigger or exit_guard)")
 
+        # Mixed direction requires at least one DIRECTION gene
+        if dna.risk_genes.direction == "mixed":
+            direction_genes = [
+                g for g in dna.signal_genes
+                if g.role == SignalRole.DIRECTION
+            ]
+            if not direction_genes:
+                errors.append(
+                    "mixed direction requires at least one DIRECTION gene"
+                )
+
     # Also check layers for MTF strategies
     if dna.layers:
         if len(dna.layers) > 3:
@@ -77,6 +88,19 @@ def validate_dna(dna: StrategyDNA) -> ValidationResult:
                 has_trend = True
         if not has_execution:
             errors.append("MTF strategy needs at least one execution layer")
+
+        # Mixed direction requires at least one DIRECTION gene across all layers
+        if dna.risk_genes.direction == "mixed":
+            all_direction = [
+                g for layer in dna.layers
+                for g in layer.signal_genes
+                if g.role == SignalRole.DIRECTION
+            ]
+            if not all_direction:
+                errors.append(
+                    "mixed direction requires at least one DIRECTION gene "
+                    "across MTF layers"
+                )
 
         # Validate cross_layer_logic
         if dna.cross_layer_logic not in ("AND", "OR"):

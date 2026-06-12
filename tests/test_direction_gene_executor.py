@@ -94,8 +94,8 @@ class TestSingleTFDirectionGene:
         assert (uptrend_dirs == 1.0).any(), "Uptrend should have +1 direction"
         assert (downtrend_dirs == -1.0).any(), "Downtrend should have -1 direction"
 
-    def test_no_direction_gene_uses_momentum(self):
-        """Without DIRECTION gene, mixed strategy uses momentum fallback."""
+    def test_no_direction_gene_neutral_direction(self):
+        """Without DIRECTION gene, mixed strategy gets neutral (0.0) direction."""
         df = _make_trending_data()
         dna = StrategyDNA(
             signal_genes=[
@@ -112,9 +112,8 @@ class TestSingleTFDirectionGene:
         sig = dna_to_signal_set(dna, df)
 
         assert sig.entry_direction is not None
-        # Momentum fallback should produce both directions
-        assert (sig.entry_direction > 0).any(), "Should have positive direction"
-        assert (sig.entry_direction < 0).any(), "Should have negative direction"
+        # No DIRECTION gene: neutral direction (0.0)
+        assert (sig.entry_direction == 0.0).all(), "Should be all neutral (0.0)"
 
     def test_direction_gene_not_used_for_long(self):
         """direction='long' should not generate entry_direction even with DIRECTION gene."""
@@ -186,7 +185,7 @@ class TestBatchDirectionGene:
     """Test DIRECTION gene in batch signal path."""
 
     def test_batch_direction_gene_per_individual(self):
-        """Batch: individuals with DIRECTION gene use it, others use momentum."""
+        """Batch: individuals with DIRECTION gene use it, others get neutral."""
         df = _make_trending_data()
 
         dna_with_dir = _make_direction_dna("price_above", "EMA")

@@ -20,16 +20,19 @@ import {
 interface ScoreTrendChartProps {
   records: EvolutionHistoryRecord[];
   targetScore: number;
+  targetFitness?: number;
 }
 
 function CustomTooltip({
   active,
   payload,
   label,
+  targetFitness = 1.0,
 }: {
   active?: boolean;
   payload?: Array<{ value: number; name: string; color: string; dataKey: string }>;
   label?: number;
+  targetFitness?: number;
 }) {
   if (!active || !payload) return null;
   const dataPoint = payload[0]?.payload as ChartDataPoint | undefined;
@@ -53,13 +56,23 @@ function CustomTooltip({
 
       {/* Best score with delta */}
       <p className="text-amber-400">
-        最优分数: {dataPoint.bestScore.toFixed(1)}
+        综合得分: {dataPoint.bestScore.toFixed(1)}
         {delta != null && delta !== 0 && (
           <span className={delta > 0 ? "text-emerald-400 ml-1" : "text-red-400/70 ml-1"}>
             {delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)}
           </span>
         )}
       </p>
+
+      {/* Best fitness */}
+      {dataPoint.bestFitness != null && (
+        <p className={dataPoint.bestFitness >= targetFitness ? "text-emerald-400" : "text-emerald-400/70"}>
+          适应度: {dataPoint.bestFitness.toFixed(2)}
+          {dataPoint.bestFitness >= targetFitness && (
+            <span className="ml-1 text-[10px] font-medium">达标</span>
+          )}
+        </p>
+      )}
 
       {/* Cumulative best */}
       {dataPoint.cumulativeBest !== dataPoint.bestScore && (
@@ -70,7 +83,7 @@ function CustomTooltip({
 
       {/* Avg score */}
       <p className="text-purple-400/70">
-        平均分数: {dataPoint.avgScore.toFixed(1)}
+        平均得分: {dataPoint.avgScore.toFixed(1)}
       </p>
 
       {/* Avg trades */}
@@ -120,11 +133,14 @@ function CustomTooltip({
 export function ScoreTrendChart({
   records,
   targetScore,
+  targetFitness = 1.0,
 }: ScoreTrendChartProps) {
   const { data, championChanges, boundaries, stats }: ChartTransformResult = useMemo(
     () => transformChartData(records),
     [records],
   );
+
+  const hasFitnessData = data.some((d) => d.bestFitness != null);
 
   if (data.length === 0) {
     return (
@@ -136,12 +152,18 @@ export function ScoreTrendChart({
 
   const lastRecord = data[data.length - 1];
 
-  // Compute Y-axis domain to include targetScore
-  const allY = data.flatMap((d) => [d.bestScore, d.avgScore]);
+  // Compute Y-axis domain
+  const allY = data.flatMap((d) => {
+    const vals = [d.bestScore, d.avgScore];
+    if (d.bestFitness != null) vals.push(d.bestFitness);
+    return vals;
+  });
+  if (hasFitnessData) allY.push(targetFitness);
+  else allY.push(targetScore);
   const dataMin = Math.min(...allY);
   const dataMax = Math.max(...allY);
-  const yMin = Math.floor(Math.min(dataMin, targetScore) / 5) * 5 - 5;
-  const yMax = Math.ceil(Math.max(dataMax, targetScore) / 5) * 5 + 5;
+  const yMin = Math.floor(Math.min(dataMin, hasFitnessData ? targetFitness : targetScore) / 5) * 5 - 5;
+  const yMax = Math.ceil((dataMax + 5) / 5) * 5;
 
   return (
     <div>
@@ -164,19 +186,37 @@ export function ScoreTrendChart({
               tickLine={false}
               domain={[yMin, yMax]}
             />
-            <Tooltip content={<CustomTooltip />} />
-            <ReferenceLine
-              y={targetScore}
-              stroke="#94a3b8"
-              strokeDasharray="6 3"
-              strokeWidth={1}
-              label={{
-                value: `目标 ${targetScore}`,
-                position: "right",
-                fill: "#94a3b8",
-                fontSize: 10,
-              }}
-            />
+            <Tooltip content={<CustomTooltip targetFitness={targetFitness} />} />
+            {/* Fitness reference line at 1.0 (达标线) */}
+            {hasFitnessData && (
+              <ReferenceLine
+                y={targetFitness}
+                stroke="#22c55e"
+                strokeDasharray="6 3"
+                strokeWidth={1.5}
+                label={{
+                  value: "达标线",
+                  position: "right",
+                  fill: "#22c55e",
+                  fontSize: 10,
+                }}
+              />
+            )}
+            {/* Legacy target score reference line (only when no fitness data) */}
+            {!hasFitnessData && (
+              <ReferenceLine
+                y={targetScore}
+                stroke="#94a3b8"
+                strokeDasharray="6 3"
+                strokeWidth={1}
+                label={{
+                  value: `目标 ${targetScore}`,
+                  position: "right",
+                  fill: "#94a3b8",
+                  fontSize: 10,
+                }}
+              />
+            )}
             {/* Population boundary vertical lines */}
             {boundaries.map((gen) => (
               <ReferenceLine
@@ -197,6 +237,18 @@ export function ScoreTrendChart({
               activeDot={{ r: 4, fill: "#eab308" }}
               name="bestScore"
             />
+            {/* Best fitness line (primary metric when available) */}
+            {hasFitnessData && (
+              <Line
+                type="monotone"
+                dataKey="bestFitness"
+                stroke="#22c55e"
+                strokeWidth={2.5}
+                dot={false}
+                activeDot={{ r: 4, fill: "#22c55e" }}
+                name="bestFitness"
+              />
+            )}
             {/* Cumulative best (never decreases) */}
             <Line
               type="monotone"
@@ -233,20 +285,33 @@ export function ScoreTrendChart({
       <div className="mt-1 flex items-center justify-center gap-4 text-[10px] text-slate-600">
         <span className="flex items-center gap-1">
           <span className="inline-block h-0.5 w-4 bg-amber-400" />
-          最优分数
+          综合得分
         </span>
+        {hasFitnessData && (
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-0.5 w-4 bg-emerald-500" />
+            适应度
+          </span>
+        )}
         <span className="flex items-center gap-1">
           <span className="inline-block h-0.5 w-4 border-t border-dashed border-emerald-400/50" />
           累计最佳
         </span>
         <span className="flex items-center gap-1">
           <span className="inline-block h-0.5 w-4 border-t border-dashed border-purple-400/40" />
-          平均分数
+          平均得分
         </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-0.5 w-4 border-t border-dashed border-slate-400" />
-          目标线
-        </span>
+        {hasFitnessData ? (
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-0.5 w-4 border-t border-dashed border-emerald-500" />
+            达标线
+          </span>
+        ) : (
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-0.5 w-4 border-t border-dashed border-slate-400" />
+            目标线
+          </span>
+        )}
         <span className="flex items-center gap-1">
           <span className="inline-block h-2 w-2 rotate-45 bg-emerald-500" />
           最优更新
