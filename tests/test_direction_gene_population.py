@@ -3,6 +3,8 @@ import random
 
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 from core.strategy.dna import SignalRole, StrategyDNA
 from core.evolution.population import (
     _dna_from_template,

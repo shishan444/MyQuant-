@@ -19,10 +19,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.persistence.db import _connect, init_db
+from core.scoring import trading_metrics
 
 logger = logging.getLogger(__name__)
 
-_MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
+# Located at core/persistence/db_ext.py — resolve up to the repo root (which
+# holds the migrations/ directory). parents[0]=persistence, [1]=core, [2]=root.
+_MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 
 # ---------------------------------------------------------------------------
 
@@ -379,111 +382,41 @@ def init_db_ext(db_path: Path) -> None:
         if 1 not in applied:
             _record_version(conn, 1)
 
-        # 4. ALTER TABLE for evolution_task extensions (migration 005)
-        _apply_alter_evolution_task(conn)
-        if 5 not in applied:
-            _record_version(conn, 5)
+        # 4. Data-driven ALTER/data migrations (versions 5-25).
+        # Defined inline (after all _apply_*/_create_* helpers are in scope)
+        # so we iterate a table instead of 24 hard-coded sequential steps.
+        # Runners are idempotent (PRAGMA table_info guards).
+        def _step_23(c: sqlite3.Connection) -> None:
+            _create_verify_session_table(c)
+            _apply_verify_session_columns(c)
 
-        # 5. ALTER TABLE for MTF support (migration 006)
-        _apply_mtf_columns(conn)
-        if 6 not in applied:
-            _record_version(conn, 6)
-
-        # 6. ALTER TABLE for task-level constraints (migration 007)
-        _apply_constraint_columns(conn)
-        if 7 not in applied:
-            _record_version(conn, 7)
-
-        # 7. ALTER TABLE for strategy metrics column
-        _apply_strategy_ext_columns(conn)
-        if 8 not in applied:
-            _record_version(conn, 8)
-
-        # 8. ALTER TABLE for progress tracking columns (migration 009)
-        _apply_progress_columns(conn)
-        if 9 not in applied:
-            _record_version(conn, 9)
-
-        # 9. Paper trading tables (migration 010)
-        _create_paper_trading_tables(conn)
-        if 10 not in applied:
-            _record_version(conn, 10)
-
-        # 10. Paper equity snapshot table (migration 011)
-        _create_equity_snapshot_table(conn)
-        if 11 not in applied:
-            _record_version(conn, 11)
-
-        # 11. Scoring constraint columns (migration 012)
-        _apply_scoring_constraint_columns(conn)
-        if 12 not in applied:
-            _record_version(conn, 12)
-
-        # 12. Execution model column (migration 013)
-        _apply_execution_model_column(conn)
-        if 13 not in applied:
-            _record_version(conn, 13)
-
-        # 13. Bars held column (migration 014)
-        _apply_bars_held_column(conn)
-        if 14 not in applied:
-            _record_version(conn, 14)
-
-        # 14. Position open cost column (migration 015)
-        _apply_position_open_cost_column(conn)
-        if 15 not in applied:
-            _record_version(conn, 15)
-
-        # 15. Pending decision column (migration 016)
-        _apply_pending_decision_column(conn)
-        if 16 not in applied:
-            _record_version(conn, 16)
-
-        # 16. Confidence sizing column (migration 017)
-        _apply_confidence_sizing_column(conn)
-        if 17 not in applied:
-            _record_version(conn, 17)
-
-        # 17. Prediction DNA column (migration 018)
-        _apply_prediction_dna_column(conn)
-        if 18 not in applied:
-            _record_version(conn, 18)
-
-        # 18. Deduplicate strategies (migration 019)
-        _dedup_strategies(conn)
-        if 19 not in applied:
-            _record_version(conn, 19)
-
-        # 19. Recompute strategy names to include MTF layers (migration 020)
-        _recompute_strategy_names(conn)
-        if 20 not in applied:
-            _record_version(conn, 20)
-
-        # 20. Fitness scoring columns (migration 021)
-        _apply_fitness_columns(conn)
-        if 21 not in applied:
-            _record_version(conn, 21)
-
-        # 21. OOS validation columns (migration 022)
-        _apply_oos_validation_columns(conn)
-        if 22 not in applied:
-            _record_version(conn, 22)
-
-        # 22. Verify session table + session_id column (migration 023)
-        _create_verify_session_table(conn)
-        _apply_verify_session_columns(conn)
-        if 23 not in applied:
-            _record_version(conn, 23)
-
-        # 23. Strategy verification summary columns (migration 024)
-        _apply_verify_strategy_columns(conn)
-        if 24 not in applied:
-            _record_version(conn, 24)
-
-        # 24. Strategy verification star column (migration 025)
-        _apply_verify_strategy_columns(conn)
-        if 25 not in applied:
-            _record_version(conn, 25)
+        migrations = [
+            (5, _apply_alter_evolution_task),
+            (6, _apply_mtf_columns),
+            (7, _apply_constraint_columns),
+            (8, _apply_strategy_ext_columns),
+            (9, _apply_progress_columns),
+            (10, _create_paper_trading_tables),
+            (11, _create_equity_snapshot_table),
+            (12, _apply_scoring_constraint_columns),
+            (13, _apply_execution_model_column),
+            (14, _apply_bars_held_column),
+            (15, _apply_position_open_cost_column),
+            (16, _apply_pending_decision_column),
+            (17, _apply_confidence_sizing_column),
+            (18, _apply_prediction_dna_column),
+            (19, _dedup_strategies),
+            (20, _recompute_strategy_names),
+            (21, _apply_fitness_columns),
+            (22, _apply_oos_validation_columns),
+            (23, _step_23),
+            (24, _apply_verify_strategy_columns),
+            (25, _apply_verify_strategy_columns),
+        ]
+        for version, runner in migrations:
+            runner(conn)
+            if version not in applied:
+                _record_version(conn, version)
 
         conn.commit()
     finally:
@@ -912,93 +845,46 @@ def delete_paper_trading_task(db_path: Path, task_id: str) -> bool:
         return True
 
 
-def _compute_equity(task: dict, balance: float) -> float:
-    """Compute equity from balance + position_margin + unrealized_pnl."""
-    if not task.get("position_side"):
-        return balance
-    margin = task.get("position_margin") or 0.0
-    pnl = task.get("unrealized_pnl") or 0.0
-    return balance + margin + pnl
-
-
 def compute_trading_metrics(db_path: Path, task_id: str) -> Optional[Dict[str, Any]]:
-    """Compute performance metrics for a paper trading task."""
+    """Compute performance metrics for a paper trading task.
+
+    Reads task/trades/snapshots from DB and delegates the math to
+    core.scoring.trading_metrics (single source of truth for the formulas).
+    """
     task = get_paper_trading_task(db_path, task_id)
     if task is None:
         return None
 
     initial_cash = task["initial_cash"]
     balance = task.get("balance") if task.get("balance") is not None else initial_cash
-    total_trades = task.get("total_trades", 0)
-    win_count = task.get("win_count", 0)
-    loss_count = task.get("loss_count", 0)
 
-    # Use equity for total_pnl to include all costs (open/close fees + slippage)
-    equity = _compute_equity(task, balance)
-    total_pnl = equity - initial_cash
-
-    # Win rate
-    win_rate = win_count / max(total_trades, 1)
-
-    # Compute gross profit / gross loss from trades
-    gross_profit = 0.0
-    gross_loss = 0.0
     with _connect(db_path) as conn:
-        rows = conn.execute(
+        close_rows = conn.execute(
             "SELECT pnl FROM paper_trade WHERE task_id = ? AND pnl IS NOT NULL AND action = 'close'",
             (task_id,),
         ).fetchall()
-        for r in rows:
-            if r[0] > 0:
-                gross_profit += r[0]
-            else:
-                gross_loss += r[0]
-
-    profit_factor = gross_profit / max(abs(gross_loss), 1e-8) if gross_loss != 0 else float("inf")
-
-    # Max drawdown from equity snapshots
-    max_drawdown = 0.0
-    max_drawdown_pct = 0.0
-    with _connect(db_path) as conn:
-        rows = conn.execute(
+        eq_rows = conn.execute(
             "SELECT equity FROM paper_equity_snapshot WHERE task_id = ? ORDER BY timestamp ASC",
             (task_id,),
         ).fetchall()
-        if rows:
-            peak = rows[0][0]
-            for r in rows:
-                eq = r[0]
-                if eq > peak:
-                    peak = eq
-                dd = peak - eq
-                if dd > max_drawdown:
-                    max_drawdown = dd
-                    max_drawdown_pct = dd / peak if peak > 0 else 0.0
 
-    # Use equity (balance + margin + unrealized_pnl) for return calculation
-    # balance alone excludes locked margin, giving misleading -100% when in position
-    equity = _compute_equity(task, balance)
-    total_return = equity / initial_cash - 1 if initial_cash > 0 else 0.0
-    avg_trade_pnl = total_pnl / max(total_trades, 1)
-
-    unrealized_pnl = task.get("unrealized_pnl", 0.0) or 0.0
-
-    return {
-        "task_id": task_id,
-        "total_return": round(total_return, 6),
-        "total_return_pct": round(total_return * 100, 2),
-        "win_rate": round(win_rate, 4),
-        "profit_factor": round(profit_factor, 4) if profit_factor != float("inf") else None,
-        "max_drawdown": round(max_drawdown, 2),
-        "max_drawdown_pct": round(max_drawdown_pct * 100, 2),
-        "avg_trade_pnl": round(avg_trade_pnl, 2),
-        "total_trades": total_trades,
-        "total_pnl": round(total_pnl, 2),
-        "realized_pnl": round(task.get("total_pnl", 0.0) or 0.0, 2),
-        "unrealized_pnl": round(unrealized_pnl, 2),
-        "win_count": win_count,
-        "loss_count": loss_count,
-    }
+    metrics = trading_metrics.compute_trading_metrics(
+        trading_metrics.TradingMetricsInput(
+            initial_cash=initial_cash,
+            balance=balance,
+            total_trades=task.get("total_trades", 0),
+            win_count=task.get("win_count", 0),
+            loss_count=task.get("loss_count", 0),
+            realized_pnl=task.get("total_pnl", 0.0) or 0.0,
+            unrealized_pnl=task.get("unrealized_pnl", 0.0) or 0.0,
+            position_side=task.get("position_side"),
+            position_margin=task.get("position_margin") or 0.0,
+            close_pnls=[r[0] for r in close_rows],
+            equity_snapshots=[r[0] for r in eq_rows],
+        )
+    )
+    metrics["task_id"] = task_id
+    return metrics
 
 
 # ===================================================================
@@ -1032,9 +918,8 @@ def save_strategy(
     if gene_signature is None:
         try:
             from core.strategy.dna import StrategyDNA
-            from core.evolution.diversity import _gene_signature
             dna = StrategyDNA.from_json(dna_json)
-            gene_signature = _gene_signature(dna)
+            gene_signature = dna.gene_signature
         except Exception:
             gene_signature = None
 

@@ -29,7 +29,7 @@ from core.persistence.db import (
     save_task,
     update_task,
 )
-from api.db_ext import (
+from core.persistence.db_ext import (
     delete_dataset,
     delete_strategy,
     get_dataset,

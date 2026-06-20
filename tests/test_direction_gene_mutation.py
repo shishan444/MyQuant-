@@ -3,6 +3,8 @@ import random
 
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.strategy.dna import SignalRole, SignalGene, StrategyDNA, RiskGenes, LogicGenes
 from core.evolution.operators import (
     mutate_add_signal,

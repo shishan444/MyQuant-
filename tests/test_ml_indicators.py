@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 from core.features.registry import (
     INDICATOR_REGISTRY,
     resolve_indicator_column,

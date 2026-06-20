@@ -13,10 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 logger = logging.getLogger("app")
 
-from .db_ext import init_db_ext
+from core.persistence.db_ext import init_db_ext
 from .routes import config, data, evolution, strategies, ws
 from .routes import validate as validate_route
-from .routes import chart_config
 from .routes import scene as scene_route
 from .routes import discovery as discovery_route
 from .routes import trading as trading_route
@@ -50,10 +49,11 @@ def create_app(
         init_db_ext(db_path)
 
         # Start EvolutionRunner background thread
-        from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks
+        from .runner import EvolutionRunner, set_ws_push_fn, recover_stale_tasks, restart_crashed_tasks
         from .routes.ws import get_manager
 
         recover_stale_tasks(db_path)
+        restart_crashed_tasks(db_path)
 
         # Start TradingRunner background thread
         from core.trading.runner import TradingRunner, set_trading_ws_push_fn, recover_stale_trading_tasks
@@ -127,7 +127,6 @@ def create_app(
     app.include_router(ws.router)
     app.include_router(trading_route.router)
     app.include_router(validate_route.router)
-    app.include_router(chart_config.router)
     app.include_router(scene_route.router)
     app.include_router(discovery_route.router)
 

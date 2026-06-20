@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.trading.types import AccountState, BarSignals, Decision, JudgmentConfig
 from core.trading.judgment import evaluate
 

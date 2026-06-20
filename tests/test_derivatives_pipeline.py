@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 from core.data.derivatives_merger import merge_derivatives_into_ohlcv
 from core.features.indicators import compute_all_indicators
 

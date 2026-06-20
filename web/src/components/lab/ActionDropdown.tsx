@@ -1,6 +1,5 @@
-import { useState, useMemo, useRef } from "react";
-import { cn } from "@/lib/utils";
-import { DropdownPortal } from "./DropdownPortal";
+import { useMemo } from "react";
+import { OptionDropdown } from "./OptionDropdown";
 
 interface ActionOption {
   value: string;
@@ -104,70 +103,15 @@ interface ActionDropdownProps {
 }
 
 export function ActionDropdown({ value, onChange, subject, isThen = false }: ActionDropdownProps) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-
   const actions = useMemo(() => getActionsForSubject(subject, isThen), [subject, isThen]);
-  const categories = useMemo(
-    () => [...new Set(actions.map((a) => a.category))],
-    [actions],
-  );
-
-  const currentLabel = getActionLabel(value);
-
   return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className={cn(
-          "h-7 rounded-md border px-2 text-xs transition-colors",
-          "border-border-default bg-bg-surface text-text-primary",
-          "hover:border-accent-gold/50",
-        )}
-        onClick={() => setOpen(!open)}
-      >
-        {currentLabel}
-      </button>
-
-      <DropdownPortal triggerRef={triggerRef} open={open} onClose={() => setOpen(false)} width={144}>
-        <div
-          className={cn(
-            "rounded-lg border border-border-default bg-bg-surface shadow-xl",
-          )}
-        >
-          <div className="max-h-48 overflow-y-auto py-1">
-            {categories.map((cat) => {
-              const items = actions.filter((a) => a.category === cat);
-              return (
-                <div key={cat}>
-                  <div className="px-2 py-1 text-[10px] font-semibold text-text-muted">
-                    {cat}
-                  </div>
-                  {items.map((opt) => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      className={cn(
-                        "flex w-full items-center px-3 py-1.5 text-xs transition-colors",
-                        value === opt.value
-                          ? "bg-accent-gold/10 text-accent-gold"
-                          : "text-text-primary hover:bg-white/5",
-                      )}
-                      onClick={() => {
-                        onChange(opt.value);
-                        setOpen(false);
-                      }}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </DropdownPortal>
-    </>
+    <OptionDropdown
+      value={value}
+      label={getActionLabel(value)}
+      options={actions}
+      onChange={onChange}
+      width={144}
+      maxHeightClass="max-h-48"
+    />
   );
 }

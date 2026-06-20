@@ -153,7 +153,7 @@ def list_all_discovered_strategies(
     db_path: Path = Depends(get_db_path),
 ) -> List[Dict[str, Any]]:
     """List all evolution-discovered strategies across all tasks."""
-    from api.db_ext import list_strategies
+    from core.persistence.db_ext import list_strategies
     strategies = list_strategies(
         db_path, source="evolution", sort_by="best_score",
         sort_order="desc", limit=limit,
@@ -355,7 +355,7 @@ def list_tasks(
     rows = list_all_tasks(db_path, status=status, limit=page_size, offset=offset)
 
     # Batch query strategy counts for all tasks on this page
-    from api.db_ext import count_strategies_by_tasks
+    from core.persistence.db_ext import count_strategies_by_tasks
     task_ids = [r["task_id"] for r in rows]
     strategy_counts = count_strategies_by_tasks(db_path, task_ids) if task_ids else {}
 
@@ -529,7 +529,7 @@ def get_discovered_strategies(
     db_path: Path = Depends(get_db_path),
 ) -> List[Dict[str, Any]]:
     """Get auto-extracted strategies for a task from the strategy table."""
-    from api.db_ext import list_strategies
+    from core.persistence.db_ext import list_strategies
     strategies = list_strategies(
         db_path,
         source="evolution",
@@ -574,12 +574,9 @@ def get_discovered_strategies(
 
 
 def _get_connection(db_path: Path):
-    """Get a raw SQLite connection for extended column updates."""
-    import sqlite3
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Get a SQLite connection (delegates to core.persistence.db.connect)."""
+    from core.persistence.db import connect
+    return connect(db_path)
 
 
 # ── Timeframe utilities ──

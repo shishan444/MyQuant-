@@ -156,3 +156,32 @@ def test_touch_bounce_uses_only_past_data():
     # Only the first bar might be NaN from shift(1), which is acceptable
     assert result.iloc[1:].notna().all()
 
+
+def test_engine_applies_shift_in_real_portfolio_path():
+    """B1: 从真实 BacktestEngine portfolio 的 trade Entry Timestamp 反推 shift(1) 生效。
+
+    修复假阳性: test_entries_delayed_by_1_bar 调 _build_portfolio 后丢弃 pf, 断言全打在
+    手动 sig.shift(1) 上(只验证 pandas shift 函数本身)。本测试验证 engine 真实路径
+    (engine.py:419 _build_portfolio 内 entries.shift(1))——raw 信号在 bar10, shift 后 entry
+    trade 必须在 bar11; 若 shift 失效则 entry 在 bar10(look-ahead, 测试失败)。
+    """
+    df = _make_rsi_df(50)
+    df.loc[df.index[10], "rsi_14"] = 25  # raw entry signal at bar 10
+
+    dna = _make_rsi_dna()
+    # exit 阈值拉高使不触发, 仓位持有到末尾便于断言 entry bar
+    for g in dna.signal_genes:
+        if g.role == SignalRole.EXIT_TRIGGER:
+            g.condition = {"type": "gt", "threshold": 200}
+
+    engine = BacktestEngine(init_cash=100000)
+    _result, pf = engine.run_with_portfolio(dna, df)
+
+    trades = pf.trades.records_readable
+    assert len(trades) >= 1, "应至少有一笔 entry trade"
+    first_entry = trades["Entry Timestamp"].iloc[0]
+    assert first_entry == df.index[11], (
+        f"engine 未正确 shift(1): entry at {first_entry}, 期望 bar11 {df.index[11]}"
+    )
+    assert first_entry != df.index[10], "未 shift: entry 用了当 bar 信号(look-ahead)"
+

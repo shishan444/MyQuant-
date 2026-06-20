@@ -1,5 +1,7 @@
 """Unit tests for compute_verify_star rating function."""
 import pytest
+
+pytestmark = [pytest.mark.unit]
 from api.routes.strategies import compute_verify_star
 
 

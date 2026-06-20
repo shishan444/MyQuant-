@@ -183,8 +183,12 @@ def test_liquidation_reset_entry_price():
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df, signal_set=sig_set)
 
-    # The liquidation should have occurred and equity should be reduced
-    assert result.equity_curve.iloc[-1] < 100000
+    # B2 强化: 10x 杠杆 + 90% 暴跌应清算; entry_price 是 njit 内部状态不可直接断言,
+    # 用 liquidated + 权益跌破维持保证金替代(之前只断言 equity<100000, 弱)
+    # 注: 清算机制在跌破 maintenance 后平仓保留剩余资金, equity 不会近归零
+    assert result.liquidated is True, "10x 杠杆 + 90% 暴跌应清算"
+    maintenance = 100000 * (1 - 0.9 / 10)  # = 91000, engine.py:521
+    assert result.equity_curve.min() < maintenance  # 曾跌破维持保证金
 
 def test_post_liquidation_new_entry_respects_sl():
     """After liquidation and re-entry, SL should work normally."""

@@ -10,33 +10,19 @@ from core.evolution.population import create_random_dna
 
 
 # ---------------------------------------------------------------------------
-# Genotype signature (existing, unchanged)
+# Genotype signature (delegates to StrategyDNA.gene_signature)
 # ---------------------------------------------------------------------------
 
 def _gene_signature(dna: StrategyDNA) -> str:
-    """Create a signature string for similarity comparison.
+    """Backward-compatible wrapper around ``StrategyDNA.gene_signature``.
 
-    Includes indicator name, ALL parameters (sorted), condition type, and role
-    so that different parameter values produce different signatures.
+    The genotype-signature logic now lives on StrategyDNA itself (it is an
+    intrinsic property of the DNA, used for diversity measurement, strategy
+    dedup, and the evolution exclude-set). This function is kept so existing
+    callers and tests importing it keep working; new code should use
+    ``dna.gene_signature`` directly.
     """
-    parts = []
-    for gene in sorted(dna.signal_genes, key=lambda g: g.role.value):
-        # Include all param values for full granularity
-        param_parts = sorted(f"{k}={v}" for k, v in gene.params.items())
-        param_summary = ",".join(param_parts)
-        cond_type = gene.condition.get("type", "?") if gene.condition else "?"
-        parts.append(f"{gene.indicator}({param_summary}):{cond_type}:{gene.role.value}")
-    parts.append(f"lev:{dna.risk_genes.leverage}")
-    parts.append(f"dir:{dna.risk_genes.direction}")
-    # Include MTF layer structure for diversity (M3 fix)
-    if dna.layers:
-        for layer in dna.layers:
-            layer_parts = [f"L:{layer.timeframe}:{layer.role or 'execution'}"]
-            for g in sorted(layer.signal_genes, key=lambda x: x.role.value):
-                g_cond = g.condition.get("type", "?") if g.condition else "?"
-                layer_parts.append(f"{g.indicator}:{g_cond}")
-            parts.append(",".join(layer_parts))
-    return "|".join(parts)
+    return dna.gene_signature
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +194,7 @@ def compute_diversity(population: List[StrategyDNA]) -> float:
     if len(population) <= 1:
         return 0.0
 
-    signatures = [_gene_signature(ind) for ind in population]
+    signatures = [ind.gene_signature for ind in population]
     unique = len(set(signatures))
     return unique / len(population)
 
@@ -353,7 +339,7 @@ def check_and_maintain_diversity(
     diversity = compute_diversity(population)
     if diversity < threshold:
         # Replace the most common individuals
-        signatures = [_gene_signature(ind) for ind in population]
+        signatures = [ind.gene_signature for ind in population]
         from collections import Counter
         counts = Counter(signatures)
         most_common_sig, most_common_count = counts.most_common(1)[0]
@@ -363,7 +349,7 @@ def check_and_maintain_diversity(
             seen = set()
             new_pop = []
             for ind in population:
-                sig = _gene_signature(ind)
+                sig = ind.gene_signature
                 if sig in seen:
                     fresh = create_random_dna(
                         timeframe=ind.execution_genes.timeframe,

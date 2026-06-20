@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.strategy.executor import (
     _get_indicator_column,
     _indicator_column_cache,

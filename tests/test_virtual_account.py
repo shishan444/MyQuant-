@@ -615,11 +615,6 @@ class TestBacktestConsistency:
     """V2 uses open price, so P&L will differ from backtest (close price).
     This is an intentional design choice. Test marked as xfail."""
 
-    @pytest.mark.xfail(
-        reason="V2 executes at open price, backtest uses close price. "
-               "This is an intentional difference.",
-        strict=False,
-    )
     def test_pnl_matches_backtest(self):
         import numpy as np
         import pandas as pd

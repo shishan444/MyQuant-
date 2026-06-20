@@ -512,6 +512,11 @@ def dna_to_signal_set(
     dfs_by_timeframe: dict | None = None,
 ) -> SignalSet:
     """Convert a StrategyDNA to a full SignalSet with adds/reduces."""
+    # Clear the module-level indicator column cache at entry. It is keyed by
+    # id(df) and never auto-cleared, so without this, leftover Series from a
+    # previous call/test leak across invocations — and Python id reuse can make
+    # a freshly-built df hit a stale key, returning wrong indicator columns.
+    clear_indicator_cache()
     # MTF mode with role-aware signal combination
     if dna.is_mtf and dfs_by_timeframe is not None:
         # New MTF engine path: activated when mtf_mode is set

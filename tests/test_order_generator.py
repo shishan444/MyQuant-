@@ -1,6 +1,8 @@
 """Tests for OrderGenerator: price calculation and order generation logic."""
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.prediction.predictor import PredictionResult
 from core.trading.order_generator import compute_order_price, generate_order
 from core.trading.types import (

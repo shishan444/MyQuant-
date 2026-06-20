@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 from core.strategy.mtf_engine import (
     compute_proximity_score,
     synthesize_cross_layer,

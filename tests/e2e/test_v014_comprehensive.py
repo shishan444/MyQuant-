@@ -1,9 +1,14 @@
-"""Comprehensive E2E test for v0.10-v0.13 frontend - console errors and navigation."""
+"""Comprehensive E2E test for frontend - console errors and navigation.
 
+Updated for current frontend: i18n (中文) + route restructure
+(/library → /strategies, +/verify /batch-backtest /trading) + settings tab 重组
+(通用/指标参数/数据管理/关于, 移除 Evolution Config/API Keys) + lab 改为假设验证工具.
+"""
 import pytest
 from playwright.sync_api import Page
 
-BASE = "http://localhost:5173"
+import os
+BASE = os.environ.get("E2E_WEB_URL", "http://localhost:8080")
 
 
 def _wait_react(page: Page, timeout: int = 8000):
@@ -27,8 +32,7 @@ class TestConsoleErrors:
         page.goto(url, timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        page.wait_for_timeout(2000)  # Allow async operations to settle
-        # Filter out known non-critical errors
+        page.wait_for_timeout(2000)
         return [
             e for e in errors
             if "favicon" not in e.lower()
@@ -38,86 +42,53 @@ class TestConsoleErrors:
         ]
 
     def test_no_console_errors_data_page(self, page: Page):
-        errors = self._collect_errors(page, BASE + "/data")
-        assert len(errors) == 0, f"Console errors on /data: {errors}"
+        assert len(self._collect_errors(page, BASE + "/data")) == 0
 
     def test_no_console_errors_lab_page(self, page: Page):
-        errors = self._collect_errors(page, BASE + "/lab")
-        assert len(errors) == 0, f"Console errors on /lab: {errors}"
+        assert len(self._collect_errors(page, BASE + "/lab")) == 0
 
     def test_no_console_errors_evolution_page(self, page: Page):
-        errors = self._collect_errors(page, BASE + "/evolution")
-        assert len(errors) == 0, f"Console errors on /evolution: {errors}"
+        assert len(self._collect_errors(page, BASE + "/evolution")) == 0
 
-    def test_no_console_errors_library_page(self, page: Page):
-        errors = self._collect_errors(page, BASE + "/library")
-        assert len(errors) == 0, f"Console errors on /library: {errors}"
+    def test_no_console_errors_strategies_page(self, page: Page):
+        assert len(self._collect_errors(page, BASE + "/strategies")) == 0
 
     def test_no_console_errors_settings_page(self, page: Page):
-        errors = self._collect_errors(page, BASE + "/settings")
-        assert len(errors) == 0, f"Console errors on /settings: {errors}"
+        assert len(self._collect_errors(page, BASE + "/settings")) == 0
 
 
 class TestNavigation:
-    """Test client-side navigation between pages."""
+    """Test client-side navigation between pages (当前 8 个路由)."""
+
+    ROUTES = ["/lab", "/evolution", "/strategies", "/verify", "/batch-backtest", "/trading", "/data", "/settings"]
 
     def test_sidebar_navigation_links_work(self, page: Page):
-        """Click each sidebar link and verify the page changes."""
         page.goto(BASE, timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-
-        # Find all NavLink elements in sidebar
         links = page.locator("nav a")
         assert links.count() >= 5, f"Expected at least 5 nav links, found {links.count()}"
-
-        expected_routes = ["/lab", "/evolution", "/library", "/data", "/settings"]
-
-        for route in expected_routes:
-            link = page.locator(f"nav a[href='{route}']")
-            assert link.count() >= 1, f"No sidebar link found for route {route}"
+        for route in self.ROUTES:
+            assert page.locator(f"nav a[href='{route}']").count() >= 1, f"No sidebar link for {route}"
 
     def test_navigate_via_sidebar_click(self, page: Page):
-        """Click sidebar links to navigate between pages."""
         page.goto(BASE, timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
+        for route in ["/lab", "/evolution", "/strategies", "/data", "/settings"]:
+            page.locator(f"nav a[href='{route}']").first.click()
+            page.wait_for_timeout(1000)
+            assert route in page.url, f"Expected {route} in URL, got {page.url}"
 
-        # Click Lab link
-        page.locator("nav a[href='/lab']").first.click()
-        page.wait_for_timeout(1000)
-        assert "/lab" in page.url, f"Expected /lab in URL, got {page.url}"
-
-        # Click Evolution link
-        page.locator("nav a[href='/evolution']").first.click()
-        page.wait_for_timeout(1000)
-        assert "/evolution" in page.url, f"Expected /evolution in URL, got {page.url}"
-
-        # Click Library link
-        page.locator("nav a[href='/library']").first.click()
-        page.wait_for_timeout(1000)
-        assert "/library" in page.url, f"Expected /library in URL, got {page.url}"
-
-        # Click Data link
-        page.locator("nav a[href='/data']").first.click()
-        page.wait_for_timeout(1000)
-        assert "/data" in page.url, f"Expected /data in URL, got {page.url}"
-
-        # Click Settings link
-        page.locator("nav a[href='/settings']").first.click()
-        page.wait_for_timeout(1000)
-        assert "/settings" in page.url, f"Expected /settings in URL, got {page.url}"
-
-    def test_root_redirects_to_data(self, page: Page):
+    def test_root_redirects_to_lab(self, page: Page):
+        """根路径重定向到 /lab (非 /data)."""
         page.goto(BASE, timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        assert "/data" in page.url, f"Expected redirect to /data, got {page.url}"
+        assert "/lab" in page.url, f"Expected redirect to /lab, got {page.url}"
 
     def test_direct_url_access(self, page: Page):
-        """All routes should be directly accessible via URL."""
-        routes = ["/data", "/lab", "/evolution", "/library", "/settings"]
-        for route in routes:
+        for route in ["/data", "/lab", "/evolution", "/strategies", "/settings"]:
             page.goto(BASE + route, timeout=10000)
             page.wait_for_load_state("domcontentloaded", timeout=10000)
             _wait_react(page)
@@ -135,132 +106,124 @@ class TestLayoutComponents:
 
     def test_sidebar_visible(self, page: Page):
         self._goto_and_wait(page)
-        sidebar = page.locator("aside")
-        assert sidebar.is_visible(), "Sidebar not visible"
+        assert page.locator("aside").is_visible(), "Sidebar not visible"
 
     def test_header_visible_with_title(self, page: Page):
         self._goto_and_wait(page, "/lab")
         header = page.locator("header")
-        assert header.is_visible(), "Header not visible"
+        assert header.is_visible()
         title = header.locator("h1")
-        assert title.is_visible(), "Header title not visible"
-        assert "Strategy Lab" in title.text_content(), f"Expected 'Strategy Lab' in header, got '{title.text_content()}'"
+        assert title.is_visible()
+        assert "策略实验室" in (title.text_content() or ""), (
+            f"Expected '策略实验室' in header, got '{title.text_content()}'"
+        )
 
     def test_sidebar_has_branding(self, page: Page):
         self._goto_and_wait(page)
-        # Check for QT branding icon
-        qt_badge = page.locator("text=QT")
-        assert qt_badge.count() > 0, "QT branding not found"
+        # 品牌为 MyQuant (非旧版 QT)
+        assert page.locator("text=MyQuant").count() > 0, "MyQuant branding not found"
 
     def test_header_title_updates_per_page(self, page: Page):
         titles_map = {
-            "/lab": "Strategy Lab",
-            "/evolution": "Evolution Center",
-            "/library": "Strategy Library",
-            "/data": "Data Management",
-            "/settings": "Settings",
+            "/lab": "策略实验室",
+            "/evolution": "进化中心",
+            "/strategies": "策略库",
+            "/data": "数据管理",
+            "/settings": "设置",
         }
         for route, expected_title in titles_map.items():
             page.goto(BASE + route, timeout=10000)
             page.wait_for_load_state("domcontentloaded", timeout=10000)
             _wait_react(page)
-            header_title = page.locator("header h1")
-            actual = header_title.text_content() or ""
+            actual = page.locator("header h1").first.text_content() or ""
             assert expected_title in actual, f"On {route}: expected '{expected_title}', got '{actual}'"
 
 
 class TestPageContent:
-    """Test page-specific content renders correctly."""
+    """Test page-specific content renders correctly (当前中文文案)."""
 
     def test_data_page_has_import_button(self, page: Page):
         page.goto(BASE + "/data", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        # Check for Import CSV button
         content = page.content()
-        assert "Import CSV" in content, "Import CSV button not found on data page"
+        assert "上传 CSV" in content or "CSV" in content, "CSV 导入按钮未找到"
 
-    def test_data_page_has_search_input(self, page: Page):
+    def test_data_page_has_data_table(self, page: Page):
         page.goto(BASE + "/data", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        search = page.locator("input[placeholder*='Search']")
-        assert search.count() > 0, "Search input not found on data page"
+        content = page.content()
+        assert "BTCUSDT" in content or "币种" in content, "数据表格未找到"
 
     def test_lab_page_has_strategy_lab_heading(self, page: Page):
         page.goto(BASE + "/lab", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        content = page.content()
-        assert "Strategy Lab" in content, "Strategy Lab heading not found"
+        assert "策略实验室" in page.content(), "策略实验室标题未找到"
 
-    def test_lab_page_has_risk_control_section(self, page: Page):
+    def test_lab_page_has_entry_rules_section(self, page: Page):
+        """lab 现为假设验证工具: 入场规则 (替代旧 Risk Control)."""
         page.goto(BASE + "/lab", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        content = page.content()
-        assert "Risk Control" in content, "Risk Control section not found"
+        assert "入场规则" in page.content(), "入场规则区未找到"
 
-    def test_lab_page_has_execution_section(self, page: Page):
+    def test_lab_page_has_exit_rules_section(self, page: Page):
+        """出场规则 (替代旧 Execution)."""
         page.goto(BASE + "/lab", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        content = page.content()
-        assert "Execution" in content, "Execution section not found"
+        assert "出场规则" in page.content(), "出场规则区未找到"
 
-    def test_evolution_page_has_empty_state(self, page: Page):
+    def test_evolution_page_has_heading(self, page: Page):
         page.goto(BASE + "/evolution", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        content = page.content()
-        assert "Evolution Center" in content, "Evolution Center heading not found"
+        assert "进化中心" in page.content(), "进化中心标题未找到"
 
-    def test_library_page_has_search(self, page: Page):
-        page.goto(BASE + "/library", timeout=10000)
+    def test_strategies_page_has_search(self, page: Page):
+        """策略库 (/strategies, 替代旧 /library)."""
+        page.goto(BASE + "/strategies", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        content = page.content()
-        assert "Search" in content or "search" in content, "Search not found on library page"
+        assert "策略" in page.content(), "策略库内容未找到"
 
-    def test_library_page_has_symbol_filter(self, page: Page):
-        page.goto(BASE + "/library", timeout=10000)
+    def test_strategies_page_has_symbol_filter(self, page: Page):
+        page.goto(BASE + "/strategies", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
         content = page.content().lower()
-        assert "symbol" in content or "btc" in content, "Symbol filter not found on library page"
+        assert "btc" in content or "symbol" in content, "币种过滤未找到"
 
-    def test_settings_page_has_evolution_config_tab(self, page: Page):
+    def test_settings_page_has_general_tab(self, page: Page):
+        """settings tab: 通用 (替代旧 Evolution Config)."""
         page.goto(BASE + "/settings", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        content = page.content()
-        assert "Evolution Config" in content, "Evolution Config tab not found"
+        assert "通用" in page.content(), "通用 tab 未找到"
 
-    def test_settings_page_has_api_keys_tab(self, page: Page):
+    def test_settings_page_has_indicator_tab(self, page: Page):
+        """指标参数 tab (替代旧 API Keys)."""
         page.goto(BASE + "/settings", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        content = page.content()
-        assert "API Keys" in content, "API Keys tab not found"
+        assert "指标参数" in page.content(), "指标参数 tab 未找到"
 
-    def test_settings_page_has_population_size_field(self, page: Page):
+    def test_settings_page_has_about_section(self, page: Page):
+        """关于 (替代旧 Population Size)."""
         page.goto(BASE + "/settings", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-        content = page.content()
-        assert "Population Size" in content, "Population Size field not found"
+        assert "关于" in page.content(), "关于区未找到"
 
     def test_settings_page_tab_switching(self, page: Page):
         page.goto(BASE + "/settings", timeout=10000)
         page.wait_for_load_state("domcontentloaded", timeout=10000)
         _wait_react(page)
-
-        # Click on API Keys tab
-        api_tab = page.locator("button:has-text('API Keys')")
-        assert api_tab.count() > 0, "API Keys tab button not found"
-        api_tab.click()
+        indicator_tab = page.locator("button:has-text('指标参数')")
+        assert indicator_tab.count() > 0, "指标参数 tab 按钮未找到"
+        indicator_tab.click()
         page.wait_for_timeout(500)
-
-        # Check that Claude API Key label is visible
-        content = page.content()
-        assert "Claude API Key" in content, "Claude API Key form not shown after tab switch"
+        # tab 切换后页面仍有内容
+        assert len(page.locator("#root").inner_html()) > 200

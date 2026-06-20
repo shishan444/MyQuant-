@@ -11,6 +11,8 @@ Covers:
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.evolution.operators import (
     mutate_add_signal,
     mutate_confluence_threshold,

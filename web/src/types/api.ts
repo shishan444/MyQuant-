@@ -1,7 +1,7 @@
 export interface SignalGene {
   indicator: string;
   params: Record<string, unknown>;
-  role: "entry_trigger" | "entry_guard" | "exit_trigger" | "exit_guard" | "add_trigger" | "add_guard" | "reduce_trigger" | "reduce_guard";
+  role: "entry_trigger" | "entry_guard" | "exit_trigger" | "exit_guard" | "add_trigger" | "add_guard" | "reduce_trigger" | "reduce_guard" | "direction";
   field?: string;
   condition: {
     type: "lt" | "gt" | "le" | "ge" | "cross_above" | "cross_below" | "price_above" | "price_below";
@@ -29,6 +29,8 @@ export interface RiskGenes {
   position_size: number;
   leverage: number;
   direction: "long" | "short" | "mixed";
+  sl_mode?: "pct" | "atr";
+  atr_period?: number;
 }
 
 export interface TimeframeLayerModel {

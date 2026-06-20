@@ -24,7 +24,7 @@ from tests.helpers.data_factory import make_dna
 def trading_app(tmp_path: Path):
     """Create FastAPI app with initialized DB."""
     from api.app import create_app
-    from api.db_ext import init_db_ext
+    from core.persistence.db_ext import init_db_ext
 
     db_path = tmp_path / "test.db"
     data_dir = tmp_path / "data"
@@ -70,7 +70,7 @@ class TestTradingSnapshotHelper:
     def test_snapshot_returns_data_for_running_task(self, trading_app):
         """_get_trading_snapshot returns snapshot dict for active tasks."""
         app, db_path = trading_app
-        from api.db_ext import save_paper_trading_task, update_paper_trading_task
+        from core.persistence.db_ext import save_paper_trading_task, update_paper_trading_task
 
         dna = make_dna()
         save_paper_trading_task(
@@ -99,7 +99,7 @@ class TestTradingSnapshotHelper:
     def test_snapshot_returns_none_for_stopped_task(self, trading_app):
         """_get_trading_snapshot returns data for stopped tasks (allowed status)."""
         app, db_path = trading_app
-        from api.db_ext import save_paper_trading_task, update_paper_trading_task
+        from core.persistence.db_ext import save_paper_trading_task, update_paper_trading_task
 
         dna = make_dna()
         save_paper_trading_task(

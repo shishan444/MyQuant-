@@ -209,7 +209,7 @@ class TestBuildRequirementsFallback:
 def test_db(tmp_path: Path) -> Path:
     """Create a test DB with evolution_task table."""
     db_path = tmp_path / "test_req.db"
-    from api.db_ext import init_db_ext
+    from core.persistence.db_ext import init_db_ext
     init_db_ext(db_path)
     return db_path
 

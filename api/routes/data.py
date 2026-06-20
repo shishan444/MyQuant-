@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from api.db_ext import (
+from core.persistence.db_ext import (
     delete_dataset as db_delete_dataset,
     get_dataset,
     list_datasets,
@@ -151,7 +151,7 @@ def import_csv_endpoint(
                 timestamp_precision=result.timestamp_precision.value,
             )
         else:
-            from api.db_ext import update_dataset_stats
+            from core.persistence.db_ext import update_dataset_stats
             update_dataset_stats(
                 db_path,
                 dataset_id=result.dataset_id,
@@ -240,7 +240,7 @@ def import_csv_batch_endpoint(
                 timestamp_precision=result.timestamp_precision.value,
             )
         else:
-            from api.db_ext import update_dataset_stats
+            from core.persistence.db_ext import update_dataset_stats
             update_dataset_stats(
                 db_path,
                 dataset_id=result.dataset_id,

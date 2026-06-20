@@ -78,8 +78,8 @@ def _push_ws(task_id: str, payload: dict) -> None:
 
 def recover_stale_trading_tasks(db_path: Path) -> None:
     """Mark running paper trading tasks as stopped (crash recovery)."""
-    from core.persistence.db import _connect
-    with _connect(db_path) as conn:
+    from core.persistence.db import connect
+    with connect(db_path) as conn:
         result = conn.execute(
             "UPDATE paper_trading_task SET status = 'stopped', "
             "stop_reason = 'crash_recovery', updated_at = ? "
@@ -144,8 +144,8 @@ class TradingRunner(threading.Thread):
             self._run_task(task)
 
     def _find_pending_task(self) -> Optional[Dict[str, Any]]:
-        from core.persistence.db import _connect
-        with _connect(self.db_path) as conn:
+        from core.persistence.db import connect
+        with connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM paper_trading_task "
@@ -154,8 +154,8 @@ class TradingRunner(threading.Thread):
             return dict(row) if row else None
 
     def _get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
-        from core.persistence.db import _connect
-        with _connect(self.db_path) as conn:
+        from core.persistence.db import connect
+        with connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM paper_trading_task WHERE task_id = ?", (task_id,)
@@ -194,7 +194,7 @@ class TradingRunner(threading.Thread):
             _active_controllers.pop(task_id, None)
 
     def _update_status(self, task_id: str, status: str, reason: str = None) -> None:
-        from api.db_ext import update_paper_trading_task
+        from core.persistence.db_ext import update_paper_trading_task
         kwargs = {"status": status}
         if reason:
             kwargs["stop_reason"] = reason
@@ -208,7 +208,7 @@ class TradingRunner(threading.Thread):
         task_id: str,
         controller: TaskController,
     ) -> VirtualAccount:
-        from api.db_ext import (
+        from core.persistence.db_ext import (
             update_paper_trading_task, save_paper_trade,
         )
 
@@ -518,7 +518,7 @@ class TradingRunner(threading.Thread):
                             df=None, pending_decision: Optional[Decision] = None) -> None:
         """Persist VirtualAccount state to DB."""
         import json
-        from api.db_ext import update_paper_trading_task
+        from core.persistence.db_ext import update_paper_trading_task
         kwargs = {"balance": account.balance}
 
         # Serialize pending_decision if present
@@ -574,7 +574,7 @@ class TradingRunner(threading.Thread):
         update_paper_trading_task(self.db_path, task_id, **kwargs)
 
         if len(account.equity_snapshots) > 1:
-            from api.db_ext import save_equity_snapshots
+            from core.persistence.db_ext import save_equity_snapshots
             snap_dicts = [
                 {
                     "timestamp": s.timestamp,

@@ -460,7 +460,7 @@ def resolve_indicator_column(
     """Resolve indicator name + params to the expected DataFrame column name.
 
     Single source of truth for column naming conventions.  All consumers
-    (executor.py, signal_builder.py, indicators.py) should call this
+    (executor.py, indicators.py) should call this
     instead of duplicating if/elif chains.
 
     Args:

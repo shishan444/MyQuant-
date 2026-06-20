@@ -393,16 +393,6 @@ function TradingSettings({ config, onSave }: { config: AppConfig; onSave: (u: Pa
 function IndicatorSettings() {
   const settings = useChartSettings();
 
-  const handleSave = async () => {
-    try {
-      const params = settings.getIndicatorParams();
-      await api.put("/api/config/chart_indicators", params);
-      toast.success("指标配置已保存");
-    } catch {
-      toast.error("保存失败");
-    }
-  };
-
   return (
     <>
       {/* EMA section */}
@@ -588,13 +578,6 @@ function IndicatorSettings() {
           className="text-text-muted"
         >
           恢复默认
-        </Button>
-        <Button
-          size="sm"
-          onClick={handleSave}
-          className="bg-accent-gold text-black hover:bg-accent-gold/90"
-        >
-          保存配置
         </Button>
       </div>
     </>

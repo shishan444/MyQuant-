@@ -129,6 +129,24 @@ describe("Trading page", () => {
     expect(screen.getByText("加载中...")).toBeInTheDocument();
   });
 
+  // --- Error state ---
+  it("shows error state with retry when task loading fails", () => {
+    const refetch = vi.fn();
+    mockUseTradingTasks.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new Error("网络错误"),
+      refetch,
+    } as any);
+
+    render(<Trading />, { wrapper: createWrapper() });
+    expect(screen.getByText("加载失败")).toBeInTheDocument();
+    expect(screen.getByText("网络错误")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("重试"));
+    expect(refetch).toHaveBeenCalled();
+  });
+
   // --- Empty state ---
   it("shows empty state when no tasks", () => {
     mockUseTradingTasks.mockReturnValue({

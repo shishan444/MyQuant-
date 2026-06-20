@@ -274,10 +274,7 @@ class TestMTFBacktest:
 
     def test_mtf_backtest_produces_valid_result(self):
         """Full backtest with MTF engine should produce valid BacktestResult."""
-        try:
-            from core.backtest.engine import run_backtest
-        except ImportError:
-            pytest.skip("Backtest engine not available")
+        from core.backtest.engine import BacktestEngine
 
         df_4h = _make_ohlcv(100, "4h")
         df_1d = _make_ohlcv(100, "1d")
@@ -312,7 +309,7 @@ class TestMTFBacktest:
         )
 
         try:
-            result = run_backtest(dna, df_4h, dfs_by_timeframe=dfs)
+            result = BacktestEngine().run(dna, df_4h, dfs_by_timeframe=dfs)
             assert result is not None
         except Exception:
             # Some backtest configurations may not work, that's ok for integration test

@@ -3,7 +3,8 @@
 import pytest
 from playwright.sync_api import Page, expect
 
-BASE = "http://localhost:5173"
+import os
+BASE = os.environ.get("E2E_WEB_URL", "http://localhost:8080")
 
 
 def _wait_react(page: Page, timeout: int = 8000):

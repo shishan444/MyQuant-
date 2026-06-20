@@ -118,7 +118,7 @@ class TestOOSPersistence:
     @pytest.fixture
     def test_db(self, tmp_path: Path) -> Path:
         db_path = tmp_path / "test_oos.db"
-        from api.db_ext import init_db_ext
+        from core.persistence.db_ext import init_db_ext
         init_db_ext(db_path)
         return db_path
 

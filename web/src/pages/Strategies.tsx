@@ -5,9 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   BookOpen, Play, Pencil, Trash2, Search, TrendingUp, Shield, Target,
   Dna, FlaskConical, Zap, ArrowUpDown, ArrowUp, ArrowDown, ChevronRight,
-  Copy, Check, X, GitBranch, LineChart,
+  Copy, Check, X, GitBranch, LineChart, AlertCircle,
 } from "lucide-react";
 import { PageTransition } from "@/components/PageTransition";
+import { EmptyState } from "@/components/EmptyState";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/input";
@@ -638,7 +639,7 @@ export function Strategies() {
   const [batchDeleteTargets, setBatchDeleteTargets] = useState<Strategy[]>([]);
 
   // Data - use best_fitness as default sort
-  const { data, isLoading } = useQuery(
+  const { data, isLoading, isError, error, refetch } = useQuery(
     useStrategies({ sort_by: "created_at", sort_order: "desc", limit: 200 })
   );
   const deleteMutation = useDeleteStrategy();
@@ -755,6 +756,20 @@ export function Strategies() {
 
   // --- Loading ---
   if (isLoading) return <LoadingSkeleton />;
+
+  // --- Error ---
+  if (isError) {
+    return (
+      <PageTransition>
+        <EmptyState
+          icon={AlertCircle}
+          title="加载失败"
+          description={(error as Error)?.message || "无法加载策略列表，请重试"}
+          actions={[{ label: "重试", onClick: () => refetch() }]}
+        />
+      </PageTransition>
+    );
+  }
 
   // --- Empty ---
   if (allStrategies.length === 0) {

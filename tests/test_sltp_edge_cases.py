@@ -312,9 +312,10 @@ def test_no_new_trades_after_catastrophic_sl_with_leverage():
     engine = BacktestEngine(init_cash=100000)
     result = engine.run(dna, df)
 
-    # The catastrophic loss should result in liquidation or at minimum
-    # the equity should be significantly reduced
-    assert result.equity_curve.iloc[-1] < 100000
+    # B2 强化: 5x 杠杆 + 30% 单 bar 暴跌应触发清算(engine.py:519-523)
+    # maintenance = init_cash*(1-0.9/lev) = 82000; 之前只断言 equity<100000(弱, 无法区分清算与否)
+    assert result.liquidated is True, "5x 杠杆 + 30% 暴跌应触发清算"
+    assert result.equity_curve.min() < 82000  # 跌破维持保证金
 
 # ── Regression: existing behavior preserved ──
 

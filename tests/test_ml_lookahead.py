@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.features.ml_indicators import compute_fractal_entropy, compute_multifactor_osc
 
 

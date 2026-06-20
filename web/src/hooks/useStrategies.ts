@@ -1,7 +1,6 @@
-import { useState, useCallback, useRef } from "react";
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/services/strategies";
-import type { VerifyProgressEvent, VerifyStreamCallbacks } from "@/services/strategies";
+import { createStreamHook } from "./createStreamHook";
 import { toast } from "sonner";
 
 export const strategiesKeys = {
@@ -90,216 +89,37 @@ export function useVerifyStrategies() {
   });
 }
 
-export interface VerifyStreamState {
-  status: "idle" | "running" | "done" | "error";
-  progress: { current: number; total: number };
-  currentGroup: string;
-  rangeLabel: string;
-  results: unknown[];
+// ── Streaming hooks share one factory; only real differences are parameterised ──
+
+type VerifyStreamPayload = Parameters<typeof api.verifyStrategiesStream>[0];
+type VerifyStreamComplete = {
+  session_id: string;
   summary: unknown[];
-  sessionId: string | null;
-  error: string | null;
-}
-
-export function useVerifyStream() {
-  const qc = useQueryClient();
-  const abortRef = useRef<AbortController | null>(null);
-  const cancelledRef = useRef(false);
-
-  const [state, setState] = useState<VerifyStreamState>({
-    status: "idle",
-    progress: { current: 0, total: 0 },
-    currentGroup: "",
-    rangeLabel: "",
-    results: [],
-    summary: [],
-    sessionId: null,
-    error: null,
-  });
-
-  const start = useCallback(
-    (payload: {
-      strategy_ids: string[];
-      data_ranges: Array<{ start: string; end: string }>;
-      init_cash?: number;
-      fee?: number;
-      slippage?: number;
-      leverage?: number;
-    }) => {
-      const ac = new AbortController();
-      abortRef.current = ac;
-      cancelledRef.current = false;
-
-      setState((s) => ({
-        ...s,
-        status: "running",
-        progress: { current: 0, total: 0 },
-        currentGroup: "",
-        rangeLabel: "",
-        results: [],
-        summary: [],
-        sessionId: null,
-        error: null,
-      }));
-
-      const callbacks: VerifyStreamCallbacks = {
-        onProgress: (event: VerifyProgressEvent) => {
-          if (cancelledRef.current) return;
-          setState((s) => ({
-            ...s,
-            progress: { current: event.current, total: event.total },
-            currentGroup: event.group,
-            rangeLabel: `${event.range_start} ~ ${event.range_end}`,
-            results: [...s.results, ...event.batch_results],
-          }));
-        },
-        onComplete: (data) => {
-          if (cancelledRef.current) return;
-          setState((s) => ({
-            ...s,
-            status: "done",
-            summary: data.summary,
-            results: data.results,
-            sessionId: data.session_id,
-          }));
-          qc.invalidateQueries({ queryKey: [...strategiesKeys.all, "verify-sessions"] });
-        },
-        onError: (message) => {
-          if (cancelledRef.current) return;
-          setState((s) => ({ ...s, status: "error", error: message }));
-          toast.error(`验证失败: ${message}`, { duration: Infinity });
-        },
-      };
-
-      api.verifyStrategiesStream(payload, callbacks, ac.signal);
-    },
-    [qc],
-  );
-
-  const cancel = useCallback(() => {
-    cancelledRef.current = true;
-    abortRef.current?.abort();
-    setState((s) => ({ ...s, status: "idle" }));
-  }, []);
-
-  const reset = useCallback(() => {
-    cancelledRef.current = false;
-    setState({
-      status: "idle",
-      progress: { current: 0, total: 0 },
-      currentGroup: "",
-      rangeLabel: "",
-      results: [],
-      summary: [],
-      sessionId: null,
-      error: null,
-    });
-  }, []);
-
-  return { ...state, start, cancel, reset };
-}
-
-export interface BatchBacktestStreamState {
-  status: "idle" | "running" | "done" | "error";
-  progress: { current: number; total: number };
-  currentGroup: string;
-  rangeLabel: string;
   results: unknown[];
-  summary: unknown[];
-  error: string | null;
-}
+};
 
-export function useBatchBacktestStream() {
-  const abortRef = useRef<AbortController | null>(null);
-  const cancelledRef = useRef(false);
+/** Progressive verify SSE stream. Stores session_id and invalidates verify-sessions. */
+export const useVerifyStream = createStreamHook<VerifyStreamPayload, VerifyStreamComplete>({
+  streamFn: (payload, callbacks, signal) =>
+    api.verifyStrategiesStream(payload, callbacks, signal),
+  errorLabel: "验证失败",
+  sessionIdKey: "session_id",
+  onCompleteExtra: (qc) =>
+    qc.invalidateQueries({ queryKey: [...strategiesKeys.all, "verify-sessions"] }),
+});
 
-  const [state, setState] = useState<BatchBacktestStreamState>({
-    status: "idle",
-    progress: { current: 0, total: 0 },
-    currentGroup: "",
-    rangeLabel: "",
-    results: [],
-    summary: [],
-    error: null,
-  });
+type BatchBacktestStreamPayload = Parameters<typeof api.batchBacktestStream>[0];
+type BatchBacktestStreamComplete = { summary: unknown[]; results: unknown[] };
 
-  const start = useCallback(
-    (payload: {
-      strategy_ids: string[];
-      data_ranges: Array<{ start: string; end: string }>;
-      init_cash?: number;
-      fee?: number;
-      slippage?: number;
-      leverage?: number;
-    }) => {
-      const ac = new AbortController();
-      abortRef.current = ac;
-      cancelledRef.current = false;
-
-      setState((s) => ({
-        ...s,
-        status: "running",
-        progress: { current: 0, total: 0 },
-        currentGroup: "",
-        rangeLabel: "",
-        results: [],
-        summary: [],
-        error: null,
-      }));
-
-      const callbacks: import("@/services/strategies").BatchBacktestStreamCallbacks = {
-        onProgress: (event) => {
-          if (cancelledRef.current) return;
-          setState((s) => ({
-            ...s,
-            progress: { current: event.current, total: event.total },
-            currentGroup: event.group,
-            rangeLabel: `${event.range_start} ~ ${event.range_end}`,
-            results: [...s.results, ...event.batch_results],
-          }));
-        },
-        onComplete: (data) => {
-          if (cancelledRef.current) return;
-          setState((s) => ({
-            ...s,
-            status: "done",
-            summary: data.summary,
-            results: data.results,
-          }));
-        },
-        onError: (message) => {
-          if (cancelledRef.current) return;
-          setState((s) => ({ ...s, status: "error", error: message }));
-          toast.error(`批量回测失败: ${message}`, { duration: Infinity });
-        },
-      };
-
-      api.batchBacktestStream(payload, callbacks, ac.signal);
-    },
-    [],
-  );
-
-  const cancel = useCallback(() => {
-    cancelledRef.current = true;
-    abortRef.current?.abort();
-    setState((s) => ({ ...s, status: "idle" }));
-  }, []);
-
-  const reset = useCallback(() => {
-    cancelledRef.current = false;
-    setState({
-      status: "idle",
-      progress: { current: 0, total: 0 },
-      currentGroup: "",
-      rangeLabel: "",
-      results: [],
-      summary: [],
-      error: null,
-    });
-  }, []);
-
-  return { ...state, start, cancel, reset };
-}
+/** Progressive batch backtest SSE stream. */
+export const useBatchBacktestStream = createStreamHook<
+  BatchBacktestStreamPayload,
+  BatchBacktestStreamComplete
+>({
+  streamFn: (payload, callbacks, signal) =>
+    api.batchBacktestStream(payload, callbacks, signal),
+  errorLabel: "批量回测失败",
+});
 
 export function useVerifyHistory(strategyId?: string) {
   return queryOptions({
@@ -308,17 +128,17 @@ export function useVerifyHistory(strategyId?: string) {
   });
 }
 
-export function useVerifySessions() {
+export function useVerifySessions(limit?: number) {
   return queryOptions({
-    queryKey: [...strategiesKeys.all, "verify-sessions"],
-    queryFn: () => api.getVerifySessions(50),
+    queryKey: [...strategiesKeys.all, "verify-sessions", limit],
+    queryFn: () => api.getVerifySessions(limit),
   });
 }
 
-export function useSessionResults(sessionId: string | null) {
+export function useSessionResults(sessionId?: string | null) {
   return queryOptions({
     queryKey: [...strategiesKeys.all, "session-results", sessionId],
-    queryFn: () => api.getSessionResults(sessionId!),
+    queryFn: () => api.getSessionResults(sessionId as string),
     enabled: !!sessionId,
   });
 }

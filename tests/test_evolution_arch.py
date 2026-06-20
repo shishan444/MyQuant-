@@ -42,7 +42,7 @@ def _make_dna() -> "StrategyDNA":
 @pytest.fixture
 def tmp_db(tmp_path: Path) -> Path:
     db_path = tmp_path / "test_arch.db"
-    from api.db_ext import init_db_ext
+    from core.persistence.db_ext import init_db_ext
     init_db_ext(db_path)
     return db_path
 

@@ -1,18 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { Time, UTCTimestamp } from "lightweight-charts";
+import { toTime } from "../charts/core/time";
 
 interface EquityCurveChartProps {
   data: Array<{ timestamp: string; value: number }>;
   height?: number;
-}
-
-function toTime(ts: string): Time {
-  const withT = ts.includes("T") ? ts : ts.replace(" ", "T");
-  const date = new Date(withT);
-  if (isNaN(date.getTime())) {
-    return ts.slice(0, 10) as Time;
-  }
-  return Math.floor(date.getTime() / 1000) as UTCTimestamp;
 }
 
 export function EquityCurveChart({ data, height = 180 }: EquityCurveChartProps) {

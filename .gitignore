@@ -51,3 +51,11 @@ data/*.db
 # Working docs
 wroks/
 data/market/*.db
+
+# SQLite runtime files (WAL/SHM are transient, .db itself ignored above)
+data/*.db-shm
+data/*.db-wal
+data/*.db-journal
+
+# Coverage report (test artifact)
+coverage.json

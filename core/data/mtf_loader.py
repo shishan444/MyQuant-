@@ -46,13 +46,17 @@ def load_and_prepare_df(
     data_end: Optional[str] = None,
     min_bars: int = 50,
     stop_check: Optional[Callable[[], None]] = None,
+    compute_indicators: bool = True,
 ) -> Optional[pd.DataFrame]:
-    """Load a single-timeframe parquet, slice by date, and compute all indicators.
+    """Load a single-timeframe parquet, slice by date, optionally compute indicators.
 
     Returns None if data is unavailable or insufficient.
+    When compute_indicators=False, returns raw OHLCV (+ derivatives) without
+    feature columns — callers that need indicators must compute them themselves.
+    This decouples core.data from core.features (data is the lower layer);
+    default True preserves existing behaviour.
     """
     from core.data.storage import load_parquet
-    from core.features.indicators import compute_all_indicators
 
     safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
     parquet_path = find_parquet(data_dir, safe_symbol, timeframe)
@@ -71,7 +75,10 @@ def load_and_prepare_df(
         return None
 
     df = _try_merge_derivatives(data_dir, safe_symbol, timeframe, df)
-    return compute_all_indicators(df, stop_check=stop_check)
+    if compute_indicators:
+        from core.features.indicators import compute_all_indicators
+        return compute_all_indicators(df, stop_check=stop_check)
+    return df
 
 
 def load_mtf_data(
@@ -83,14 +90,17 @@ def load_mtf_data(
     data_start: Optional[str] = None,
     data_end: Optional[str] = None,
     stop_check: Optional[Callable[[], None]] = None,
+    compute_indicators: bool = True,
 ) -> Optional[Dict[str, pd.DataFrame]]:
-    """Load DataFrames for additional timeframes and compute indicators.
+    """Load DataFrames for additional timeframes, optionally compute indicators.
 
     Returns a dict mapping timeframe -> DataFrame (including exec_timeframe).
     Returns None if no additional timeframes could be loaded.
+    When compute_indicators=False, returns raw OHLCV frames without features.
     """
     from core.data.storage import load_parquet
-    from core.features.indicators import compute_all_indicators
+    if compute_indicators:
+        from core.features.indicators import compute_all_indicators
 
     safe_symbol = re.sub(r"[^A-Za-z0-9]", "", symbol)
     dfs_by_timeframe: Dict[str, pd.DataFrame] = {exec_timeframe: enhanced_df}
@@ -112,7 +122,10 @@ def load_mtf_data(
             if len(tf_df) < 50:
                 continue
             tf_df = _try_merge_derivatives(data_dir, safe_symbol, tf, tf_df)
-            dfs_by_timeframe[tf] = compute_all_indicators(tf_df, stop_check=stop_check)
+            dfs_by_timeframe[tf] = (
+                compute_all_indicators(tf_df, stop_check=stop_check)
+                if compute_indicators else tf_df
+            )
         except Exception as e:
             logger = logging.getLogger(__name__)
             logger.warning("Failed to load MTF data for %s: %s", tf, e)

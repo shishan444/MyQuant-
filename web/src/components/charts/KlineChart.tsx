@@ -16,6 +16,7 @@ import type {
 } from "lightweight-charts";
 
 import { DARK_CHART_THEME, CHART_COLORS } from "./core/chartThemes";
+import { toTime } from "./core/time";
 import { useChartSync } from "./core/useChartSync";
 import { ChartEmbeddedLegend } from "./ChartEmbeddedLegend";
 import { ChartToolbar } from "./ChartToolbar";
@@ -84,15 +85,6 @@ export interface KlineChartHandle {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function toTime(ts: string): Time {
-  const withT = ts.includes("T") ? ts : ts.replace(" ", "T");
-  const date = new Date(withT);
-  if (isNaN(date.getTime())) {
-    return ts.slice(0, 10) as Time;
-  }
-  return Math.floor(date.getTime() / 1000) as UTCTimestamp;
-}
 
 function toCandleData(data: CandleData[]) {
   const mapped = data.map((d) => ({

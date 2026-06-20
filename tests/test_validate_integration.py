@@ -1,4 +1,4 @@
-"""Integration tests for validate API and chart_config API."""
+"""Integration tests for validate API."""
 
 from __future__ import annotations
 
@@ -129,59 +129,3 @@ class TestValidateAPI:
         assert "match_rate" in data
         # Should have a warning about MTF fallback (1d data doesn't exist)
         assert "warnings" in data
-
-# ── Chart Config API ──
-
-class TestChartConfigAPI:
-    """Tests for GET/PUT /api/config/chart_indicators."""
-
-    def test_get_default_config(self, client):
-        """Should return default config when no saved config exists."""
-        resp = client.get("/api/config/chart_indicators")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "ema_periods" in data
-        assert data["ema_periods"] == [10, 20, 50]
-        assert "boll" in data
-        assert data["boll"]["enabled"] is True
-        assert "rsi" in data
-        assert "vol" in data
-
-    def test_update_ema_periods(self, client):
-        """Should persist updated EMA periods."""
-        resp = client.put("/api/config/chart_indicators", json={
-            "ema_periods": [7, 14, 21, 50],
-            "ema_colors": ["#FF0000", "#00FF00", "#0000FF", "#FFFF00"],
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["ema_periods"] == [7, 14, 21, 50]
-
-        # Verify persistence via GET
-        resp2 = client.get("/api/config/chart_indicators")
-        assert resp2.json()["ema_periods"] == [7, 14, 21, 50]
-
-    def test_update_boll_config(self, client):
-        resp = client.put("/api/config/chart_indicators", json={
-            "boll": {"enabled": False, "period": 30, "std": 2.5, "color": "#FFFFFF"},
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["boll"]["enabled"] is False
-        assert data["boll"]["period"] == 30
-
-    def test_partial_update_preserves_others(self, client):
-        """Updating one field should not reset others."""
-        # Set initial config
-        client.put("/api/config/chart_indicators", json={
-            "ema_periods": [5, 10, 20],
-        })
-        # Update only boll
-        client.put("/api/config/chart_indicators", json={
-            "boll": {"enabled": True, "period": 25, "std": 2.0, "color": "#FF0000"},
-        })
-        # ema_periods should still be [5, 10, 20]
-        resp = client.get("/api/config/chart_indicators")
-        data = resp.json()
-        assert data["ema_periods"] == [5, 10, 20]
-        assert data["boll"]["period"] == 25

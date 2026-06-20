@@ -12,6 +12,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.validation.scene.cross_timeframe import CrossTimeframeDetector
 from core.validation.scene.base import TriggerPoint
 

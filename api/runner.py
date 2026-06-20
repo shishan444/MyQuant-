@@ -18,10 +18,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pandas as pd
 
 from core.evolution.engine import EvolutionEngine
-from core.evolution.diversity import compute_diversity, compute_phenotype_diversity, _gene_signature
+from core.evolution.diversity import compute_diversity, compute_phenotype_diversity
 from core.evolution.champion import ChampionTracker
+from core.evolution import evaluation
 from core.strategy.dna import StrategyDNA
 from core.persistence.db import (
+    connect,
     save_history,
     save_snapshot,
     update_task,
@@ -140,6 +142,50 @@ def recover_stale_tasks(db_path: Path) -> None:
         conn.commit()
         if result.rowcount > 0:
             logger.info("Recovered %d stale tasks on startup", result.rowcount)
+
+
+def restart_crashed_tasks(db_path: Path, max_restarts: int = 3) -> int:
+    """Restart crashed evolution tasks that haven't produced a champion.
+
+    Scans tasks stopped due to crash/heartbeat-timeout without a champion and marks
+    them pending again so _find_pending_task re-picks them for a fresh run. Uses
+    progress_json.restart_count to bound retries, preventing infinite restart of
+    deterministically-crashing tasks.
+
+    Called at app startup after recover_stale_tasks. NOTE: this re-runs evolution from
+    initial_dna (same config), NOT individual-level resume — EvolutionEngine.evolve has
+    no initial_population param, and checkpoint.resume_evolution is currently unwired
+    (dead code). Crashed-but-incomplete tasks get a bounded retry instead of silent loss.
+    """
+    from core.persistence.db import _connect
+    restarted = 0
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT task_id, progress_json FROM evolution_task "
+            "WHERE status = 'stopped' "
+            "AND stop_reason IN ('crash_recovery', 'heartbeat_timeout') "
+            "AND (champion_dna IS NULL OR champion_dna = '')",
+        ).fetchall()
+        for row in rows:
+            task_id = row["task_id"]
+            try:
+                progress = json.loads(row["progress_json"]) if row["progress_json"] else {}
+            except Exception:
+                progress = {}
+            restart_count = int(progress.get("restart_count", 0))
+            if restart_count >= max_restarts:
+                continue
+            progress["restart_count"] = restart_count + 1
+            conn.execute(
+                "UPDATE evolution_task SET status = 'pending', progress_json = ?, "
+                "stop_reason = NULL, updated_at = ? WHERE task_id = ?",
+                (json.dumps(progress, ensure_ascii=False), _now_iso(), task_id),
+            )
+            restarted += 1
+        conn.commit()
+    if restarted > 0:
+        logger.info("Restarted %d crashed tasks (max %d retries each)", restarted, max_restarts)
+    return restarted
 
 
 def check_stale_heartbeats(db_path: Path, timeout_minutes: int = 5) -> None:
@@ -275,10 +321,7 @@ class EvolutionRunner(threading.Thread):
     # ------------------------------------------------------------------
 
     def _find_pending_task(self) -> Optional[Dict[str, Any]]:
-        import sqlite3
-        conn = sqlite3.connect(str(self.db_path))
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.row_factory = sqlite3.Row
+        conn = connect(self.db_path)
         row = conn.execute(
             "SELECT * FROM evolution_task WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
         ).fetchone()
@@ -465,9 +508,7 @@ class EvolutionRunner(threading.Thread):
 
             # Update current_generation in DB (use global offset for continuous mode)
             global_gen = gen + global_gen_offset
-            import sqlite3
-            conn = sqlite3.connect(str(self.db_path))
-            conn.execute("PRAGMA journal_mode=WAL")
+            conn = connect(self.db_path)
             conn.execute(
                 "UPDATE evolution_task SET current_generation = ?, updated_at = ? WHERE task_id = ?",
                 (global_gen, datetime.now(timezone.utc).isoformat(), task_id),
@@ -526,9 +567,7 @@ class EvolutionRunner(threading.Thread):
 
                     if updated:
                         champion_rec = champion_tracker.get_champion()
-                        import sqlite3
-                        conn2 = sqlite3.connect(str(self.db_path))
-                        conn2.execute("PRAGMA journal_mode=WAL")
+                        conn2 = connect(self.db_path)
                         conn2.execute(
                             "UPDATE evolution_task SET best_score = ?, best_fitness = ?, champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
                             (
@@ -545,9 +584,7 @@ class EvolutionRunner(threading.Thread):
                     # No diagnostics but score is positive - update best_score only
                     updated = champion_tracker.update(score=best_score, generation=global_gen)
                     if updated:
-                        import sqlite3
-                        conn2 = sqlite3.connect(str(self.db_path))
-                        conn2.execute("PRAGMA journal_mode=WAL")
+                        conn2 = connect(self.db_path)
                         conn2.execute(
                             "UPDATE evolution_task SET best_score = ?, best_fitness = ? WHERE task_id = ? AND (best_score IS NULL OR best_score < ?)",
                             (best_score, best_score, task_id, best_score),
@@ -561,12 +598,12 @@ class EvolutionRunner(threading.Thread):
                     diag = getattr(ind, '_eval_diagnostics', None)
                     if not diag or not diag.get("qualified", False):
                         continue
-                    sig = _gene_signature(ind)
+                    sig = ind.gene_signature
                     if sig in discovered_signatures:
                         continue
                     discovered_signatures.add(sig)
                     try:
-                        from api.db_ext import save_strategy
+                        from core.persistence.db_ext import save_strategy
                         from core.strategy.dna import generate_strategy_name
                         name = generate_strategy_name(ind)
                         save_strategy(
@@ -679,7 +716,7 @@ class EvolutionRunner(threading.Thread):
             # MUST happen before setting _population = None
             if hasattr(engine, '_population') and engine._population:
                 for ind in engine._population:
-                    discovered_signatures.add(_gene_signature(ind))
+                    discovered_signatures.add(ind.gene_signature)
                 # Preserve top elites as ancestors for next population
                 extra_ancestors.extend(engine._population[:3])
 
@@ -711,8 +748,7 @@ class EvolutionRunner(threading.Thread):
             # Save final champion metrics from tracker (consistent snapshot)
             champion_rec = champion_tracker.get_champion()
             if champion_rec and champion_rec.metrics:
-                import sqlite3
-                conn = sqlite3.connect(str(self.db_path))
+                conn = connect(self.db_path)
                 conn.execute(
                     "UPDATE evolution_task SET best_fitness = ?, champion_metrics = ?, champion_dimension_scores = ? WHERE task_id = ?",
                     (champion_rec.score,
@@ -740,8 +776,7 @@ class EvolutionRunner(threading.Thread):
                 )
 
                 # Persist OOS results
-                import sqlite3
-                conn = sqlite3.connect(str(self.db_path))
+                conn = connect(self.db_path)
                 conn.execute(
                     "UPDATE evolution_task SET oos_fitness = ?, oos_qualified = ?, oos_metrics = ? WHERE task_id = ?",
                     (oos_fitness, int(oos_qualified), json.dumps(oos_metrics), task_id),
@@ -771,145 +806,17 @@ class EvolutionRunner(threading.Thread):
         })
 
     def _build_requirements(self, task_row: Dict[str, Any]):
-        """Build RequirementsConfig from task config.
-
-        Prefers requirements_json (full config from frontend).
-        Falls back to legacy min_annual_return/max_drawdown_limit columns.
-        """
-        from core.scoring.scorer import RequirementsConfig
-
-        requirements_json = task_row.get("requirements_json")
-        if requirements_json:
-            try:
-                data = json.loads(requirements_json) if isinstance(requirements_json, str) else requirements_json
-                return RequirementsConfig(
-                    objective=data.get("objective", "sharpe"),
-                    min_annual_return=data.get("min_annual_return", 0.0),
-                    max_drawdown=data.get("max_drawdown", 0.30),
-                    min_win_rate=data.get("min_win_rate", 0.0),
-                    min_total_trades=data.get("min_total_trades", 10),
-                    min_profit_factor=data.get("min_profit_factor", 1.2),
-                )
-            except (json.JSONDecodeError, Exception):
-                pass
-
-        return RequirementsConfig(
-            objective="sharpe",
-            min_annual_return=task_row.get("min_annual_return", 0.0),
-            max_drawdown=task_row.get("max_drawdown_limit") or 0.30,
-        )
+        """Build RequirementsConfig from task config (delegates to core.evolution.evaluation)."""
+        return evaluation.build_requirements(task_row)
 
     def _evaluate_dna(self, individual: StrategyDNA, task_row: Dict[str, Any],
                        leverage: int = 1, direction: str = "long",
                        enhanced_df=None, dfs_by_timeframe=None) -> dict:
-        """Score a DNA using backtesting against the dataset.
-
-        Returns a dict with score and diagnostics.
-        Accepts pre-loaded data to avoid redundant I/O per individual.
-        """
-        # Force override task-level constraints before backtesting
-        individual.risk_genes.leverage = leverage
-        individual.risk_genes.direction = direction
-
-        diagnostics = {
-            "used_real_data": False,
-            "data_bars": 0,
-            "total_trades": 0,
-            "fallback": True,
-            "liquidated": False,
-        }
-
-        try:
-            from core.backtest.engine import BacktestEngine
-            from core.strategy.executor import dna_to_signal_set
-            from core.scoring.scorer import compute_fitness, RequirementsConfig
-
-            # Load data on demand if not pre-loaded (backward compatibility)
-            if enhanced_df is None:
-                from core.data.mtf_loader import load_and_prepare_df, load_mtf_data
-
-                symbol = task_row["symbol"]
-                timeframe = task_row["execution_timeframe"] if "execution_timeframe" in task_row else task_row["timeframe"]
-                data_start = task_row.get("data_start")
-                data_end = task_row.get("data_end")
-                enhanced_df = load_and_prepare_df(
-                    self.data_dir, symbol, timeframe, data_start, data_end,
-                )
-
-                if enhanced_df is None:
-                    diagnostics["score"] = 0.0
-                    return diagnostics
-
-                # Load multi-timeframe data if task has timeframe_pool
-                tf_pool_raw = task_row.get("timeframe_pool")
-                tf_pool = None
-                if tf_pool_raw:
-                    try:
-                        tf_pool = json.loads(tf_pool_raw) if isinstance(tf_pool_raw, str) else tf_pool_raw
-                    except (json.JSONDecodeError, Exception):
-                        tf_pool = None
-
-                if tf_pool and len(tf_pool) > 1:
-                    dfs_by_timeframe = load_mtf_data(
-                        self.data_dir, symbol, timeframe, enhanced_df,
-                        set(tf_pool), data_start, data_end,
-                    )
-
-            diagnostics["used_real_data"] = True
-            diagnostics["data_bars"] = len(enhanced_df)
-
-            # Compute signals once, pass to BacktestEngine to avoid double computation
-            sig_set = dna_to_signal_set(individual, enhanced_df,
-                                         dfs_by_timeframe=dfs_by_timeframe)
-
-            if sig_set.entries.sum() == 0:
-                diagnostics["score"] = 0.0
-                diagnostics["fitness"] = 0.0
-                diagnostics["qualified"] = False
-                diagnostics["fallback"] = False
-                return diagnostics
-
-            bt = BacktestEngine()
-            bt_result = bt.run(individual, enhanced_df,
-                               dfs_by_timeframe=dfs_by_timeframe,
-                               signal_set=sig_set)
-
-            # Use pre-computed metrics from BacktestEngine (avoids double computation)
-            metrics = bt_result.metrics_dict
-
-            # Build requirements from task config (prefer requirements_json over legacy columns)
-            req = self._build_requirements(task_row)
-            fitness_result = compute_fitness(
-                metrics, requirements=req,
-                liquidated=bt_result.liquidated,
-            )
-
-            diagnostics["score"] = fitness_result["fitness"]
-            diagnostics["fitness"] = fitness_result["fitness"]
-            diagnostics["qualified"] = fitness_result["qualified"]
-            diagnostics["satisfaction"] = fitness_result.get("satisfaction", {})
-            diagnostics["total_trades"] = bt_result.total_trades
-            diagnostics["fallback"] = False
-            diagnostics["liquidated"] = bt_result.liquidated
-            diagnostics["data_bars"] = bt_result.data_bars
-            diagnostics["raw_metrics"] = fitness_result["raw_metrics"]
-            diagnostics["dimension_scores"] = {
-                k: round(v["ratio"] * 100, 1)
-                for k, v in fitness_result.get("satisfaction", {}).items()
-            }
-
-            return diagnostics
-
-        except Exception:
-            # Fallback: zero score (not random noise)
-            logger.warning(
-                "evaluate_dna failed for %s",
-                getattr(individual, 'strategy_id', 'unknown'),
-                exc_info=True,
-            )
-            diagnostics["score"] = 0.0
-            diagnostics["error"] = True
-            return diagnostics
+        """Score a DNA via backtest (delegates to core.evolution.evaluation)."""
+        return evaluation.evaluate_dna(
+            individual, task_row, getattr(self, "data_dir", None), leverage, direction,
+            enhanced_df=enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
+        )
 
     def _evaluate_population(
         self,
@@ -920,94 +827,11 @@ class EvolutionRunner(threading.Thread):
         enhanced_df=None,
         dfs_by_timeframe=None,
     ) -> list[float]:
-        """Batch-evaluate a population using BacktestEngine.batch_run.
-
-        Returns scores in the same order as the input population.
-        Falls back to per-individual evaluation on batch failure.
-        """
-        try:
-            from core.backtest.engine import BacktestEngine
-            from core.strategy.executor import dna_to_signal_set, _empty_signal_set, clear_indicator_cache
-            from core.scoring.scorer import compute_fitness, RequirementsConfig
-
-            if enhanced_df is None:
-                # Cannot batch without data -- fallback to individual evaluation
-                return [
-                    self._evaluate_dna(
-                        ind, task_row, leverage, direction,
-                        enhanced_df=enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
-                    ).get("score", 0.0)
-                    for ind in population
-                ]
-
-            # Enforce constraints on all individuals before evaluation
-            for ind in population:
-                ind.risk_genes.leverage = leverage
-                ind.risk_genes.direction = direction
-
-            # Clear indicator cache at start of each generation
-            clear_indicator_cache()
-
-            # Batch backtest with built-in signal computation
-            bt = BacktestEngine()
-            try:
-                bt_results = bt.batch_run(
-                    population, enhanced_df,
-                    dfs_by_timeframe=dfs_by_timeframe,
-                )
-            except Exception:
-                logger.warning("batch_run failed, falling back to per-individual evaluation", exc_info=True)
-                return [
-                    self._evaluate_dna(
-                        ind, task_row, leverage, direction,
-                        enhanced_df=enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
-                    ).get("score", 0.0)
-                    for ind in population
-                ]
-
-            template_name = task_row.get("score_template", "explorer")
-
-            # Build requirements from task config (prefer requirements_json over legacy columns)
-            req = self._build_requirements(task_row)
-
-            scores = []
-            for i, (ind, bt_result) in enumerate(zip(population, bt_results)):
-                metrics = bt_result.metrics_dict
-                fitness_result = compute_fitness(
-                    metrics, requirements=req,
-                    liquidated=bt_result.liquidated,
-                )
-                # Store diagnostics on individual (same as evaluate_fn)
-                ind._eval_diagnostics = {
-                    "score": fitness_result["fitness"],
-                    "fitness": fitness_result["fitness"],
-                    "qualified": fitness_result["qualified"],
-                    "satisfaction": fitness_result.get("satisfaction", {}),
-                    "total_trades": bt_result.total_trades,
-                    "data_bars": bt_result.data_bars,
-                    "raw_metrics": fitness_result["raw_metrics"],
-                    "dimension_scores": {
-                        k: round(v["ratio"] * 100, 1)
-                        for k, v in fitness_result.get("satisfaction", {}).items()
-                    },
-                    "liquidated": bt_result.liquidated,
-                    "used_real_data": True,
-                    "fallback": False,
-                }
-                scores.append(fitness_result["fitness"])
-
-            return scores
-
-        except Exception:
-            # Fallback to per-individual evaluation
-            logger.warning("_evaluate_population unexpected error, falling back", exc_info=True)
-            return [
-                self._evaluate_dna(
-                    ind, task_row, leverage, direction,
-                    enhanced_df=enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
-                ).get("score", 0.0)
-                for ind in population
-            ]
+        """Batch-evaluate a population (delegates to core.evolution.evaluation)."""
+        return evaluation.evaluate_population(
+            population, task_row, getattr(self, "data_dir", None), leverage, direction,
+            enhanced_df=enhanced_df, dfs_by_timeframe=dfs_by_timeframe,
+        )
 
 
     def _find_parquet(self, safe_symbol: str, timeframe: str):

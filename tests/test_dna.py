@@ -298,3 +298,61 @@ class TestStrategyDNA:
         assert dna.layers is not None
         assert len(dna.layers) == 1
         assert dna.layers[0].timeframe == "4h"
+
+
+class TestGeneSignature:
+    """StrategyDNA.gene_signature property (migrated from diversity._gene_signature).
+
+    The signature is an intrinsic genotype fingerprint used by diversity
+    measurement, strategy-library dedup, and the evolution exclude-set.
+    """
+
+    @staticmethod
+    def _gene(indicator="RSI", period=14, role=SignalRole.ENTRY_TRIGGER, cond=None):
+        if cond is None:
+            cond = {"type": "lt", "threshold": 30}
+        return SignalGene(indicator, {"period": period}, role, None, cond)
+
+    def _make_dna(self, signal_genes=None, leverage=2, direction="long", layers=None):
+        return StrategyDNA(
+            signal_genes=signal_genes or [self._gene()],
+            risk_genes=RiskGenes(leverage=leverage, direction=direction),
+            layers=layers,
+        )
+
+    def test_property_equals_legacy_function(self):
+        """gene_signature property must equal the legacy diversity._gene_signature."""
+        from MyQuant.core.evolution.diversity import _gene_signature
+        dna = self._make_dna()
+        assert dna.gene_signature == _gene_signature(dna)
+
+    def test_property_equals_legacy_function_with_layers(self):
+        """Equivalence holds for MTF (multi-layer) DNA too."""
+        from MyQuant.core.evolution.diversity import _gene_signature
+        layer = TimeframeLayer(
+            timeframe="4h",
+            signal_genes=[self._gene("EMA", 50)],
+            logic_genes=LogicGenes(entry_logic="AND", exit_logic="OR"),
+        )
+        dna = self._make_dna(layers=[layer])
+        assert dna.gene_signature == _gene_signature(dna)
+
+    def test_different_params_different_signature(self):
+        a = self._make_dna(signal_genes=[self._gene("RSI", 14)])
+        b = self._make_dna(signal_genes=[self._gene("RSI", 21)])
+        assert a.gene_signature != b.gene_signature
+
+    def test_different_leverage_different_signature(self):
+        a = self._make_dna(leverage=2)
+        b = self._make_dna(leverage=5)
+        assert a.gene_signature != b.gene_signature
+
+    def test_different_direction_different_signature(self):
+        a = self._make_dna(direction="long")
+        b = self._make_dna(direction="short")
+        assert a.gene_signature != b.gene_signature
+
+    def test_stable_across_calls(self):
+        """Same DNA must produce identical signature on repeated calls."""
+        dna = self._make_dna()
+        assert dna.gene_signature == dna.gene_signature

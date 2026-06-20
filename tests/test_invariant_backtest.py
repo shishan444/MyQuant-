@@ -20,6 +20,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 from core.backtest.engine import BacktestEngine
 from core.strategy.executor import SignalSet
 from tests.helpers.data_factory import make_dna

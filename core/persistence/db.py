@@ -29,6 +29,17 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def connect(db_path: Path) -> sqlite3.Connection:
+    """Public connection helper for external modules.
+
+    core.persistence owns connection setup (WAL / synchronous / busy_timeout /
+    row_factory). External modules (e.g. core.trading.runner) should use this
+    instead of reaching into the private _connect, so persistence stays the
+    single DB access point. Internally db.py still uses _connect directly.
+    """
+    return _connect(db_path)
+
+
 def init_db(db_path: Path) -> None:
     """Create tables if not exist."""
     conn = _connect(db_path)

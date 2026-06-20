@@ -8,7 +8,8 @@ and are intentionally kept as smoke tests.
 import pytest
 from playwright.sync_api import Page
 
-BASE = "http://localhost:5173"
+import os
+BASE = os.environ.get("E2E_WEB_URL", "http://localhost:8080")
 
 
 def _wait_react(page: Page, timeout: int = 8000):
@@ -61,17 +62,17 @@ class TestTradingEmptyState:
         _goto_trading(page)
         content = page.content()
         # Either empty state text or task-related content
-        has_empty = "No paper trading tasks" in content or "Go to Strategies" in content
-        has_tasks = "Tasks" in content or "Pending" in content or "Running" in content or "Stopped" in content
+        has_empty = "暂无模拟交易任务" in content or "前往策略库" in content
+        has_tasks = "任务" in content or "运行" in content or "停止" in content or "暂停" in content
         assert has_empty or has_tasks, "Trading page shows neither empty state nor tasks"
 
     def test_empty_state_has_navigation_button(self, page: Page):
         """If empty state is shown, it has a link to strategies page."""
         _goto_trading(page)
         content = page.content()
-        if "No paper trading tasks" in content:
+        if "暂无模拟交易任务" in content:
             # Check for navigation button
-            strategies_btn = page.locator("button:has-text('Go to Strategies')")
+            strategies_btn = page.locator("button:has-text('前往策略库'), a:has-text('前往策略库')")
             assert strategies_btn.count() > 0, "Go to Strategies button missing in empty state"
 
 
@@ -109,8 +110,8 @@ class TestTradingLayout:
         assert header.is_visible(), "Header not visible"
         title = header.locator("h1")
         title_text = title.text_content() or ""
-        assert "Paper Trading" in title_text or "Trading" in title_text, \
-            f"Expected Trading in header title, got '{title_text}'"
+        assert "模拟交易" in title_text or "交易" in title_text, \
+            f"Expected 模拟交易 in header title, got '{title_text}'"
 
     def test_sidebar_visible(self, page: Page):
         _goto_trading(page)
@@ -121,10 +122,11 @@ class TestTradingLayout:
 class TestTradingHeader:
     """Test page-level header elements."""
 
-    def test_runner_status_visible(self, page: Page):
-        """RunnerStatusBadge should be visible (online or offline)."""
+    def test_trading_page_renders(self, page: Page):
+        """trading 页正常渲染(当前前端 header 仅标题, 无独立 RunnerStatusBadge——
+        旧版'Runner Online/Offline'断言基于已移除组件, 改为验证 header + 内容区)."""
         _goto_trading(page)
-        page.wait_for_timeout(2000)  # Wait for runner status API call
-        content = page.content()
-        has_runner = "Runner Online" in content or "Runner Offline" in content
-        assert has_runner, "Runner status badge not found"
+        page.wait_for_timeout(2000)
+        assert page.locator("header").is_visible(), "Header not visible"
+        content = page.locator("body").inner_text()
+        assert "模拟交易" in content, "trading 页内容未渲染"

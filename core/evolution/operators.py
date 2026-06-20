@@ -72,23 +72,27 @@ def generate_random_condition(
     if reg is None or not reg.supported_conditions:
         return {"type": "gt", "threshold": 0.0}
 
-    # Profile-aware condition generation
+    # Pick condition type: profile-recommended (if use_profile) or free exploration.
+    cond_type = None
+    cond_preset = None
     if use_profile:
         profile = PROFILES.get(indicator_name)
         if profile and profile.recommended_conditions and random.random() < profile.follow_probability:
             cond_preset = random.choice(profile.recommended_conditions)
-            condition: dict = {"type": cond_preset.type}
-            if cond_preset.thresholds:
-                condition["threshold"] = random.choice(cond_preset.thresholds)
-            if cond_preset.target_field:
-                condition["target_field"] = cond_preset.target_field
-            return condition
+            cond_type = cond_preset.type
+    if cond_type is None:
+        cond_type = random.choice(reg.supported_conditions)
 
-    # Free exploration: random condition from supported list
-    cond_type = random.choice(reg.supported_conditions)
-    condition = {"type": cond_type}
+    condition: dict = {"type": cond_type}
 
-    if cond_type == "eq":
+    # Populate type-specific fields. Both the profile path and the free-exploration
+    # path go through the SAME field population — previously the profile path
+    # returned early with only type/threshold/target_field, omitting required
+    # fields for complex types (lookback_any needs window/inner;
+    # cross_above_series needs target_indicator), which produced invalid DNA.
+    if cond_preset and cond_preset.thresholds and cond_type in ("eq", "lt", "gt", "le", "ge"):
+        condition["threshold"] = random.choice(cond_preset.thresholds)
+    elif cond_type == "eq":
         # Pattern indicators: check if value equals 1 (pattern present)
         condition["threshold"] = 1
     elif cond_type in ("lt", "gt", "le", "ge"):
@@ -143,6 +147,10 @@ def generate_random_condition(
     elif cond_type == "wick_touch":
         condition["direction"] = random.choice(["above", "below"])
         condition["proximity_pct"] = random.choice([0.005, 0.01, 0.02])
+
+    # Profile preset's target_field overrides (e.g. BB upper/middle/lower).
+    if cond_preset and cond_preset.target_field:
+        condition["target_field"] = cond_preset.target_field
 
     return condition
 

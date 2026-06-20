@@ -247,6 +247,36 @@ class StrategyDNA:
             return [layer.timeframe for layer in self.layers]
         return [self.execution_genes.timeframe]
 
+    @property
+    def gene_signature(self) -> str:
+        """Stable genotype signature string for similarity / dedup comparison.
+
+        Encodes, for each signal gene: indicator + ALL params (sorted) +
+        condition type + role, plus leverage/direction and (for MTF) the layer
+        structure, so that different parameter values yield different signatures.
+        This is an intrinsic property of the DNA (its genotype fingerprint),
+        used by diversity measurement, strategy-library dedup, and the
+        evolution exclude-set. Migrated verbatim from
+        ``core.evolution.diversity._gene_signature``.
+        """
+        parts = []
+        for gene in sorted(self.signal_genes, key=lambda g: g.role.value):
+            param_parts = sorted(f"{k}={v}" for k, v in gene.params.items())
+            param_summary = ",".join(param_parts)
+            cond_type = gene.condition.get("type", "?") if gene.condition else "?"
+            parts.append(f"{gene.indicator}({param_summary}):{cond_type}:{gene.role.value}")
+        parts.append(f"lev:{self.risk_genes.leverage}")
+        parts.append(f"dir:{self.risk_genes.direction}")
+        # Include MTF layer structure for diversity (M3 fix)
+        if self.layers:
+            for layer in self.layers:
+                layer_parts = [f"L:{layer.timeframe}:{layer.role or 'execution'}"]
+                for g in sorted(layer.signal_genes, key=lambda x: x.role.value):
+                    g_cond = g.condition.get("type", "?") if g.condition else "?"
+                    layer_parts.append(f"{g.indicator}:{g_cond}")
+                parts.append(",".join(layer_parts))
+        return "|".join(parts)
+
     def _resolve_signal_genes(self) -> List[SignalGene]:
         """Resolve signal_genes from layers[0] if layers exist."""
         if self.layers and not self.signal_genes:

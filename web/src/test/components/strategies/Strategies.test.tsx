@@ -115,6 +115,16 @@ describe("Strategies page", () => {
     expect(pulses.length).toBeGreaterThan(0);
   });
 
+  // --- Error state ---
+  it("shows error state with retry when loading fails", async () => {
+    mockGetStrategies.mockRejectedValue(new Error("服务器错误"));
+
+    render(<Strategies />, { wrapper: createWrapper() });
+    await screen.findByText("加载失败");
+    expect(screen.getByText("服务器错误")).toBeInTheDocument();
+    expect(screen.getByText("重试")).toBeInTheDocument();
+  });
+
   // --- Empty state ---
   it("shows empty state when no strategies", async () => {
     mockGetStrategies.mockResolvedValue({ items: [], total: 0 });

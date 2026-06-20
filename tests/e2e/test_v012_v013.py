@@ -3,7 +3,8 @@
 import pytest
 from playwright.sync_api import Page
 
-BASE = "http://localhost:5173"
+import os
+BASE = os.environ.get("E2E_WEB_URL", "http://localhost:8080")
 
 
 def _wait_react(page: Page, timeout: int = 8000):
@@ -74,7 +75,7 @@ class TestV013Settings:
         page.wait_for_load_state("domcontentloaded")
         _wait_react(page)
         content = page.content().lower()
-        assert "population" in content or "generation" in content or "config" in content
+        assert "通用" in content or "指标参数" in content or "config" in content or "设置" in content
 
     def test_settings_screenshot(self, page: Page):
         page.goto(BASE + "/settings", timeout=10000)

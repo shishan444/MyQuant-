@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.strategy.executor import _resample_pulse, evaluate_condition, _empty_signal_set
 from tests.helpers.data_factory import make_ohlcv, make_enhanced_df
 

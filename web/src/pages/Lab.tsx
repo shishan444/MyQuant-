@@ -430,7 +430,7 @@ export function Lab() {
         signal_genes: [...entrySignals, ...exitSignals],
         logic_genes: { entry_logic: "AND", exit_logic: "OR" },
         execution_genes: { timeframe, symbol: pair },
-        risk_genes: { stop_loss: 0.05, take_profit: 0.1, position_size: 0.3, leverage: 1, direction: "long" },
+        risk_genes: { stop_loss: 0.05, take_profit: 0.1, position_size: 0.3, leverage: 1, direction: "long", sl_mode: "pct", atr_period: 14 },
       };
       await createStrategyMutation.mutateAsync({
         name: data.name,

@@ -9,6 +9,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  AlertCircle,
 } from "lucide-react";
 import { PageTransition } from "@/components/PageTransition";
 import { GlassCard } from "@/components/GlassCard";
@@ -181,7 +182,7 @@ function TaskListItem({
 // ---------------------------------------------------------------------------
 
 export function Trading() {
-  const { data: taskList, isLoading } = useTradingTasks();
+  const { data: taskList, isLoading, isError, error, refetch } = useTradingTasks();
   const { data: runnerStatus } = useRunnerStatus();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -280,6 +281,19 @@ export function Trading() {
         <div className="flex items-center justify-center h-64">
           <span className="text-text-muted">加载中...</span>
         </div>
+      </PageTransition>
+    );
+  }
+
+  if (isError) {
+    return (
+      <PageTransition>
+        <EmptyState
+          icon={AlertCircle}
+          title="加载失败"
+          description={(error as Error)?.message || "无法加载交易任务，请重试"}
+          actions={[{ label: "重试", onClick: () => refetch() }]}
+        />
       </PageTransition>
     );
   }

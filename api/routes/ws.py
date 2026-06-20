@@ -149,7 +149,7 @@ def _get_trading_snapshot(websocket: WebSocket, task_id: str) -> Optional[Dict[s
     """Read paper trading task from DB and return a WS snapshot message."""
     try:
         db_path = websocket.app.state.db_path
-        from api.db_ext import get_paper_trading_task
+        from core.persistence.db_ext import get_paper_trading_task
         row = get_paper_trading_task(db_path, task_id)
         if row is None:
             return None

@@ -3,7 +3,8 @@
 import pytest
 from playwright.sync_api import Page, expect
 
-BASE = "http://localhost:5173"
+import os
+BASE = os.environ.get("E2E_WEB_URL", "http://localhost:8080")
 
 
 def _wait_react(page: Page, timeout: int = 8000):
@@ -33,7 +34,7 @@ class TestV011Lab:
         _wait_react(page)
         # Should have some signal-related UI elements
         content = page.content().lower()
-        assert "signal" in content or "entry" in content or "rsi" in content, \
+        assert "信号" in content or "入场" in content or "出场" in content or "entry" in content or "signal" in content or "rsi" in content, \
             "No signal editor content found"
 
     def test_lab_has_backtest_button(self, page: Page):

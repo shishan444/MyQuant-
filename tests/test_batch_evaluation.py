@@ -16,6 +16,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 from core.backtest.engine import BacktestEngine, BacktestResult
 from core.strategy.dna import StrategyDNA
 from core.strategy.executor import dna_to_signal_set

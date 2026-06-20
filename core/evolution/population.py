@@ -666,11 +666,10 @@ def init_population(
 
     # Dedup: filter out individuals whose signatures are in exclude_signatures
     if exclude_signatures:
-        from core.evolution.diversity import _gene_signature as _sig
         deduped = []
         seen = set()
         for ind in population:
-            sig = _sig(ind)
+            sig = ind.gene_signature
             if sig not in exclude_signatures and sig not in seen:
                 deduped.append(ind)
                 seen.add(sig)

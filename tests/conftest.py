@@ -63,3 +63,19 @@ def api_client(db_path: Path, tmp_data_dir: Path):
     app = create_app(db_path=db_path, data_dir=tmp_data_dir)
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def _clear_indicator_cache_between_tests():
+    """Clear the global indicator column cache before and after every test.
+
+    core.strategy.executor._indicator_column_cache is a module-level dict keyed
+    by id(df) that is never auto-cleared. Without isolation, indicator Series
+    leak across tests, and Python id reuse can make a new df hit a stale key
+    (the root cause of several order-dependent flaky failures). This is
+    belts-and-suspenders with the dna_to_signal_set entry-level clear.
+    """
+    from core.strategy.executor import clear_indicator_cache
+    clear_indicator_cache()
+    yield
+    clear_indicator_cache()

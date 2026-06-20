@@ -3,13 +3,13 @@
 import pytest
 
 
-CHROMIUM_PATH = "/home/ss/.cache/ms-playwright/chromium-1217/chrome-linux64/chrome"
-
-
 @pytest.fixture(scope="session")
 def browser_type_launch_args():
+    # Use the Playwright-managed chromium (installed via `playwright install`).
+    # The previous hardcoded executable_path pointed at a Linux cache path
+    # (/home/ss/.cache/.../chromium-1217/chrome-linux64) that does not exist on
+    # macOS or CI; omitting it lets Playwright locate the browser itself.
     return {
-        "executable_path": CHROMIUM_PATH,
         "headless": True,
     }
 

@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
 from core.strategy.executor import clear_indicator_cache
 from tests.helpers.data_factory import make_dna, make_enhanced_df
 

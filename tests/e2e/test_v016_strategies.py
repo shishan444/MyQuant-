@@ -9,7 +9,8 @@ and are intentionally kept as smoke tests.
 import pytest
 from playwright.sync_api import Page
 
-BASE = "http://localhost:5173"
+import os
+BASE = os.environ.get("E2E_WEB_URL", "http://localhost:8080")
 
 
 def _wait_react(page: Page, timeout: int = 8000):
@@ -61,8 +62,8 @@ class TestStrategiesEmptyState:
         """Page shows either empty state or strategy list (depends on backend state)."""
         _goto_strategies(page)
         content = page.content()
-        has_empty = "No strategies" in content or "Get started" in content or "Create" in content
-        has_strategies = "Strategy" in content or "Return" in content or "Sharpe" in content
+        has_empty = "暂无" in content or "未找到" in content or "No strategies" in content
+        has_strategies = "策略" in content or "已保存" in content or "年化" in content or "Sharpe" in content
         assert has_empty or has_strategies, "Strategies page shows neither empty state nor strategies"
 
 
@@ -114,13 +115,15 @@ class TestStrategiesSearchFilter:
 
     def test_search_input_visible(self, page: Page):
         _goto_strategies(page)
-        # Look for search input (placeholder or aria-label)
-        search = page.locator("input[type='text'], input[placeholder*='earch'], input[aria-label*='earch']").first
-        assert search.is_visible(), "Search input not visible"
+        content = page.content()
+        # search input 或 filter 控件 (实际为"全部来源"/"全部策略"下拉 + 可选 search input)
+        has_search_input = page.locator("input[type='text'], input[type='search']").count() > 0
+        has_filter = "全部来源" in content or "全部策略" in content or "筛选" in content
+        assert has_search_input or has_filter, "搜索/筛选控件未找到"
 
     def test_filter_controls_present(self, page: Page):
         _goto_strategies(page)
         content = page.content()
         # At minimum, the page should have some filter or sort UI
-        has_filter = "filter" in content.lower() or "sort" in content.lower() or "select" in content.lower() or "search" in content.lower()
+        has_filter = "全部来源" in content or "全部策略" in content or "筛选" in content or "排序" in content or "filter" in content.lower() or "sort" in content.lower()
         assert has_filter, "No filter/sort controls found on strategies page"

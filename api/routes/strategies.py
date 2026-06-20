@@ -14,8 +14,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from api.db_ext import (
-    _connect,
+from core.persistence.db import connect
+from core.persistence.db_ext import (
     count_strategies,
     delete_strategy,
     get_backtest_result,
@@ -58,7 +58,7 @@ from api.schemas import (
 )
 from core.backtest import engine as _bt_engine_mod
 from core.scoring.scorer import score_strategy
-from core.scoring.metrics import compute_metrics
+from core.services import backtest_service
 from core.strategy.dna import StrategyDNA
 
 logger = logging.getLogger(__name__)
@@ -324,13 +324,7 @@ def backtest_strategy(
 
     result = engine.run(dna, enhanced_df, dfs_by_timeframe=dfs_by_timeframe)
 
-    # Use engine-computed metrics (avoids redundant compute_metrics call)
-    metrics = result.metrics_dict or compute_metrics(
-        result.equity_curve, total_trades=result.total_trades,
-        bars_per_year=result.bars_per_year,
-        trade_win_rate=result.trade_win_rate,
-        trade_returns=result.trade_returns,
-    )
+    metrics = backtest_service.fallback_metrics(result)
     score_result = score_strategy(
         metrics, template_name=payload.score_template,
         liquidated=result.liquidated,
@@ -373,31 +367,7 @@ def backtest_strategy(
     # Build signals from trades (direction-aware: short entry = sell, short exit = buy)
     signals_data = None
     if result.trades_df is not None and len(result.trades_df) > 0:
-        signals_data = []
-        for _, trade_row in result.trades_df.iterrows():
-            direction_str = str(trade_row.get("Direction", "Long"))
-            if direction_str == "Short":
-                entry_type, exit_type = "sell", "buy"
-                entry_label, exit_label = "卖出开仓", "买入平仓"
-            else:
-                entry_type, exit_type = "buy", "sell"
-                entry_label, exit_label = "买入开仓", "卖出平仓"
-            entry_price = float(trade_row.get("Avg Entry Price", 0))
-            exit_price = float(trade_row.get("Avg Exit Price", 0))
-            signals_data.append({
-                "type": entry_type,
-                "timestamp": str(trade_row.get("Entry Timestamp", "")),
-                "price": entry_price,
-                "confidence": 0.8,
-                "reason": f"{entry_label} @ {entry_price:.2f}",
-            })
-            signals_data.append({
-                "type": exit_type,
-                "timestamp": str(trade_row.get("Exit Timestamp", "")),
-                "price": exit_price,
-                "confidence": 0.8,
-                "reason": f"{exit_label} @ {exit_price:.2f}",
-            })
+        signals_data = backtest_service.build_signals_from_trades_df(result.trades_df)
 
     return BacktestResponse(
         result_id=result_id,
@@ -481,8 +451,7 @@ def compare_strategies(
             # Load MTF data if strategy uses multiple timeframes
             dfs_by_timeframe = None
             if dna.is_mtf:
-                needed_tfs = {layer.timeframe for layer in dna.layers}
-                needed_tfs.add(timeframe)
+                needed_tfs = backtest_service.compute_needed_tfs([dna], timeframe)
                 dfs_by_timeframe = load_mtf_data(
                     data_dir, symbol, timeframe, enhanced_df,
                     needed_tfs,
@@ -494,13 +463,7 @@ def compare_strategies(
                 dna, enhanced_df,
                 dfs_by_timeframe=dfs_by_timeframe,
             )
-            metrics = bt_result.metrics_dict or compute_metrics(
-                bt_result.equity_curve,
-                total_trades=bt_result.total_trades,
-                bars_per_year=bt_result.bars_per_year,
-                trade_win_rate=bt_result.trade_win_rate,
-                trade_returns=bt_result.trade_returns,
-            )
+            metrics = backtest_service.fallback_metrics(bt_result)
             score_result = score_strategy(
                 metrics, template_name=payload.score_template,
                 liquidated=bt_result.liquidated,
@@ -577,7 +540,7 @@ def compute_verify_star(avg_fitness: float, qualified_count: int, total_periods:
 def _update_strategy_verify_fields(db_path: Path, summary: list) -> None:
     """Write verification summary back to each strategy row using atomic SQL."""
     now_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
-    conn = _connect(db_path)
+    conn = connect(db_path)
     try:
         for item in summary:
             sid = item.strategy_id
@@ -714,14 +677,8 @@ def verify_strategies(
                     continue
 
                 dfs_by_timeframe = None
-                needs_mtf = any(d.is_mtf for d in dnas)
-                if needs_mtf:
-                    needed_tfs = set()
-                    for d in dnas:
-                        if d.is_mtf:
-                            for layer in d.layers:
-                                needed_tfs.add(layer.timeframe)
-                    needed_tfs.add(timeframe)
+                needed_tfs = backtest_service.compute_needed_tfs(dnas, timeframe)
+                if needed_tfs:
                     dfs_by_timeframe = load_mtf_data(
                         data_dir, symbol, timeframe, enhanced_df,
                         needed_tfs,
@@ -740,13 +697,7 @@ def verify_strategies(
 
                 for sid, dna, bt_result in zip(strategy_ids, dnas, bt_results):
                     try:
-                        metrics = bt_result.metrics_dict or compute_metrics(
-                            bt_result.equity_curve,
-                            total_trades=bt_result.total_trades,
-                            bars_per_year=bt_result.bars_per_year,
-                            trade_win_rate=bt_result.trade_win_rate,
-                            trade_returns=bt_result.trade_returns,
-                        )
+                        metrics = backtest_service.fallback_metrics(bt_result)
                         req = RequirementsConfig()
                         score_result = compute_fitness(
                             metrics, requirements=req,
@@ -1005,10 +956,8 @@ class _VerifyProcessor:
                 return self._progress_payload(step_index, group_key, dr, batch_results)
 
             dfs_by_timeframe = None
-            needs_mtf = any(d.is_mtf for d in dnas)
-            if needs_mtf:
-                needed_tfs = {tf for d in dnas if d.is_mtf for tf in [l.timeframe for l in d.layers]}
-                needed_tfs.add(timeframe)
+            needed_tfs = backtest_service.compute_needed_tfs(dnas, timeframe)
+            if needed_tfs:
                 dfs_by_timeframe = self._load_mtf(
                     self.data_dir, symbol, timeframe, enhanced_df,
                     needed_tfs, data_start=dr.start, data_end=dr.end,
@@ -1020,13 +969,7 @@ class _VerifyProcessor:
 
             for sid, dna, bt_result in zip(strategy_ids, dnas, bt_results):
                 try:
-                    metrics = bt_result.metrics_dict or compute_metrics(
-                        bt_result.equity_curve,
-                        total_trades=bt_result.total_trades,
-                        bars_per_year=bt_result.bars_per_year,
-                        trade_win_rate=bt_result.trade_win_rate,
-                        trade_returns=bt_result.trade_returns,
-                    )
+                    metrics = backtest_service.fallback_metrics(bt_result)
                     score_result = self._compute_fitness(
                         metrics, requirements=self._RequirementsConfig(),
                         liquidated=bt_result.liquidated,
@@ -1379,26 +1322,8 @@ class _BatchBacktestProcessor:
         ])
 
     def _build_signals_json_from_events(self, events_log: list) -> Optional[str]:
-        """Serialize position_closed events to JSON signals format."""
-        closed = [e for e in events_log if e.get("type") == "position_closed"]
-        if not closed:
-            return None
-        signals = []
-        for e in closed:
-            side = e.get("side", "long")
-            entry_type = "sell" if side == "short" else "buy"
-            exit_type = "buy" if side == "short" else "sell"
-            entry_label = "卖出开仓" if side == "short" else "买入开仓"
-            exit_label = "买入平仓" if side == "short" else "卖出平仓"
-            signals.append({
-                "type": entry_type, "timestamp": "", "price": round(float(e["entry_price"]), 4),
-                "confidence": 0.8, "reason": f"{entry_label} @ {e['entry_price']:.2f}",
-            })
-            signals.append({
-                "type": exit_type, "timestamp": "", "price": round(float(e["exit_price"]), 4),
-                "confidence": 0.8, "reason": f"{exit_label}({e.get('exit_reason', '')}) @ {e['exit_price']:.2f}",
-            })
-        return json.dumps(signals)
+        """Serialize position_closed events to JSON signals (delegates to backtest_service)."""
+        return backtest_service.build_signals_from_events(events_log)
 
     def _bars_per_year(self, timeframe: str) -> int:
         mapping = {"1m": 525600, "5m": 105120, "15m": 35040, "30m": 17520,
@@ -1442,11 +1367,9 @@ class _BatchBacktestProcessor:
             actual_end = str(enhanced_df.index.max())[:10]
 
             dfs_by_timeframe = None
-            needs_mtf = any(s["dna"].is_mtf for s in group_strategies)
-            if needs_mtf:
-                needed_tfs = {tf for s in group_strategies if s["dna"].is_mtf
-                              for tf in [l.timeframe for l in s["dna"].layers]}
-                needed_tfs.add(timeframe)
+            needed_tfs = backtest_service.compute_needed_tfs(
+                [s["dna"] for s in group_strategies], timeframe)
+            if needed_tfs:
                 dfs_by_timeframe = self._load_mtf(
                     self.data_dir, symbol, timeframe, enhanced_df,
                     needed_tfs, data_start=dr.start, data_end=dr.end,

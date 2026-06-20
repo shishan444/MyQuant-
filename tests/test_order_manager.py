@@ -1,6 +1,8 @@
 """Tests for OrderManager: fill, validity, timeout, and expiry."""
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 from core.trading.order_manager import OrderManager
 from core.trading.types import BarSignals, JudgmentConfig, Order
 
